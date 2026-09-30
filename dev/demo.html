@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>video-annotate · dev demo</title>
+<style>
+  body{margin:0;background:#0b0e13;color:#e6edf3;font:14px/1.6 -apple-system,"PingFang SC",sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:20px}
+  h1{font-size:18px}
+  .note{color:#8b949e;font-size:13px;background:#11161d;border:1px solid #222a34;border-radius:8px;padding:10px 12px}
+  code{color:#9ecbff}
+  .grid{display:flex;gap:20px;flex-wrap:wrap;margin-top:16px}
+  figure{margin:0}
+  figcaption{color:#8b949e;font-size:12px;margin-top:6px}
+  .box{width:480px;height:480px;background:#000;border:1px solid #222a34;border-radius:8px;overflow:hidden;position:relative}
+  .box.wide{width:480px;height:260px}
+  video{width:100%;height:100%;display:block}
+  .contain video{object-fit:contain}
+  .cover video{object-fit:cover}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>video-annotate · 本地调试页</h1>
+  <div class="note">
+    加载 <code>dist/annotate.user.js</code> 后，本页右下会出现工具栏。<br>
+    · 直接测：本页已 <code>&lt;script src="../dist/annotate.user.js"&gt;</code>（无需扩展）。<br>
+    · 真实用法：把 <code>dist/annotate.user.js</code> 装进 Tampermonkey / iOS Userscripts。<br>
+    · 建议用 http 打开（localStorage 更稳）：<code>python3 -m http.server 8792</code> → <code>http://127.0.0.1:8792/dev/demo.html</code><br>
+    · 两个容器分别是 <code>object-fit:contain</code>（上下黑边）与 <code>cover</code>，用来验证内容区坐标。
+  </div>
+
+  <div class="grid">
+    <figure>
+      <div class="box contain"><video src="sample.mp4" controls loop muted></video></div>
+      <figcaption>contain（letterbox，内容区应上下留黑）</figcaption>
+    </figure>
+    <figure>
+      <div class="box wide cover"><video src="sample.mp4" controls loop muted></video></div>
+      <figcaption>cover（裁边，内容区溢出）</figcaption>
+    </figure>
+  </div>
+</div>
+<script src="../dist/annotate.user.js"></script>
+</body>
+</html>

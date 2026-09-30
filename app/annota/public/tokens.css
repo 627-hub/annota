@@ -1,0 +1,110 @@
+:root {
+  /* 品牌 / 强调 */
+  --va-accent: #F5A623;
+
+  /* 标注类型色 */
+  --va-word: #F5A623;
+  --va-comment: #38BDF8;
+  --va-question: #A78BFA;
+  --va-ai-suggest: rgba(255, 255, 255, 0.55);
+
+  /* 注入态玻璃（视频/图片叠层） */
+  --va-glass-bg: rgba(17, 19, 23, 0.78);
+  --va-glass-border: 1px solid rgba(255, 255, 255, 0.08);
+  --va-glass-blur: blur(20px) saturate(160%);
+  --va-glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+
+  /* 注入态文字 */
+  --va-text: #F4F5F7;
+  --va-text-secondary: #A6ACB5;
+  --va-text-muted: #6E747D;
+
+  /* 页面态浅色 */
+  --va-page-bg: #0B0E13;
+  --va-page-bg-light: #FAFAFC;
+  --va-card-bg-light: #FFFFFF;
+  --va-text-light: #17181C;
+  --va-border-light: #E7E8EC;
+
+  /* 语义色 */
+  --va-success: #34C77B;
+  --va-warning: #F5484D;
+  --va-info: #3E82F7;
+
+  /* 字体 */
+  --va-font-ui: -apple-system, "PingFang SC", "HarmonyOS Sans SC", "MiSans", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  --va-font-mono: ui-monospace, "SF Mono", "JetBrains Mono", monospace;
+
+  /* 字号 */
+  --va-text-xs: 12px;
+  --va-text-sm: 13px;
+  --va-text-base: 14px;
+  --va-text-md: 16px;
+  --va-text-lg: 20px;
+  --va-text-xl: 24px;
+  --va-line-height: 1.5;
+  --va-line-height-cjk: 1.6;
+
+  /* 间距（4px 网格） */
+  --va-space-1: 4px;
+  --va-space-2: 8px;
+  --va-space-3: 12px;
+  --va-space-4: 16px;
+  --va-space-5: 20px;
+  --va-space-6: 24px;
+
+  /* 圆角 */
+  --va-radius-sm: 8px;
+  --va-radius-md: 12px;
+  --va-radius-lg: 16px;
+  --va-radius-pill: 999px;
+
+  /* 动效 */
+  --va-duration-fast: 120ms;
+  --va-duration-base: 200ms;
+  --va-duration-slow: 240ms;
+  --va-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* z-index 梯（Shadow root 内部自管） */
+  --va-z-marks: 1;
+  --va-z-dock: 2;
+  --va-z-panel: 3;
+  --va-z-editor: 4;
+  --va-z-toast: 5;
+}
+
+/* 页面态浅色模式（起始页/库/设置等），通过 <html data-theme="light"> 切换 */
+[data-theme="light"] {
+  --va-page-bg: var(--va-page-bg-light);
+  --va-text: var(--va-text-light);
+  --va-text-secondary: #4B5563;
+  --va-text-muted: #9CA3AF;
+  --va-glass-bg: rgba(255, 255, 255, 0.86);
+  --va-glass-border: 1px solid rgba(0, 0, 0, 0.08);
+  --va-glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+/* 基础重置：页面态 HTML 使用 */
+.va-page {
+  font-family: var(--va-font-ui);
+  font-size: var(--va-text-base);
+  line-height: var(--va-line-height-cjk);
+  color: var(--va-text);
+  background: var(--va-page-bg);
+}
+
+/* 玻璃卡片 */
+.va-glass {
+  background: var(--va-glass-bg);
+  backdrop-filter: var(--va-glass-blur);
+  -webkit-backdrop-filter: var(--va-glass-blur);
+  border: var(--va-glass-border);
+  box-shadow: var(--va-glass-shadow);
+}
+
+/* 常用工具类 */
+.va-text-secondary { color: var(--va-text-secondary); }
+.va-text-muted { color: var(--va-text-muted); }
+.va-mono { font-family: var(--va-font-mono); }
+.va-accent { color: var(--va-accent); }
+.va-bg-accent { background: var(--va-accent); }

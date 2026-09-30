@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-va-fetch"
+description = "Enables the va_fetch command without any pre-configured scope."
+commands.allow = ["va_fetch"]
+
+[[permission]]
+identifier = "deny-va-fetch"
+description = "Denies the va_fetch command without any pre-configured scope."
+commands.deny = ["va_fetch"]

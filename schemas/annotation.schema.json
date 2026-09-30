@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://video-annotate.local/schemas/annotation.schema.json",
+  "title": "VideoAnnotation (W3C Web Annotation aligned)",
+  "description": "一条标注：视频 + 时间片段 + 归一化区域 + 词条。对齐 W3C Web Annotation Data Model，扩展命名空间 va:。",
+  "type": "object",
+  "required": ["@context", "id", "type", "target", "body"],
+  "properties": {
+    "@context": {
+      "type": "array",
+      "items": {},
+      "description": "必须包含 http://www.w3.org/ns/anno.jsonld"
+    },
+    "id": { "type": "string", "description": "IRI / urn:uuid:..." },
+    "type": { "const": "Annotation" },
+    "created": { "type": "string", "format": "date-time" },
+    "creator": {
+      "type": "object",
+      "properties": {
+        "type": { "const": "Person" },
+        "id": { "type": "string", "description": "urn:hash:...（可匿名）" },
+        "name": { "type": "string" }
+      },
+      "required": ["type"]
+    },
+    "motivation": { "type": "string", "default": "tagging" },
+    "generator": { "type": "object" },
+    "body": {
+      "type": "object",
+      "required": ["type", "value"],
+      "properties": {
+        "type": { "const": "TextualBody" },
+        "purpose": { "const": "tagging" },
+        "value": { "type": "string", "description": "词的拼写，如 tractor" },
+        "va:word": { "type": "string" },
+        "va:label": { "type": "string", "description": "中文/译名" },
+        "va:pos": { "type": "string", "enum": ["n", "v", "a", "ad", "other"] },
+        "va:lexiconId": { "type": "string" }
+      }
+    },
+    "target": {
+      "type": "object",
+      "required": ["type", "id", "selector"],
+      "properties": {
+        "type": { "const": "Video" },
+        "id": { "type": "string", "description": "视频 URL（不指向媒体文件本身）" },
+        "va:media": {
+          "type": "object",
+          "required": ["platform", "videoId", "intrinsic"],
+          "properties": {
+            "platform": { "type": "string", "examples": ["generic", "bilibili", "douyin", "youtube"] },
+            "videoId": { "type": "string" },
+            "intrinsic": {
+              "type": "object",
+              "required": ["w", "h"],
+              "properties": { "w": { "type": "integer" }, "h": { "type": "integer" } }
+            }
+          }
+        },
+        "selector": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "oneOf": [
+              {
+                "title": "时间片段（W3C Media Fragments）",
+                "type": "object",
+                "required": ["type", "value"],
+                "properties": {
+                  "type": { "const": "FragmentSelector" },
+                  "conformsTo": { "const": "http://www.w3.org/TR/media-frags/" },
+                  "value": { "type": "string", "pattern": "^t=", "examples": ["t=12.4,13.2"] }
+                }
+              },
+              {
+                "title": "区域（内容区归一化 box）",
+                "type": "object",
+                "required": ["type", "va:x", "va:y", "va:w", "va:h"],
+                "properties": {
+                  "type": { "const": "va:BoxSelector" },
+                  "va:space": { "const": "content-normalized" },
+                  "va:x": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "va:y": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "va:w": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+                  "va:h": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "va:kind": { "type": "string", "enum": ["point", "span", "track"], "default": "point" },
+    "va:license": { "type": "string", "examples": ["CC-BY-4.0", "CC0-1.0"] },
+    "va:sig": { "type": "string", "description": "ed25519:...（可选签名）" }
+  }
+}

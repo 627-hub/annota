@@ -1,0 +1,16 @@
+{
+  "name": "video-annotate-browser",
+  "productName": "video-annotate 浏览器",
+  "version": "0.1.0",
+  "private": true,
+  "description": "标注浏览器：打开 B站/抖音/YouTube 视频即可边看边标、众包共享",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  }
+}

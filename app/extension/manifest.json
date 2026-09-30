@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "video-annotate",
+  "version": "0.1.0",
+  "description": "给网页视频加可共享的词汇标注层（拖框绑词 + 词库联想 + 同步）",
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "permissions": ["activeTab"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["core.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "minimum_chrome_version": "109"
+}
