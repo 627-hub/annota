@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Annota",
+  "version": "0.1.0",
+  "identifier": "app.annota",
+  "build": {
+    "frontendDist": "index.html"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "mcp-server": {
+      "port": 8794,
+      "toolNameCase": "snake"
+    }
+  },
+  "bundle": {
+    "active": false
+  }
+}

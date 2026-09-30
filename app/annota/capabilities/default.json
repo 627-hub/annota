@@ -1,0 +1,23 @@
+{
+  "$schema": "https://schema.tauri.app/config/v2",
+  "identifier": "default",
+  "description": "Default capabilities for the Annota spike",
+  "windows": ["main"],
+  "webviews": ["toolbar", "browser"],
+  "remote": {
+    "urls": ["https://*/*", "http://*/*"]
+  },
+  "permissions": [
+    "core:default",
+    "clipboard-manager:allow-write-text",
+    "clipboard-manager:allow-write-image",
+    "clipboard-manager:allow-write-html",
+    "screenshots:default",
+    "mcp-server:default",
+    "allow-capture-frame",
+    "allow-write-clipboard",
+    "allow-va-fetch",
+    "allow-navigate-browser",
+    "allow-bridge-probe-reply"
+  ]
+}

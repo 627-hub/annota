@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-bridge-probe-reply"
+description = "Enables the bridge_probe_reply command without any pre-configured scope."
+commands.allow = ["bridge_probe_reply"]
+
+[[permission]]
+identifier = "deny-bridge-probe-reply"
+description = "Denies the bridge_probe_reply command without any pre-configured scope."
+commands.deny = ["bridge_probe_reply"]

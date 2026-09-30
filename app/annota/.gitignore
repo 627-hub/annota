@@ -1,0 +1,5 @@
+/target/
+/run.log
+/run.pid
+/capture_*.png
+/capture_*.tiff

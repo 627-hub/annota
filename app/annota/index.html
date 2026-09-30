@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Annota · 地址栏</title>
+  <link rel="stylesheet" href="tokens.css" />
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0;
+      height: 100%;
+      overflow: hidden;
+      user-select: none;
+    }
+    body {
+      font-family: var(--va-font-ui);
+      font-size: var(--va-text-base);
+      line-height: var(--va-line-height-cjk);
+      color: var(--va-text);
+      background: var(--va-page-bg);
+    }
+    .bar {
+      display: flex; align-items: center; gap: var(--va-space-2);
+      height: 56px; padding: 0 var(--va-space-3);
+      border-bottom: var(--va-glass-border);
+      background: var(--va-glass-bg);
+      backdrop-filter: var(--va-glass-blur);
+      -webkit-backdrop-filter: var(--va-glass-blur);
+    }
+    input {
+      flex: 1;
+      background: rgba(255, 255, 255, 0.06);
+      border: var(--va-glass-border);
+      color: var(--va-text);
+      border-radius: var(--va-radius-sm);
+      padding: 7px var(--va-space-3);
+      font-size: var(--va-text-sm);
+      outline: none;
+      font-family: var(--va-font-ui);
+    }
+    input:focus { border-color: var(--va-accent); }
+    button {
+      background: rgba(255, 255, 255, 0.08);
+      border: var(--va-glass-border);
+      color: var(--va-text);
+      padding: 6px var(--va-space-3);
+      border-radius: var(--va-radius-sm);
+      cursor: pointer;
+      font-size: var(--va-text-sm);
+      white-space: nowrap;
+      font-family: var(--va-font-ui);
+      transition: background var(--va-duration-fast) var(--va-ease);
+    }
+    button:hover { background: rgba(255, 255, 255, 0.14); }
+    button.primary { background: var(--va-accent); color: #0b0e13; border-color: var(--va-accent); }
+    button.primary:hover { filter: brightness(1.05); }
+    #status { color: var(--va-text-secondary); font-size: var(--va-text-xs); min-width: 120px; }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <button onclick="openDemo()">demo</button>
+    <button onclick="openBili()">B站</button>
+    <button onclick="openYT()">YouTube</button>
+    <button onclick="openDouyin()">抖音</button>
+    <input id="url" type="text" placeholder="输入 URL，例如 dev/demo.html 或 https://www.bilibili.com/video/BV1xx411c7mD" onkeydown="if(event.key==='Enter') navigate()" />
+    <button class="primary" onclick="navigate()">打开</button>
+    <button onclick="runCapture()" title="测试截图">📷</button>
+    <span id="status"></span>
+  </div>
+
+  <script>
+    const input = document.getElementById('url');
+    const status = document.getElementById('status');
+
+    function invoke(cmd, args) {
+      const t = window.__TAURI_INTERNALS__ || window.__TAURI__;
+      return t.invoke(cmd, args);
+    }
+
+    async function navigate() {
+      const url = input.value.trim();
+      if (!url) return;
+      status.textContent = '加载中…';
+      try {
+        await invoke('navigate_browser', { url });
+        status.textContent = '已加载';
+      } catch (e) {
+        status.textContent = e.message || String(e);
+      }
+    }
+
+    function openDemo() {
+      input.value = 'dev/demo.html';
+      navigate();
+    }
+    function openBili() {
+      input.value = 'https://www.bilibili.com/video/BV1xx411c7mD';
+      navigate();
+    }
+    function openYT() {
+      input.value = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+      navigate();
+    }
+    function openDouyin() {
+      input.value = 'https://www.douyin.com/';
+      navigate();
+    }
+
+    async function runCapture() {
+      try {
+        const res = await window.__ANNOTA__.captureFrame();
+        status.textContent = `截图 ${res.width}x${res.height}`;
+      } catch (e) {
+        status.textContent = e.message || String(e);
+      }
+    }
+
+    async function testVaFetch() {
+      try {
+        const r = await window.vaFetch('GET', 'http://127.0.0.1:8793/api/health');
+        status.textContent = `vaFetch OK ${r.status}`;
+        await invoke('bridge_probe_reply', { keys: ['toolbar-vaFetch-ok', String(r.status)] });
+      } catch (e) {
+        const msg = (e.message || String(e)).slice(0, 120);
+        status.textContent = 'vaFetch ERR ' + msg;
+        await invoke('bridge_probe_reply', { keys: ['toolbar-vaFetch-err', msg] });
+      }
+    }
+
+    setTimeout(testVaFetch, 1000);
+  </script>
+</body>
+</html>

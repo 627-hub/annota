@@ -1,0 +1,33 @@
+[package]
+name = "annota"
+version = "0.1.0"
+description = "Annota · 标注浏览器 (Tauri v2 spike)"
+authors = ["Annota"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[build-dependencies]
+tauri-build = { version = "2.7.1", features = [] }
+
+[dependencies]
+tauri = { version = "2.12.1", features = ["unstable"] }
+tauri-plugin-clipboard-manager = "2.4.1"
+tauri-plugin-screenshots = "2.2.0"
+tauri-plugin-mcp-server = "0.1.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.23.1"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+xcap = "0.9.8"
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+url = "2"
+axum = "0.7"
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+tokio = { version = "1", features = ["fs", "sync", "net", "rt"] }
+dashmap = "6"
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+
+[features]
+# 保持静默窗口（release 模式）
+custom-protocol = ["tauri/custom-protocol"]
