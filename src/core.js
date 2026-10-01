@@ -11,6 +11,22 @@
   if (A) A._err = (e) => { ADAPTER_ERRORS.push(String((e && e.message) || e).slice(0, 80)); if (ADAPTER_ERRORS.length > 20) ADAPTER_ERRORS.shift(); };
   const DEFAULT_DUR = 1.0;                // 每个标注框默认时长(秒)
   const LEAD = 0.15;                      // 提前浮现(秒)
+  const ICON_PATHS = {
+    brand: '<path d="M4.5 19 12 5l7.5 14M8.2 13.2h7.6"/>',
+    crosshair: '<circle cx="12" cy="12" r="7.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/>',
+    eye: '<path d="M2.5 12s3.2-6 9.5-6 9.5 6 9.5 6-3.2 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.6"/>',
+    list: '<path d="M8 6h12M8 12h12M8 18h12"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>',
+    sync: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.7-2L20 12M4 12l2.7 5a7 7 0 0 0 11.7-2"/>',
+    more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+    close: '<path d="m6 6 12 12M18 6 6 18"/>',
+    search: '<circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.2 4.2"/>',
+    clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.3 2"/>',
+    dots: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+    arrow: '<path d="M7 17 17 7M7 7h10v10"/>',
+    play: '<path d="m8 5 11 7-11 7V5Z"/>',
+    box: '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h5"/>',
+    book: '<path d="M5 4.5h11a3 3 0 0 1 3 3v12H8a3 3 0 0 1-3-3v-12Z"/><path d="M5 16.5a3 3 0 0 1 3-3h11"/>'
+  };
 
   // 词库索引（build_vocab.py 内联）与联想
   const VOCAB = window.VA_VOCAB || [];
@@ -46,44 +62,95 @@
   }
   function save() {
     const media = {
-      platform: state.platform, videoId: state.mediaId, url: location.href,
+      platform: state.platform, videoId: state.mediaId, url: location.href, title: document.title,
       intrinsic: { w: state.video ? state.video.videoWidth : 0, h: state.video ? state.video.videoHeight : 0 },
     };
     const obj = { format: 'video-annotate/0.1', media, entries: state.entries };
     try { localStorage.setItem(LS_PREFIX + state.mediaId, JSON.stringify(obj)); }
     catch (e) { setSyncStatus('本地保存失败（隐私模式/空间不足？）'); }
     updateStatus();
+    renderPanel();
   }
+
+  /* ---------- Shadow DOM UI ---------- */
+  const uiHost = document.createElement('div');
+  uiHost.id = 'annota-shadow-host';
+  uiHost.style.cssText = 'position:fixed;inset:0;z-index:2147483000;pointer-events:none;';
+  const uiShadow = typeof uiHost.attachShadow === 'function' ? uiHost.attachShadow({ mode: 'open' }) : uiHost;
+  const uiStyle = document.createElement('style');
+  uiStyle.textContent = window.VA_OVERLAY_CSS || window.VA_TOKENS_CSS || '';
+  const uiRoot = document.createElement('div');
+  uiRoot.className = 'va-ui-root';
+  uiShadow.append(uiStyle, uiRoot);
+  (document.body || document.documentElement).appendChild(uiHost);
 
   /* ---------- DOM ---------- */
   const overlay = el('div', {
     position: 'fixed', left: '0', top: '0', width: '0', height: '0',
-    pointerEvents: 'none', zIndex: '2147483000', display: 'none',
+    pointerEvents: 'none', zIndex: '1', display: 'none',
   });
   const capture = el('div', {
     position: 'absolute', left: '0', top: '0', right: '0', bottom: '0',
     pointerEvents: 'none', cursor: 'crosshair',
   });
+  capture.className = 'va-capture';
   const layer = el('div', {
     position: 'absolute', left: '0', top: '0', right: '0', bottom: '0', pointerEvents: 'none',
   });
   overlay.appendChild(capture); overlay.appendChild(layer);
 
-  const bar = el('div', {
-    position: 'fixed', right: '14px', bottom: '14px', zIndex: '2147483001',
-    display: 'flex', gap: '6px', alignItems: 'center',
-    background: 'rgba(17,22,29,.92)', border: '1px solid #2b3644', borderRadius: '10px',
-    padding: '6px 8px', font: '12px/1.4 -apple-system,"PingFang SC",sans-serif', color: '#e6edf3',
-    boxShadow: '0 8px 28px rgba(0,0,0,.45)',
+  const bar = el('div');
+  bar.className = 'va-dock';
+  const brand = el('div'); brand.className = 'va-brand';
+  const brandMark = el('span'); brandMark.className = 'va-brand-mark'; brandMark.appendChild(svgIcon('brand'));
+  const brandCopy = el('span', null, 'Annota'); brandCopy.className = 'va-brand-copy';
+  brandCopy.appendChild(el('small', null, 'CONTENT LAYER'));
+  brand.append(brandMark, brandCopy);
+  const separator = el('span'); separator.className = 'va-separator';
+  const btnAnno = mkAction('标注', 'crosshair', () => toggleAnnotate(), 'primary');
+  const btnAll = mkAction('显示', 'eye', () => {
+    state.showAll = !state.showAll;
+    btnAll.classList.toggle('is-active', state.showAll);
+    render();
   });
-  const btnAnno = mkbtn('✎ 标注', () => toggleAnnotate());
-  const btnAll = mkbtn('👁 全部', () => { state.showAll = !state.showAll; btnAll.style.borderColor = state.showAll ? '#f0b429' : ''; render(); });
-  const btnSync = mkbtn('⇅ 同步', syncNow);
-  const btnBridge = mkbtn('📋 发豆包', copyContext);
-  const btnCfg = mkbtn('⚙', toggleMenu);
-  const btnDiag = mkbtn('ⓘ', toggleDiag);
-  const status = el('span', { color: '#8b949e', marginLeft: '4px' });
-  [btnAnno, btnAll, btnSync, btnBridge, btnCfg, btnDiag, status].forEach((n) => bar.appendChild(n));
+  const btnPanel = mkAction('列表', 'list', () => togglePanel());
+  const btnSync = mkAction('同步', 'sync', syncNow);
+  const btnCfg = mkAction('更多', 'more', toggleMenu);
+  const btnBridge = mkbtn('发给 AI 助手', copyContext);
+  const btnDiag = mkbtn('诊断信息', toggleDiag);
+  const status = el('span'); status.className = 'va-sync-indicator'; status.dataset.state = 'ready';
+  const statusDot = el('i'); statusDot.className = 'va-sync-dot';
+  const statusText = el('span', null, '就绪');
+  status.append(statusDot, statusText);
+  bar.append(brand, separator, btnAnno, btnAll, btnPanel, btnSync, status, btnCfg);
+
+  const sidePanel = el('aside'); sidePanel.className = 'va-panel';
+  const panelHead = el('div'); panelHead.className = 'va-panel-head';
+  const panelTitle = el('div'); panelTitle.className = 'va-panel-title';
+  const panelTitleMain = el('strong', null, '当前标注');
+  const panelTitleSub = el('span', null, '等待视频…');
+  panelTitle.append(panelTitleMain, panelTitleSub);
+  const panelClose = mkIconButton('关闭标注面板', 'close', () => togglePanel(false));
+  panelClose.classList.add('va-close');
+  panelHead.append(panelTitle, panelClose);
+  const panelTabs = el('div'); panelTabs.className = 'va-panel-tabs';
+  const tabTimeline = mkTab('时间轴', true);
+  const tabWords = mkTab('词汇', false);
+  panelTabs.append(tabTimeline, tabWords);
+  const panelSearchWrap = el('div'); panelSearchWrap.className = 'va-panel-search';
+  const panelSearch = el('input'); panelSearch.className = 'va-input';
+  panelSearch.type = 'search'; panelSearch.placeholder = '筛选标注…'; panelSearch.setAttribute('aria-label', '筛选标注');
+  panelSearchWrap.appendChild(panelSearch);
+  const entryList = el('div'); entryList.className = 'va-entry-list';
+  const panelFoot = el('div'); panelFoot.className = 'va-panel-foot'; panelFoot.textContent = '点击词条跳转到对应画面';
+  sidePanel.append(panelHead, panelTabs, panelSearchWrap, entryList, panelFoot);
+  let panelOpen = false, panelTab = 'timeline';
+
+  tabTimeline.onclick = () => { panelTab = 'timeline'; updatePanelTabs(); renderPanel(); };
+  tabWords.onclick = () => { panelTab = 'words'; updatePanelTabs(); renderPanel(); };
+  panelSearch.addEventListener('input', renderPanel);
+  panelSearch.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') panelSearch.value = ''; renderPanel(); });
+
   function applyMode() {
     const v = isView();
     btnAnno.style.display = v ? 'none' : '';
@@ -92,26 +159,62 @@
   applyMode();
 
   // 诊断面板（B站等实机上排查用）
-  const diagPanel = el('pre', {
-    position: 'fixed', right: '14px', bottom: '56px', zIndex: '2147483001', display: 'none',
-    margin: '0', maxWidth: 'min(560px, 92vw)', maxHeight: '58vh', overflow: 'auto',
-    background: 'rgba(10,14,20,.97)', border: '1px solid #2b3644', borderRadius: '10px',
-    padding: '12px 14px', color: '#9ecbff', font: '12.5px/1.6 ui-monospace,Menlo,monospace',
-    whiteSpace: 'pre-wrap', boxShadow: '0 10px 30px rgba(0,0,0,.5)',
-  });
+  const diagPanel = el('pre', { display: 'none' });
+  diagPanel.className = 'va-diag';
   // 无法叠加时的提示条
-  const toast = el('div', {
-    position: 'fixed', left: '50%', top: '12px', transform: 'translateX(-50%)', zIndex: '2147483002',
-    display: 'none', background: 'rgba(120,40,40,.95)', color: '#ffe1e1', border: '1px solid #a05252',
-    borderRadius: '8px', padding: '6px 12px', font: '12px/1.4 -apple-system,"PingFang SC",sans-serif',
-    boxShadow: '0 8px 24px rgba(0,0,0,.5)',
-  }, '当前为「视频元素真全屏」，浏览器限制无法叠加标注。请用播放器的「网页全屏 / 影院模式」再标注。');
+  const toast = el('div', null, '当前为「视频元素真全屏」，浏览器限制无法叠加标注。请用播放器的「网页全屏 / 影院模式」再标注。');
+  toast.className = 'va-toast';
+  let toastTimer = null;
+  function showToast(message, error) {
+    toast.textContent = message;
+    toast.classList.toggle('is-error', !!error);
+    toast.classList.add('is-visible');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.remove('is-visible'), 2800);
+  }
+
+  function svgIcon(name) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.7');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    svg.innerHTML = ICON_PATHS[name] || ICON_PATHS.box;
+    return svg;
+  }
+  function mkAction(label, iconName, fn, variant) {
+    const b = el('button');
+    b.type = 'button';
+    b.className = 'va-action' + (variant === 'primary' ? ' va-action-primary' : '');
+    b.setAttribute('aria-label', label);
+    b.title = label;
+    b.appendChild(svgIcon(iconName));
+    const text = el('span', null, label); text.className = 'va-action-label';
+    b.appendChild(text);
+    b.onclick = (e) => { e.stopPropagation(); fn(); };
+    return b;
+  }
+  function mkIconButton(label, iconName, fn) {
+    const b = el('button'); b.type = 'button'; b.setAttribute('aria-label', label); b.title = label;
+    b.appendChild(svgIcon(iconName));
+    b.onclick = (e) => { e.stopPropagation(); fn(); };
+    return b;
+  }
+  function mkTab(label, active) {
+    const b = el('button', null, label); b.type = 'button';
+    b.className = 'va-tab' + (active ? ' is-active' : '');
+    return b;
+  }
   let diagTimer = null;
   function toggleDiag() {
     const on = diagPanel.style.display === 'none';
     diagPanel.style.display = on ? 'block' : 'none';
-    btnDiag.style.borderColor = on ? '#f0b429' : '';
-    if (on) { document.body.appendChild(diagPanel); diagTimer = setInterval(renderDiag, 800); renderDiag(); }
+    btnDiag.classList.toggle('va-btn-primary', on);
+    if (on) { uiRoot.appendChild(diagPanel); diagTimer = setInterval(renderDiag, 800); renderDiag(); }
     else { if (diagTimer) clearInterval(diagTimer); diagTimer = null; diagPanel.remove(); }
   }
   function renderDiag() {
@@ -135,6 +238,101 @@
   }
   function n1(x) { return Math.round(x * 10) / 10; }
   function r2(x) { return Math.round((parseFloat(x) || 0) * 100) / 100; }
+  function formatTime(value) {
+    const s = Math.max(0, Math.floor(Number(value) || 0));
+    return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+  }
+  function updatePanelTabs() {
+    tabTimeline.classList.toggle('is-active', panelTab === 'timeline');
+    tabWords.classList.toggle('is-active', panelTab === 'words');
+    panelSearch.placeholder = panelTab === 'words' ? '筛选词汇…' : '筛选标注…';
+  }
+  function togglePanel(force) {
+    panelOpen = force == null ? !panelOpen : !!force;
+    sidePanel.classList.toggle('is-open', panelOpen);
+    btnPanel.classList.toggle('is-active', panelOpen);
+    if (panelOpen) { renderPanel(); panelSearch.focus({ preventScroll: true }); }
+  }
+  document.addEventListener('keydown', (ev) => {
+    const target = ev.composedPath ? ev.composedPath()[0] : ev.target;
+    const tag = target && target.tagName ? target.tagName.toLowerCase() : '';
+    if (tag === 'input' || tag === 'textarea' || tag === 'select' || (target && target.isContentEditable)) return;
+    if (ev.altKey && !ev.metaKey && !ev.ctrlKey) {
+      const key = String(ev.key || '').toLowerCase();
+      if (key === 'd') { ev.preventDefault(); toggleAnnotate(); }
+      else if (key === 'l') { ev.preventDefault(); togglePanel(); }
+      else if (key === 's') { ev.preventDefault(); state.showAll = !state.showAll; btnAll.classList.toggle('is-active', state.showAll); render(); }
+    } else if (ev.key === 'Escape') {
+      if (panelOpen) togglePanel(false);
+      if (menuPanel.style.display !== 'none') toggleMenu();
+      if (state.annotate) toggleAnnotate(false);
+    }
+  }, true);
+  function renderPanel() {
+    if (!panelOpen) return;
+    panelTitleSub.textContent = (state.video ? document.title : '当前页面') + ' · ' + state.entries.length + ' 条';
+    entryList.textContent = '';
+    const query = (panelSearch.value || '').trim().toLocaleLowerCase();
+    let items;
+    if (panelTab === 'words') {
+      const byWord = new Map();
+      for (const e of state.entries.slice().sort((a, b) => a.t - b.t)) {
+        const key = (e.word || '').toLocaleLowerCase();
+        if (!key) continue;
+        if (!byWord.has(key)) byWord.set(key, { entry: e, count: 0 });
+        const item = byWord.get(key); item.count += 1; item.entry = e;
+      }
+      items = Array.from(byWord.values()).sort((a, b) => a.entry.word.localeCompare(b.entry.word));
+      items = items.filter((item) => !query || (item.entry.word + ' ' + (item.entry.label || '')).toLocaleLowerCase().includes(query));
+    } else {
+      items = state.entries.slice().sort((a, b) => a.t - b.t)
+        .filter((e) => !query || (e.word + ' ' + (e.label || '') + ' ' + (e.pos || '')).toLocaleLowerCase().includes(query))
+        .map((entry) => ({ entry, count: 1 }));
+    }
+
+    if (!items.length) {
+      const empty = el('div'); empty.className = 'va-empty';
+      const mark = el('span'); mark.className = 'va-empty-mark'; mark.appendChild(svgIcon('box'));
+      const copy = el('div');
+      copy.append(el('strong', null, query ? '没有匹配的标注' : '这一段还没有标注'),
+        el('span', null, query ? '试试换个词搜索。' : '按 D 或点「标注」，把一个词锚在画面上。'));
+      empty.append(mark, copy); entryList.appendChild(empty);
+      panelFoot.textContent = query ? '搜索结果为 0 条' : '点击「标注」开始建立这段内容的记忆';
+      return;
+    }
+
+    let lastMinute = -1;
+    for (const item of items) {
+      const e = item.entry;
+      if (panelTab === 'timeline') {
+        const minute = Math.floor((Number(e.t) || 0) / 60);
+        if (minute !== lastMinute) {
+          lastMinute = minute;
+          const group = el('div', null, formatTime(minute * 60)); group.className = 'va-entry-group';
+          entryList.appendChild(group);
+        }
+      }
+      const row = el('button'); row.type = 'button'; row.className = 'va-entry-row';
+      const time = el('span', null, formatTime(e.t)); time.className = 'va-entry-time';
+      const copy = el('span'); copy.className = 'va-entry-copy';
+      const title = el('strong', null, e.word || '未命名');
+      const subtitle = el('span', null, panelTab === 'words' ? ((e.label || '未添加释义') + (item.count > 1 ? ' · 出现 ' + item.count + ' 次' : '')) : (e.label || e.pos || '点击定位画面'));
+      copy.append(title, subtitle);
+      const more = mkIconButton('编辑或管理词条', 'dots', () => {
+        const r = more.getBoundingClientRect(); openEntryPop(e, r.left, r.bottom);
+      });
+      more.classList.add('va-entry-more');
+      row.append(time, copy, more);
+      row.onclick = (ev) => {
+        if (ev.target === more || more.contains(ev.target)) return;
+        if (state.video) { state.video.currentTime = Math.max(0, Number(e.t) || 0); state.video.pause(); }
+        render();
+        showToast('已定位到 ' + formatTime(e.t) + ' · ' + (e.word || '标注'));
+      };
+      entryList.appendChild(row);
+    }
+    panelFoot.textContent = items.length + (panelTab === 'words' ? ' 个词 · 按词汇聚' : ' 条标注 · 点击词条定位画面');
+  }
 
   /* ---------- 上下文桥（发给桌面豆包/系统助手）+ 截图 + 笔记 ---------- */
   // 不做第二个豆包：只把「别人拿不到的上下文」整理好，交给桌面豆包
@@ -246,13 +444,11 @@
 
 
   // 找不到视频时给个诊断入口（抖音等可能把 <video> 藏在 shadow DOM，或整页无视频）
-  const probe = el('div', {
-    position: 'fixed', right: '14px', bottom: '14px', zIndex: '2147483001', display: 'none',
-    background: 'rgba(17,22,29,.96)', border: '1px solid #2b3644', color: '#ffde8a',
-    borderRadius: '10px', padding: '6px 10px', cursor: 'pointer',
-    font: '12px/1.5 -apple-system,"PingFang SC",sans-serif', boxShadow: '0 8px 24px rgba(0,0,0,.5)',
-  }, '⚠ 未检测到视频 · 点此诊断');
+  const probe = el('div'); probe.className = 'va-probe'; probe.style.display = 'none';
+  probe.append(svgIcon('box'), el('span', null, '未检测到视频 · 查看诊断'));
+  probe.setAttribute('role', 'button'); probe.tabIndex = 0;
   probe.onclick = () => { probe.style.display = 'none'; toggleDiag(); };
+  probe.onkeydown = (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); probe.click(); } };
   let noVideoSince = 0, probeTimer = null;
   function startProbe() {
     if (probeTimer) return;
@@ -262,7 +458,7 @@
       if (!watchable || state.video || A.findVideo()) { noVideoSince = 0; probe.style.display = 'none'; return; }
       if (!noVideoSince) noVideoSince = Date.now();
       else if (Date.now() - noVideoSince > 3000) {
-        if (probe.parentElement !== document.body) document.body.appendChild(probe);
+        if (probe.parentElement !== uiRoot) uiRoot.appendChild(probe);
         probe.style.display = 'block';
       }
     }, 1500);
@@ -270,34 +466,36 @@
   startProbe();
 
   // 设置面板：同步地址 + 文件导入导出 + 清空
-  const menuPanel = el('div', {
-    position: 'fixed', right: '14px', bottom: '56px', zIndex: '2147483001', display: 'none',
-    background: '#11161d', border: '1px solid #2b3644', borderRadius: '10px', padding: '10px',
-    width: '300px', font: '12px/1.6 -apple-system,"PingFang SC",sans-serif', color: '#e6edf3',
-    boxShadow: '0 10px 30px rgba(0,0,0,.5)',
-  });
-  const syncBox = el('input', { width: '100%', background: '#0e131a', border: '1px solid #2b3644', color: '#e6edf3', borderRadius: '6px', padding: '5px 7px', font: 'inherit', marginTop: '4px' });
+  const menuPanel = el('div', { display: 'none' });
+  menuPanel.className = 'va-more-menu';
+  const syncBox = el('input'); syncBox.className = 'va-input';
+  syncBox.setAttribute('aria-label', '同步地址');
   function toggleMenu() {
     const on = menuPanel.style.display === 'none';
-    if (!on) { menuPanel.style.display = 'none'; btnCfg.style.borderColor = ''; menuPanel.remove(); return; }
-    btnCfg.style.borderColor = '#f0b429';
+    if (!on) { menuPanel.style.display = 'none'; btnCfg.classList.remove('is-active'); menuPanel.remove(); return; }
+    btnCfg.classList.add('is-active');
     syncBox.value = syncUrl();
-    const viewBtn = mkbtn(isView() ? '✅ 只读模式' : '只读模式', () => {
+    const viewBtn = mkbtn(isView() ? '只读模式 · 已开启' : '只读模式', () => {
       try { localStorage.setItem('va:viewOnly', isView() ? '0' : '1'); } catch (e) {}
       applyMode();
-      viewBtn.textContent = isView() ? '✅ 只读模式' : '只读模式';
+      viewBtn.textContent = isView() ? '只读模式 · 已开启' : '只读模式';
     });
-    const rowDir = el('div', { display: 'flex', gap: '6px', marginTop: '6px' });
-    rowDir.append(mkbtn('⬆ 仅上传', uploadSync), mkbtn('⬇ 仅下载', downloadSync), viewBtn);
-    const row = el('div', { display: 'flex', gap: '6px', marginTop: '6px', flexWrap: 'wrap' });
-    row.append(mkbtn('⬇ 导出文件', exportJSON), mkbtn('⬆ 导入文件', importJSON), mkbtn('🗑 清空', clearAll));
-    const rowCtx = el('div', { display: 'flex', gap: '6px', marginTop: '6px', flexWrap: 'wrap' });
-    rowCtx.append(mkbtn('📋 发豆包', copyContext), mkbtn('📷 截图', shotOnly), mkbtn('📝 存笔记', saveNote));
+    const rowDir = el('div', { display: 'flex', gap: '5px', marginTop: '5px' }); rowDir.className = 'va-menu-row';
+    rowDir.append(mkbtn('仅上传', uploadSync), mkbtn('仅下载', downloadSync), viewBtn);
+    const row = el('div', { display: 'flex', gap: '5px', marginTop: '5px', flexWrap: 'wrap' }); row.className = 'va-menu-row';
+    row.append(mkbtn('导出 Pack', exportJSON), mkbtn('导入 Pack', importJSON), mkbtn('清空当前', clearAll));
     menuPanel.textContent = '';
     const cands = (window.VA_SYNC_URLS || []).join('  ·  ');
     menuPanel.append(
-      el('div', { color: '#f0b429', fontWeight: '700' }, '同步与文件'),
-      el('div', { color: '#8b949e', marginTop: '6px' }, '同步地址（留空=自动探测）'),
+      el('div', { color: '#9b8260', fontSize: '9px', fontWeight: '700', letterSpacing: '.1em', padding: '0 9px 3px' }, 'ANNOTATION TOOLS'),
+      mkbtn('查看全部标注', () => togglePanel(true)),
+      btnBridge,
+      mkbtn('截图到剪贴板', shotOnly),
+      mkbtn('保存为笔记', saveNote),
+      btnDiag,
+      el('div', { height: '1px', background: 'rgba(255,255,255,.08)', margin: '5px 3px' }),
+      el('div', { color: '#9b8260', fontSize: '9px', fontWeight: '700', letterSpacing: '.1em', padding: '0 9px 3px' }, 'SYNC & FILES'),
+      el('div', { color: '#89919b', fontSize: '10px', padding: '0 9px' }, '同步地址（留空=自动探测）'),
       syncBox,
       el('div', { display: 'flex', gap: '6px', marginTop: '6px' },
         mkbtn('保存地址', () => { const v = syncBox.value.trim(); if (v) { setSyncBase(v); } else { syncBase = null; try { localStorage.removeItem(SYNC_URL_KEY); } catch (e) {} setSyncStatus('已恢复自动'); } }),
@@ -305,19 +503,24 @@
         mkbtn('测试', testSync)),
       rowDir,
       row,
-      rowCtx,
-      el('div', { color: '#5b6a7a', marginTop: '8px' }, cands ? '备选：' + cands : '默认 http://127.0.0.1:8793'),
+      el('div', { color: '#66717d', fontSize: '9px', padding: '2px 9px 0', overflowWrap: 'anywhere' }, cands ? '备选：' + cands : '默认 http://127.0.0.1:8793'),
     );
     menuPanel.style.display = 'block';
-    document.body.appendChild(menuPanel);
+    uiRoot.appendChild(menuPanel);
   }
-  function setSyncStatus(msg) { status.textContent = msg; }
+  function setSyncStatus(msg) {
+    const text = String(msg || '就绪');
+    statusText.textContent = text;
+    const error = /失败|异常|连不上|不可用/.test(text);
+    const busy = /中…|测试中/.test(text);
+    status.dataset.state = error ? 'error' : busy ? 'busy' : 'ready';
+    if (error || /已同步|已上传|已下载|已保存|已复制/.test(text)) showToast(text, error);
+  }
 
   function mkbtn(text, fn) {
-    const b = el('button', {
-      background: 'rgba(20,24,30,.9)', border: '1px solid #2c3540', color: '#e6edf3',
-      borderRadius: '7px', padding: '4px 9px', cursor: 'pointer', font: 'inherit',
-    }, text);
+    const b = el('button', null, text);
+    b.type = 'button';
+    b.className = 'va-btn';
     b.onclick = (e) => { e.stopPropagation(); fn(); };
     return b;
   }
@@ -339,8 +542,9 @@
     state.video = video;
     state.mediaId = A.mediaId(); state.platform = A.platform();
     load(); save(); render();
-    document.body.append(overlay, bar);
-    toast.style.display = 'none';
+    uiRoot.append(overlay, bar, sidePanel, toast);
+    toast.classList.remove('is-visible', 'is-error');
+    renderPanel();
     lastSig = null;
     applyMode();
     startProbe();
@@ -356,24 +560,23 @@
 
     // SPA 切集：URL 变了就换一份标注
     const mid = A.mediaId();
-    if (mid !== state.mediaId) { state.mediaId = mid; load(); render(); }
+    if (mid !== state.mediaId) { state.mediaId = mid; load(); render(); renderPanel(); }
 
     // 全屏宿主处理：只有 fullscreen 元素的后代可见
     const fs = document.fullscreenElement;
     let host = document.body, unsupported = false;
     if (fs) { if (fs.tagName === 'VIDEO') unsupported = true; else host = fs; }
-    if (!unsupported && overlay.parentElement !== host) host.appendChild(overlay);
+    if (uiHost.parentElement !== host) host.appendChild(uiHost);
 
     if (unsupported) {
       overlay.style.display = 'none'; bar.style.display = 'none';
-      if (toast.parentElement !== document.body) document.body.appendChild(toast);
-      toast.style.display = 'block';
+      toast.textContent = '视频元素处于系统全屏，浏览器不允许叠加。请切换到网页全屏或影院模式。';
+      toast.classList.add('is-visible', 'is-error');
       state.meta = { unsupported: true };
       return;
     }
-    toast.style.display = 'none';
+    toast.classList.remove('is-visible', 'is-error');
     bar.style.display = 'flex';
-    if (diagPanel.style.display === 'block' && diagPanel.parentElement !== document.body) document.body.appendChild(diagPanel);
 
     const r = v.getBoundingClientRect();
     state.rect = r;
@@ -399,8 +602,9 @@
     if (diagTimer) { clearInterval(diagTimer); diagTimer = null; }
     if (autoSyncTimer) { clearTimeout(autoSyncTimer); autoSyncTimer = null; }
     if (probeTimer) { clearInterval(probeTimer); probeTimer = null; }
-    overlay.remove(); bar.remove(); diagPanel.remove(); toast.remove(); menuPanel.remove();
-    document.querySelectorAll('div[va-pop]').forEach((n) => n.remove());   // 关闭遗留弹层
+    overlay.remove(); bar.remove(); sidePanel.remove(); diagPanel.remove(); toast.remove(); menuPanel.remove(); probe.remove();
+    uiRoot.querySelectorAll('.va-popover').forEach((n) => n.remove());
+    panelOpen = false;
     state.video = null; state.meta = null; lastSig = null;
   }
 
@@ -417,15 +621,11 @@
       const box = el('div', {
         position: 'absolute', left: left + 'px', top: top + 'px',
         width: p.width + 'px', height: p.height + 'px',
-        border: '2px solid #f0b429', borderRadius: '6px',
-        background: 'rgba(240,180,41,.12)', pointerEvents: 'auto', cursor: 'pointer',
       });
+      box.className = 'va-mark';
       const lab = el('span', {
-        position: 'absolute', left: '0', top: '-20px', whiteSpace: 'nowrap',
-        background: 'rgba(10,14,20,.92)', border: '1px solid rgba(240,180,41,.6)',
-        color: '#ffde8a', font: '12px/1.4 -apple-system,"PingFang SC",sans-serif',
-        padding: '1px 7px', borderRadius: '10px',
       }, e.word + (e.label ? ' ' + e.label : ''));
+      lab.className = 'va-mark-label';
       box.appendChild(lab);
       box.onclick = (ev) => { ev.stopPropagation(); openEntryPop(e, ev.clientX, ev.clientY); };
       layer.appendChild(box);
@@ -440,8 +640,8 @@
     const box = el('div', {
       position: 'absolute', left: (p.left - r.left) + 'px', top: (p.top - r.top) + 'px',
       width: p.width + 'px', height: p.height + 'px',
-      border: '2px dashed #7ee787', borderRadius: '6px', background: 'rgba(126,231,135,.15)',
     });
+    box.className = 'va-draft-mark';
     layer.appendChild(box);
   }
 
@@ -449,8 +649,7 @@
   function toggleAnnotate(force) {
     state.annotate = force != null ? force : !state.annotate;
     capture.style.pointerEvents = state.annotate ? 'auto' : 'none';
-    btnAnno.style.borderColor = state.annotate ? '#f0b429' : '';
-    btnAnno.style.color = state.annotate ? '#f0b429' : '';
+    btnAnno.classList.toggle('is-active', state.annotate);
     if (state.annotate && state.video) state.video.pause();
     render();
   }
@@ -476,165 +675,191 @@
     askWord(b);
   });
 
-  const IN_STYLE = { background: '#0e131a', border: '1px solid #2b3644', color: '#e6edf3', borderRadius: '6px', padding: '5px 7px', font: 'inherit' };
-
-  function askWord(box) {
+  function askWord(box, initial) {
+    initial = initial || {};
     const p = G.boxToPixels(box, state.cr);   // 视口坐标
-    const pop = el('div', {
-      'va-pop': '1', position: 'fixed',
-      left: Math.max(8, Math.min(p.left, innerWidth - 600)) + 'px',
-      top: Math.max(8, Math.min(p.top, innerHeight - 180)) + 'px',
-      zIndex: '2147483002', background: '#11161d', border: '1px solid #2b3644',
-      borderRadius: '12px', padding: '14px', display: 'flex', flexDirection: 'column', gap: '9px',
-      width: 'min(580px, 94vw)', boxShadow: '0 18px 50px rgba(0,0,0,.6)',
-      font: '14px/1.5 -apple-system,"PingFang SC",sans-serif', color: '#e6edf3',
-    });
+    const width = Math.min(360, innerWidth - 24);
+    const pop = el('div');
+    pop.className = 'va-popover' + (initial.suggested ? ' va-ai-proposal' : '');
+    pop.dataset.vaPop = '1'; pop.setAttribute('role', 'dialog'); pop.setAttribute('aria-label', '新建标注');
+    pop.style.left = Math.max(12, Math.min(p.left, innerWidth - width - 12)) + 'px';
+    pop.style.top = Math.max(12, Math.min(p.top, innerHeight - 410)) + 'px';
 
-    // 搜索（中英联想）
-    const sWrap = el('div', { position: 'relative' });
-    const sIn = el('input', { ...IN_STYLE, width: '100%' });
-    sIn.placeholder = VINDEX ? '🔍 搜英文或中文，自动补全 词/义/词性' : '英文词（未加载词库）';
-    const sug = el('div', {
-      position: 'absolute', left: '0', top: '100%', marginTop: '4px', width: '100%', maxHeight: '220px',
-      overflow: 'auto', background: '#0e131a', border: '1px solid #2b3644', borderRadius: '8px',
-      display: 'none', zIndex: '2147483003',
-    });
-    sWrap.append(sIn, sug);
+    const head = el('div'); head.className = 'va-pop-head';
+    const heading = el('div'); heading.className = 'va-pop-heading';
+    const eyebrow = el('div', null, initial.suggested ? 'AI SUGGESTION · REVIEW' : 'REGION CAPTURED'); eyebrow.className = 'va-eyebrow';
+    heading.append(eyebrow, el('strong', null, initial.suggested ? '确认 AI 标注' : '锚定一个词'), el('span', null, '词必填；释义和词性稍后也能补。'));
+    const close = mkIconButton('关闭编辑卡', 'close', () => pop.remove()); close.classList.add('va-close');
+    head.append(heading, close);
 
-    // 字段行
-    const wIn = el('input', { ...IN_STYLE, width: '108px' }); wIn.placeholder = '英文';
-    const lIn = el('input', { ...IN_STYLE, flex: '1' }); lIn.placeholder = '中文';
-    const sel = el('select', { ...IN_STYLE, padding: '5px' });
-    for (const o of ['n', 'v', 'a', 'ad', 'prep', 'conj', 'other']) { const op = document.createElement('option'); op.value = o; op.textContent = o; sel.appendChild(op); }
-    const dIn = el('input', { ...IN_STYLE, width: '58px' }); dIn.type = 'number'; dIn.min = '0.2'; dIn.step = '0.1'; dIn.value = DEFAULT_DUR.toFixed(1); dIn.title = '显示时长(秒)';
-    const ok = mkbtn('确定', commit); const cancel = mkbtn('取消', () => pop.remove());
-    const row2 = el('div', { display: 'flex', gap: '6px', alignItems: 'center' });
-    row2.append(wIn, lIn, sel, dIn, el('span', { color: '#8b949e', fontSize: '12px' }, '秒'), ok, cancel);
+    const wordLabel = el('label', null, '词语'); wordLabel.className = 'va-field-label';
+    const wIn = el('input'); wIn.className = 'va-input'; wIn.placeholder = '输入你想记住的词'; wIn.autocomplete = 'off'; wIn.maxLength = 120;
+    wIn.value = initial.word || '';
+    wIn.setAttribute('aria-label', '词语（必填）');
+    const label = el('label', null, '释义（选填）'); label.className = 'va-field-label';
+    const lIn = el('input'); lIn.className = 'va-input'; lIn.placeholder = '写下此处语境里的意思'; lIn.maxLength = 300; lIn.value = initial.label || '';
+    lIn.setAttribute('aria-label', '释义（选填）');
+    const detailRow = el('div', { display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: '9px', alignItems: 'end' });
+    const posWrap = el('label', { display: 'block' });
+    const posLabel = el('span', null, '词性'); posLabel.className = 'va-field-label';
+    posWrap.append(posLabel);
+    const sel = el('select'); sel.className = 'va-select'; sel.setAttribute('aria-label', '词性（选填）');
+    const posOptions = [['', '不指定'], ['n', '名词'], ['v', '动词'], ['a', '形容词'], ['ad', '副词'], ['prep', '介词'], ['conj', '连词'], ['other', '其他']];
+    for (const [value, text] of posOptions) { const op = document.createElement('option'); op.value = value; op.textContent = text; sel.appendChild(op); }
+    sel.value = initial.pos || '';
+    posWrap.appendChild(sel);
 
-    pop.append(sWrap, row2);
-
-    function setPos(v) {
-      if (!v) return;
-      let has = false;
-      for (const o of sel.options) if (o.value === v) has = true;
-      if (!has) { const o = document.createElement('option'); o.value = v; o.textContent = v; sel.appendChild(o); }
-      sel.value = v;
-    }
-
-    let items = [], active = -1;
-    function renderSug() {
-      if (!items.length) { sug.style.display = 'none'; return; }
-      sug.textContent = '';
-      items.forEach((r, i) => {
-        const it = el('div', {
-          padding: '4px 8px', cursor: 'pointer', display: 'flex', gap: '6px', alignItems: 'baseline',
-          background: i === active ? 'rgba(240,180,41,.16)' : 'transparent',
-        });
-        it.append(
-          el('b', { color: '#e6edf3' }, r[0]),
-          el('span', { color: '#9aa4af', fontSize: '12px' }, (r[2] || '') + (r[3] ? ' [' + r[3] + ']' : '')),
-          el('span', { color: '#5b6a7a', fontSize: '11px', marginLeft: 'auto' }, r[4] === 'it' ? '雅思/托福' : r[4] === 'i' ? '雅思' : '托福'),
-        );
-        it.onmousedown = (ev) => { ev.preventDefault(); pick(r); };
-        sug.appendChild(it);
+    const timeLabel = el('label', null, '出现时间'); timeLabel.className = 'va-field-label';
+    const timeRow = el('div'); timeRow.className = 'va-time-row';
+    const tIn = el('input'); tIn.className = 'va-input'; tIn.type = 'number'; tIn.min = '0'; tIn.step = '0.1';
+    tIn.value = String(r2(initial.t == null ? state.video.currentTime : initial.t)); tIn.setAttribute('aria-label', '出现时间（秒）');
+    const nowButton = mkbtn('用当前时间', () => { tIn.value = String(r2(state.video.currentTime)); });
+    timeRow.append(tIn, nowButton);
+    const durationLabel = el('label', null, '显示时长'); durationLabel.className = 'va-field-label';
+    const dIn = el('input'); dIn.className = 'va-input'; dIn.type = 'number'; dIn.min = '0.2'; dIn.step = '0.1'; dIn.value = String(initial.dur || DEFAULT_DUR);
+    dIn.setAttribute('aria-label', '显示时长（秒）');
+    const durationWrap = el('label'); durationWrap.append(durationLabel, dIn);
+    detailRow.append(posWrap, durationWrap);
+    const durChips = el('div'); durChips.className = 'va-duration';
+    for (const seconds of [0.5, 1, 2, 3]) {
+      const chip = mkbtn(seconds + 's', () => {
+        dIn.value = String(seconds);
+        durChips.querySelectorAll('.va-chip').forEach((n) => n.classList.toggle('is-active', n === chip));
       });
-      sug.style.display = 'block';
-    }
-    function doSearch() {
-      items = VINDEX ? VINDEX.search(sIn.value, 8) : [];
-      active = items.length ? 0 : -1;
-      renderSug();
-    }
-    function pick(r) {
-      wIn.value = r[0];
-      lIn.value = (r[2] || '').split('；')[0];
-      setPos(r[3]);
-      sIn.value = r[0];
-      sug.style.display = 'none';
-      lIn.focus();
+      chip.className = 'va-chip' + (seconds === Number(dIn.value) ? ' is-active' : '');
+      durChips.appendChild(chip);
     }
 
-    sIn.addEventListener('input', doSearch);
-    sIn.addEventListener('keydown', (ev) => {
-      if (ev.key === 'ArrowDown' && items.length) { active = (active + 1) % items.length; renderSug(); ev.preventDefault(); }
-      else if (ev.key === 'ArrowUp' && items.length) { active = (active - 1 + items.length) % items.length; renderSug(); ev.preventDefault(); }
-      else if (ev.key === 'Enter') { if (items.length && active >= 0) pick(items[active]); else commit(); ev.preventDefault(); }
-      else if (ev.key === 'Escape') pop.remove();
+    const dictionary = el('div'); dictionary.className = 'va-dictionary';
+    const dictionaryLabel = el('span', null, '查词'); dictionaryLabel.className = 'va-dictionary-label';
+    dictionary.appendChild(dictionaryLabel);
+    const dictLinks = [
+      ['剑桥', (word) => 'https://dictionary.cambridge.org/dictionary/english/' + encodeURIComponent(word)],
+      ['有道', (word) => 'https://www.youdao.com/result?word=' + encodeURIComponent(word) + '&lang=en'],
+      ['欧路', (word) => 'https://dict.eudic.net/dicts/en/' + encodeURIComponent(word)],
+    ].map(([name, href]) => {
+      const a = el('a', null, name); a.href = href(''); a.target = '_blank'; a.rel = 'noopener noreferrer'; a.dataset.dict = name; a.dataset.template = '1';
+      a.addEventListener('click', (ev) => { if (!wIn.value.trim()) { ev.preventDefault(); wIn.focus(); } });
+      dictionary.appendChild(a); return { a, href };
     });
-    for (const inp of [wIn, lIn, dIn]) inp.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') commit(); if (ev.key === 'Escape') pop.remove(); });
+    function updateDictionaryLinks() { for (const d of dictLinks) d.a.href = d.href(wIn.value.trim()); }
+    wIn.addEventListener('input', updateDictionaryLinks);
+
+    const actions = el('div'); actions.className = 'va-pop-actions';
+    const cancel = mkbtn('取消', () => pop.remove());
+    const saveButton = mkbtn(initial.suggested ? '确认并保存' : '保存并继续播放', commit); saveButton.classList.add('va-btn-primary');
+    actions.append(cancel, saveButton);
+    pop.append(head, wordLabel, wIn, label, lIn, detailRow, timeLabel, timeRow, durChips, dictionary, actions);
+    wIn.addEventListener('input', () => wIn.removeAttribute('aria-invalid'));
 
     function commit() {
-      const word = (wIn.value || sIn.value).trim();
-      if (!word) { sIn.focus(); return; }
+      const word = wIn.value.trim();
+      if (!word) { wIn.focus(); wIn.setAttribute('aria-invalid', 'true'); return; }
       state.entries.push({
         id: 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-        t: Math.round(state.video.currentTime * 100) / 100,
-        box, word, label: lIn.value.trim(), pos: sel.value,
-        dur: Math.max(0.2, parseFloat(dIn.value) || DEFAULT_DUR),
-        created: new Date().toISOString(),
+        t: Math.max(0, r2(parseFloat(tIn.value))), box, word, label: lIn.value.trim(), pos: sel.value,
+        dur: Math.max(0.2, r2(parseFloat(dIn.value) || DEFAULT_DUR)), created: new Date().toISOString(),
       });
       save(); pop.remove(); render();
+      if (state.video) state.video.play().catch(() => {});
+      showToast('已保存标注 · ' + word);
     }
-
-    document.body.appendChild(pop);
-    sIn.focus();
+    pop.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Escape') { ev.stopPropagation(); pop.remove(); }
+      else if (ev.key === 'Enter' && ev.target !== nowButton) { ev.preventDefault(); commit(); }
+    });
+    uiRoot.appendChild(pop);
+    if (innerWidth > 620) {
+      const popRect = pop.getBoundingClientRect();
+      if (popRect.bottom > innerHeight - 12) pop.style.top = Math.max(12, innerHeight - popRect.height - 12) + 'px';
+    }
+    wIn.focus({ preventScroll: true });
   }
 
-  function openEntryPop(e, x, y) {
-    state.video.pause();
-    const pop = el('div', {
-      'va-pop': '1', position: 'fixed', left: Math.max(8, Math.min(x + 8, innerWidth - 280)) + 'px', top: Math.max(8, Math.min(y + 8, innerHeight - 240)) + 'px',
-      zIndex: '2147483002', background: '#11161d', border: '1px solid #2b3644', borderRadius: '10px',
-      padding: '14px', minWidth: '240px', font: '14px/1.7 -apple-system,"PingFang SC",sans-serif', color: '#e6edf3',
-      boxShadow: '0 10px 30px rgba(0,0,0,.5)',
-    });
-    const dur = e.dur || DEFAULT_DUR;
-    const range = el('div', { color: '#8b949e', fontSize: '12px' }, '');
-    const updRange = () => { const s0 = parseFloat(tIn.value) || e.t; range.textContent = '显示区间 ' + r2(s0 - LEAD) + 's ~ ' + r2(s0 + (parseFloat(dIn.value) || dur)) + 's'; };
-    pop.append(el('div', { fontWeight: '700', color: '#f0b429' }, e.word),
-      el('div', { color: '#9aa4af' }, (e.label || '') + (e.pos ? ' [' + e.pos + ']' : '')),
-      range);
+  // Agent/MCP 只能把候选区域送进确认卡；用户点击保存后才写入标注。
+  window.__ANNOTA_UI__ = {
+    openPanel: () => togglePanel(true),
+    closePanel: () => togglePanel(false),
+    startAnnotating: () => toggleAnnotate(true),
+    proposeAnnotation(payload) {
+      if (!state.video || !payload || !payload.box) return false;
+      const values = ['x', 'y', 'w', 'h'].map((k) => Number(payload.box[k]));
+      if (!values.every(Number.isFinite)) return false;
+      const box = G.clampBox({ x: values[0], y: values[1], w: values[2], h: values[3] });
+      state.video.pause(); toggleAnnotate(false);
+      askWord(box, { ...payload, suggested: true });
+      return true;
+    },
+  };
 
-    if (isView()) {   // 观看端：只读
-      pop.appendChild(el('div', { color: '#8b949e', fontSize: '12px' }, 't = ' + e.t + 's ~ ' + r2((e.t || 0) + dur) + 's'));
-      const rowv = el('div', { display: 'flex', gap: '6px', marginTop: '8px' });
-      rowv.append(mkbtn('▶ 跳转', () => { state.video.currentTime = e.t; pop.remove(); }), mkbtn('关闭', () => pop.remove()));
-      pop.appendChild(rowv);
-      document.body.appendChild(pop);
+  function openEntryPop(e, x, y) {
+    if (state.video) state.video.pause();
+    const pop = el('div'); pop.className = 'va-popover'; pop.dataset.vaPop = '1';
+    pop.setAttribute('role', 'dialog'); pop.setAttribute('aria-label', '标注详情');
+    pop.style.left = Math.max(12, Math.min((Number(x) || 0) + 10, innerWidth - 372)) + 'px';
+    pop.style.top = Math.max(12, Math.min((Number(y) || 0) + 10, innerHeight - 430)) + 'px';
+    const dur = e.dur || DEFAULT_DUR;
+    const head = el('div'); head.className = 'va-pop-head';
+    const heading = el('div'); heading.className = 'va-pop-heading';
+    const eyebrow = el('div', null, 'ANNOTATION'); eyebrow.className = 'va-eyebrow';
+    heading.append(eyebrow, el('strong', null, e.word || '未命名'), el('span', null, (e.label || '未添加释义') + (e.pos ? ' · ' + e.pos : '')));
+    const close = mkIconButton('关闭词条详情', 'close', () => pop.remove()); close.classList.add('va-close');
+    head.append(heading, close);
+    const range = el('div'); range.className = 'va-range';
+    pop.append(head, range);
+
+    const tIn = el('input'); tIn.className = 'va-input'; tIn.type = 'number'; tIn.min = '0'; tIn.step = '0.1'; tIn.value = String(e.t); tIn.setAttribute('aria-label', '开始时间（秒）');
+    const dIn = el('input'); dIn.className = 'va-input'; dIn.type = 'number'; dIn.min = '0.2'; dIn.step = '0.1'; dIn.value = String(dur); dIn.setAttribute('aria-label', '显示时长（秒）');
+    const updRange = () => {
+      const start = Math.max(0, parseFloat(tIn.value) || 0);
+      range.textContent = formatTime(start) + ' – ' + formatTime(start + (parseFloat(dIn.value) || dur));
+    };
+    tIn.addEventListener('input', updRange); dIn.addEventListener('input', updRange);
+    const dictionary = el('div'); dictionary.className = 'va-dictionary';
+    const dictLabel = el('span', null, '查词'); dictLabel.className = 'va-dictionary-label'; dictionary.appendChild(dictLabel);
+    for (const [name, href] of [
+      ['剑桥', 'https://dictionary.cambridge.org/dictionary/english/' + encodeURIComponent(e.word || '')],
+      ['有道', 'https://www.youdao.com/result?word=' + encodeURIComponent(e.word || '') + '&lang=en'],
+      ['欧路', 'https://dict.eudic.net/dicts/en/' + encodeURIComponent(e.word || '')],
+    ]) {
+      const a = el('a', null, name); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; dictionary.appendChild(a);
+    }
+    pop.appendChild(dictionary);
+
+    if (isView()) {
+      const actions = el('div'); actions.className = 'va-pop-actions';
+      actions.append(mkbtn('跳转到画面', () => { if (state.video) state.video.currentTime = e.t; pop.remove(); }), mkbtn('关闭', () => pop.remove()));
+      pop.append(el('div', null, formatTime(e.t) + ' · 显示 ' + dur + ' 秒'), actions);
+      uiRoot.appendChild(pop);
       return;
     }
 
-    const tIn = el('input', { ...IN_STYLE, width: '64px' });
-    tIn.type = 'number'; tIn.min = '0'; tIn.step = '0.1'; tIn.value = String(e.t); tIn.title = '开始时间(秒)';
-    const dIn = el('input', { ...IN_STYLE, width: '56px' });
-    dIn.type = 'number'; dIn.min = '0.2'; dIn.step = '0.1'; dIn.value = String(dur); dIn.title = '时长(秒)';
-    tIn.addEventListener('input', updRange); dIn.addEventListener('input', updRange);
-
-    const tRow = el('div', { display: 'flex', gap: '6px', alignItems: 'center', marginTop: '6px' });
-    tRow.append(
-      el('span', { color: '#8b949e', fontSize: '12px' }, '开始(秒)'), tIn,
-      mkbtn('⏱ 用当前', () => { tIn.value = String(r2(state.video.currentTime)); updRange(); }),
-    );
-    const dRow = el('div', { display: 'flex', gap: '6px', alignItems: 'center', marginTop: '6px' });
-    dRow.append(
-      el('span', { color: '#8b949e', fontSize: '12px' }, '时长(秒)'), dIn,
-      mkbtn('保存', () => {
-        e.t = Math.max(0, r2(parseFloat(tIn.value)));
-        e.dur = Math.max(0.2, r2(parseFloat(dIn.value) || DEFAULT_DUR));
-        save(); pop.remove(); render();
-      }),
-    );
-    pop.append(tRow, dRow);
-
-    const row = el('div', { display: 'flex', gap: '6px', marginTop: '8px' });
-    row.append(
-      mkbtn('▶ 跳转', () => { state.video.currentTime = parseFloat(tIn.value) || e.t; pop.remove(); }),
-      mkbtn('🗑 删除', () => { state.entries = state.entries.filter((x2) => x2 !== e); save(); pop.remove(); render(); }),
-      mkbtn('关闭', () => pop.remove()),
-    );
-    pop.appendChild(row);
+    const wordInput = el('input'); wordInput.className = 'va-input'; wordInput.value = e.word || ''; wordInput.setAttribute('aria-label', '词语');
+    const labelInput = el('input'); labelInput.className = 'va-input'; labelInput.value = e.label || ''; labelInput.placeholder = '释义（选填）'; labelInput.setAttribute('aria-label', '释义');
+    const timeLabel = el('label', null, '出现时间'); timeLabel.className = 'va-field-label';
+    const timeRow = el('div'); timeRow.className = 'va-time-row';
+    const now = mkbtn('用当前时间', () => { tIn.value = state.video ? String(r2(state.video.currentTime)) : String(e.t); updRange(); });
+    timeRow.append(tIn, now);
+    const durationLabel = el('label', null, '显示时长'); durationLabel.className = 'va-field-label';
+    const actions = el('div'); actions.className = 'va-pop-actions';
+    const jump = mkbtn('跳转', () => { if (state.video) state.video.currentTime = Math.max(0, parseFloat(tIn.value) || e.t); pop.remove(); });
+    const remove = mkbtn('删除', () => { state.entries = state.entries.filter((item) => item !== e); save(); pop.remove(); render(); showToast('已删除标注'); });
+    remove.classList.add('va-btn-danger');
+    const saveButton = mkbtn('保存修改', () => {
+      const word = wordInput.value.trim();
+      if (!word) { wordInput.focus(); return; }
+      e.word = word; e.label = labelInput.value.trim();
+      e.t = Math.max(0, r2(parseFloat(tIn.value)));
+      e.dur = Math.max(0.2, r2(parseFloat(dIn.value) || DEFAULT_DUR));
+      save(); render(); pop.remove(); showToast('标注已更新');
+    });
+    saveButton.classList.add('va-btn-primary');
+    actions.append(jump, remove, saveButton);
+    pop.append(el('label', null, '词语'), wordInput, el('label', null, '释义（选填）'), labelInput, timeLabel, timeRow, durationLabel, dIn, actions);
+    pop.querySelectorAll('.va-popover > label').forEach((n) => { n.className = 'va-field-label'; });
     updRange();
-    document.body.appendChild(pop);
+    uiRoot.appendChild(pop);
+    wordInput.focus({ preventScroll: true });
   }
 
   /* ---------- 同步 ---------- */
@@ -670,7 +895,7 @@
 
   function mediaMeta() {
     return {
-      platform: state.platform, videoId: state.mediaId, url: location.href,
+      platform: state.platform, videoId: state.mediaId, url: location.href, title: document.title,
       intrinsic: { w: state.video ? state.video.videoWidth : 0, h: state.video ? state.video.videoHeight : 0 },
     };
   }
@@ -862,7 +1087,10 @@
     state.entries = []; save(); render();
   }
 
-  function updateStatus() { status.textContent = state.entries.length ? state.entries.length + ' 条' : ''; }
+  function updateStatus() {
+    statusText.textContent = state.entries.length ? state.entries.length + ' 条标注' : '就绪';
+    status.dataset.state = 'ready';
+  }
 
   /* ---------- 启动 ---------- */
   A.watch((v) => { if (v) attach(v); else detach(); });

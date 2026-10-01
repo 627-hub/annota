@@ -183,6 +183,12 @@
           "markdownDescription": "Enables the bridge_probe_reply command without any pre-configured scope."
         },
         {
+          "description": "Allows the Annota toolbar to navigate browser history and reload the active page.",
+          "type": "string",
+          "const": "allow-browser-action",
+          "markdownDescription": "Allows the Annota toolbar to navigate browser history and reload the active page."
+        },
+        {
           "description": "Enables the capture_frame command without any pre-configured scope.",
           "type": "string",
           "const": "allow-capture-frame",

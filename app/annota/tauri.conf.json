@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "app.annota",
   "build": {
-    "frontendDist": "index.html"
+    "frontendDist": "public"
   },
   "app": {
     "windows": [],

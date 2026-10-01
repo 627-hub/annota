@@ -32,7 +32,7 @@ VARIANTS = {
 }
 
 PARTS = ["geometry.js", "adapter.js", "vocab.js"]
-TAIL = ["design-tokens.js", "core.js"]
+TAIL = ["design-tokens.js", "overlay-theme.js", "core.js"]
 
 
 def read_src(p):

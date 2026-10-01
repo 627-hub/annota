@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Annota · 内容工作区</title>
+  <link rel="stylesheet" href="/app/annota/public/tokens.css">
+  <style>
+    * { box-sizing:border-box; }
+    html, body { min-height:100%; margin:0; }
+    body {
+      color:var(--va-page-ink); background:var(--va-page-bg); font:14px/1.55 var(--va-font-ui);
+      -webkit-font-smoothing:antialiased;
+    }
+    button, input { font:inherit; }
+    button { color:inherit; }
+    .workspace { min-height:100vh; display:grid; grid-template-columns:74px minmax(0,1fr); }
+    .rail {
+      position:sticky; top:0; display:flex; flex-direction:column; align-items:center; gap:21px;
+      height:100vh; padding:19px 10px 14px; border-right:1px solid var(--va-page-border);
+      background:var(--va-page-surface);
+    }
+    .rail-mark { display:grid; place-items:center; width:38px; height:38px; border:1px solid rgba(245,166,35,.34); border-radius:13px; background:rgba(245,166,35,.1); color:var(--va-accent); text-decoration:none; }
+    .rail-mark svg { width:21px; height:21px; }
+    .rail-nav { display:flex; flex-direction:column; align-items:center; gap:7px; width:100%; }
+    .rail-link { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; width:52px; min-height:48px; border:1px solid transparent; border-radius:12px; background:transparent; color:#737984; cursor:pointer; text-decoration:none; transition:all 130ms ease; }
+    .rail-link svg { width:17px; height:17px; }
+    .rail-link span { font-size:9px; line-height:1; }
+    .rail-link:hover { background:rgba(255,255,255,.045); color:#d5d7db; }
+    .rail-link.is-active { border-color:rgba(245,166,35,.15); background:rgba(245,166,35,.09); color:#e5bc7d; }
+    .rail-spacer { flex:1; }
+    .rail-engine { display:grid; place-items:center; width:36px; height:36px; border:1px solid rgba(255,255,255,.08); border-radius:12px; background:rgba(255,255,255,.025); color:#55bd8a; }
+    .rail-engine svg { width:17px; height:17px; }
+    .main-column { min-width:0; }
+    .page-shell { width:min(1120px,calc(100% - 72px)); margin:0 auto; padding:32px 0 64px; }
+    .page-top { display:flex; align-items:center; justify-content:space-between; margin-bottom:32px; }
+    .crumb { display:flex; align-items:center; gap:9px; color:#777d87; font-size:10px; font-weight:650; letter-spacing:.1em; }
+    .crumb-mark { width:5px; height:5px; border-radius:50%; background:var(--va-accent); }
+    .local-state { display:flex; align-items:center; gap:7px; color:#747b85; font-size:10px; letter-spacing:.055em; }
+    .local-state i { width:6px; height:6px; border-radius:50%; background:#49bc86; box-shadow:0 0 9px rgba(73,188,134,.3); }
+    .screen { display:none; }
+    .screen.is-active { display:block; animation:page-enter 180ms ease both; }
+    @keyframes page-enter { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:translateY(0); } }
+    .home-hero { display:grid; grid-template-columns:minmax(0,1.06fr) minmax(310px,.94fr); gap:54px; align-items:center; margin-bottom:42px; }
+    .eyebrow { display:flex; align-items:center; gap:9px; color:#b08b56; font-size:9px; font-weight:700; letter-spacing:.17em; }
+    .eyebrow::before { content:""; display:block; width:19px; height:1px; background:var(--va-accent); }
+    .hero-copy h1 { max-width:540px; margin:17px 0 15px; color:var(--va-page-ink); font-size:clamp(34px,4.5vw,55px); font-weight:570; letter-spacing:-.065em; line-height:1.12; text-wrap:balance; }
+    .hero-copy h1 em { color:#e6b96f; font-style:normal; }
+    .hero-copy p { max-width:440px; margin:0; color:var(--va-page-muted); font-size:13px; line-height:1.8; }
+    .open-form { display:flex; gap:8px; max-width:490px; margin-top:25px; padding:5px; border:1px solid var(--va-page-border); border-radius:13px; background:var(--va-page-surface-raised); box-shadow:0 7px 25px rgba(0,0,0,.16); }
+    .open-form:focus-within { border-color:rgba(245,166,35,.48); box-shadow:0 0 0 3px rgba(245,166,35,.08); }
+    .open-form input { min-width:0; height:40px; flex:1; padding:0 10px; border:0; outline:0; background:transparent; color:var(--va-page-ink); font-size:12px; user-select:text; }
+    .open-form input::placeholder { color:#6d737c; }
+    .primary-button { display:inline-flex; align-items:center; justify-content:center; gap:8px; min-height:40px; padding:0 15px; border:1px solid rgba(255,214,148,.32); border-radius:9px; background:var(--va-accent); color:#241707; font-size:11px; font-weight:720; cursor:pointer; transition:filter 120ms ease,transform 120ms ease; }
+    .primary-button:hover { filter:brightness(1.07); }
+    .primary-button:active { transform:scale(.97); }
+    .primary-button svg { width:15px; height:15px; }
+    .platform-links { display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-top:14px; }
+    .platform-links > span { margin-right:3px; color:#646b75; font-size:10px; }
+    .platform-link { padding:5px 9px; border:1px solid rgba(255,255,255,.075); border-radius:8px; color:#9298a1; font-size:10px; text-decoration:none; transition:all 120ms ease; }
+    .platform-link:hover { border-color:rgba(245,166,35,.25); background:rgba(245,166,35,.055); color:#e4c18f; }
+    .frame-art { position:relative; min-height:260px; padding:18px; border:1px solid var(--va-page-border); border-radius:18px; background:var(--va-page-surface); box-shadow:0 24px 60px rgba(0,0,0,.19); }
+    .frame-art-head { display:flex; align-items:center; justify-content:space-between; color:#707680; font-size:9px; font-weight:700; letter-spacing:.12em; }
+    .frame-art-head span:last-child { color:#5c626b; font:10px var(--va-font-mono); letter-spacing:0; }
+    .frame-screen { position:relative; height:162px; margin-top:15px; overflow:hidden; border:1px solid rgba(255,255,255,.08); border-radius:11px; background:#0c0d10; }
+    .scene-field { position:absolute; inset:0; background:linear-gradient(145deg,rgba(94,77,52,.18),transparent 54%),linear-gradient(0deg,#151516 0 17%,transparent 17%); }
+    .scene-horizon { position:absolute; left:0; right:0; bottom:30px; height:1px; background:rgba(222,193,143,.12); }
+    .scene-block { position:absolute; left:12%; bottom:29px; width:31%; height:43%; border:1px solid rgba(245,166,35,.14); border-radius:48% 48% 10% 10%; background:rgba(155,127,84,.08); }
+    .scene-box { position:absolute; left:28%; top:32%; width:29%; height:37%; border:1.5px solid var(--va-accent); border-radius:4px; box-shadow:0 0 0 4px rgba(245,166,35,.07); }
+    .scene-label { position:absolute; left:-1px; top:-23px; padding:3px 7px; border:1px solid rgba(245,166,35,.3); border-radius:6px; background:#1c1a17; color:#f0c57f; font:10px var(--va-font-mono); }
+    .scene-crosshair { position:absolute; left:43%; top:50%; width:7px; height:7px; border:1px solid #ffe2b1; border-radius:50%; box-shadow:0 0 0 4px rgba(245,166,35,.1); }
+    .frame-art-foot { display:flex; align-items:center; gap:12px; margin-top:12px; color:#787e87; font:9px var(--va-font-mono); }
+    .timeline { display:flex; align-items:center; gap:3px; flex:1; height:12px; }
+    .timeline i { display:block; width:2px; height:4px; border-radius:2px; background:#3b3b3c; }
+    .timeline i:nth-child(5n) { height:8px; }
+    .timeline i:nth-child(9) { height:11px; background:var(--va-accent); }
+    .section-head { display:flex; align-items:end; justify-content:space-between; gap:20px; margin-bottom:14px; }
+    .section-head h2 { margin:0; color:#e8e7e4; font-size:16px; font-weight:610; letter-spacing:-.035em; }
+    .section-head p { margin:4px 0 0; color:#737a84; font-size:10px; }
+    .text-link { border:0; background:transparent; color:#c3a06a; font-size:10px; cursor:pointer; text-decoration:none; }
+    .recent-list { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+    .recent-card { display:flex; align-items:center; gap:14px; min-width:0; min-height:84px; padding:14px 16px; border:1px solid var(--va-page-border); border-radius:13px; background:var(--va-page-surface-raised); color:inherit; text-decoration:none; transition:border-color 130ms ease,background 130ms ease,transform 130ms ease; }
+    .recent-card:hover { transform:translateY(-1px); border-color:rgba(245,166,35,.25); background:#18191d; }
+    .media-mark { display:grid; place-items:center; width:39px; height:39px; flex:none; border:1px solid rgba(245,166,35,.17); border-radius:11px; background:rgba(245,166,35,.07); color:#d6ad6d; }
+    .media-mark svg { width:18px; height:18px; }
+    .recent-copy { min-width:0; flex:1; }
+    .recent-copy strong { display:block; overflow:hidden; color:#dfe0e2; font-size:12px; font-weight:600; text-overflow:ellipsis; white-space:nowrap; }
+    .recent-copy span { display:block; margin-top:5px; overflow:hidden; color:#78808a; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+    .recent-count { color:#8b8f96; font:10px var(--va-font-mono); white-space:nowrap; }
+    .empty-record { display:grid; grid-template-columns:auto minmax(0,1fr) auto; align-items:center; gap:16px; min-height:100px; padding:19px 20px; border:1px dashed rgba(255,255,255,.12); border-radius:14px; background:rgba(255,255,255,.015); }
+    .empty-mark { display:grid; place-items:center; width:39px; height:39px; border:1px solid rgba(245,166,35,.18); border-radius:12px; color:var(--va-accent); background:rgba(245,166,35,.07); }
+    .empty-mark svg { width:18px; height:18px; }
+    .empty-copy strong { display:block; color:#dedfdf; font-size:12px; font-weight:610; }
+    .empty-copy span { display:block; margin-top:4px; color:#7b828c; font-size:10px; }
+    .onboarding { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); margin-top:13px; border-top:1px solid rgba(255,255,255,.065); border-bottom:1px solid rgba(255,255,255,.065); }
+    .onboarding-step { display:flex; gap:12px; min-width:0; padding:17px 16px 17px 4px; }
+    .onboarding-step + .onboarding-step { padding-left:17px; border-left:1px solid rgba(255,255,255,.065); }
+    .step-number { padding-top:1px; color:#c49550; font:10px var(--va-font-mono); }
+    .step-copy strong { display:block; color:#d9dadc; font-size:10px; font-weight:620; }
+    .step-copy span { display:block; margin-top:5px; color:#747b85; font-size:9px; line-height:1.55; }
+    .dictionary-strip { display:flex; align-items:center; gap:13px; flex-wrap:wrap; margin-top:35px; padding-top:16px; border-top:1px solid rgba(255,255,255,.06); }
+    .dictionary-strip > span { color:#6f7680; font-size:10px; }
+    .dictionary-strip a { color:#a9a096; font-size:10px; text-decoration:none; }
+    .dictionary-strip a:hover { color:#f0c57f; }
+    .library-toolbar { display:flex; align-items:center; gap:10px; margin:23px 0 15px; }
+    .library-search { width:min(340px,100%); }
+    .library-filter { display:flex; gap:5px; margin-left:auto; }
+    .filter-button { padding:7px 10px; border:1px solid transparent; border-radius:8px; background:transparent; color:#828892; font-size:10px; cursor:pointer; }
+    .filter-button.is-active { border-color:rgba(245,166,35,.2); background:rgba(245,166,35,.08); color:#e9c68f; }
+    .library-list { display:flex; flex-direction:column; gap:7px; }
+    .library-row { display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:18px; min-height:67px; padding:12px 15px; border:1px solid rgba(255,255,255,.07); border-radius:12px; background:#151619; }
+    .library-row a { color:#e1e2e3; font-size:12px; font-weight:600; text-decoration:none; }
+    .library-row a:hover { color:#f3c47e; }
+    .library-meta { margin-top:4px; color:#7e858e; font-size:10px; }
+    .library-count { color:#91969e; font:10px var(--va-font-mono); white-space:nowrap; }
+    .settings-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px; margin-top:24px; }
+    .setting-section { padding:18px; border:1px solid var(--va-page-border); border-radius:14px; background:var(--va-page-surface-raised); }
+    .setting-section h3 { margin:0; color:#e0e1e2; font-size:12px; font-weight:630; }
+    .setting-section p { margin:5px 0 14px; color:#7c838d; font-size:10px; }
+    .setting-actions { display:flex; gap:7px; flex-wrap:wrap; }
+    .secondary-button { min-height:34px; padding:0 11px; border:1px solid rgba(255,255,255,.1); border-radius:9px; background:rgba(255,255,255,.045); color:#c3c7cc; font-size:10px; cursor:pointer; }
+    .secondary-button:hover { border-color:rgba(245,166,35,.25); color:#f0c57f; }
+    .secondary-button.is-active { border-color:rgba(245,166,35,.34); background:rgba(245,166,35,.1); color:#f0c57f; }
+    .empty-library { padding:26px; border:1px dashed rgba(255,255,255,.1); border-radius:13px; color:#828994; text-align:center; font-size:11px; }
+    .page-toast { position:fixed; right:25px; bottom:22px; z-index:5; max-width:380px; padding:10px 14px; border:1px solid rgba(255,255,255,.11); border-radius:11px; background:#1a1b1f; color:#e6e6e8; box-shadow:0 12px 36px rgba(0,0,0,.32); opacity:0; transform:translateY(6px); transition:all 150ms ease; pointer-events:none; font-size:11px; }
+    .page-toast.is-visible { opacity:1; transform:translateY(0); }
+    .mcp-address { align-self:center; color:#d1ad75; font:10px var(--va-font-mono); }
+    [data-theme="light"] .rail { background:#fff; }
+    [data-theme="light"] .hero-copy h1,
+    [data-theme="light"] .section-head h2,
+    [data-theme="light"] .recent-copy strong,
+    [data-theme="light"] .setting-section h3,
+    [data-theme="light"] .library-row a { color:#17181c; }
+    [data-theme="light"] .hero-copy p,
+    [data-theme="light"] .section-head p,
+    [data-theme="light"] .local-state,
+    [data-theme="light"] .crumb,
+    [data-theme="light"] .recent-copy span,
+    [data-theme="light"] .empty-copy span,
+    [data-theme="light"] .setting-section p,
+    [data-theme="light"] .library-meta { color:#626b78; }
+    [data-theme="light"] .frame-art,
+    [data-theme="light"] .recent-card,
+    [data-theme="light"] .setting-section { background:#fff; border-color:#e7e8ec; }
+    [data-theme="light"] .frame-screen { background:#eceef1; border-color:#dde0e5; }
+    [data-theme="light"] .scene-field { background:linear-gradient(145deg,rgba(172,143,96,.15),transparent 54%),linear-gradient(0deg,#dfe1e4 0 17%,transparent 17%); }
+    [data-theme="light"] .scene-horizon { background:rgba(80,73,62,.2); }
+    [data-theme="light"] .scene-block { border-color:rgba(150,119,72,.2); background:rgba(155,127,84,.12); }
+    [data-theme="light"] .open-form { background:#fff; border-color:#dfe1e5; }
+    [data-theme="light"] .open-form input { color:#17181c; }
+    [data-theme="light"] .platform-link,
+    [data-theme="light"] .secondary-button { border-color:#dfe1e5; background:#fff; color:#4b5563; }
+    [data-theme="light"] .empty-record,
+    [data-theme="light"] .library-row { border-color:#dfe1e5; background:rgba(255,255,255,.68); }
+    [data-theme="light"] .empty-copy strong { color:#24262a; }
+    [data-theme="light"] .setting-section { box-shadow:0 5px 18px rgba(20,25,35,.035); }
+    :focus-visible { outline:2px solid var(--va-accent); outline-offset:2px; }
+    @media (max-width:850px) {
+      .page-shell { width:min(100% - 40px,760px); padding-top:28px; }
+      .home-hero { grid-template-columns:1fr; gap:27px; margin-bottom:45px; }
+      .frame-art { min-height:245px; }
+      .frame-screen { height:142px; }
+    }
+    @media (max-width:620px) {
+      .workspace { grid-template-columns:58px minmax(0,1fr); }
+      .rail { padding:12px 5px; gap:16px; }
+      .rail-link { width:46px; }
+      .page-shell { width:calc(100% - 30px); padding:23px 0 55px; }
+      .page-top { margin-bottom:30px; }
+      .home-hero { gap:22px; margin-bottom:42px; }
+      .hero-copy h1 { font-size:35px; }
+      .frame-art { min-height:220px; padding:15px; }
+      .frame-screen { height:133px; }
+      .recent-list { grid-template-columns:1fr; }
+      .empty-record { grid-template-columns:auto minmax(0,1fr); }
+      .empty-record .secondary-button { grid-column:2; justify-self:start; }
+      .onboarding { grid-template-columns:1fr; }
+      .onboarding-step, .onboarding-step + .onboarding-step { padding:12px 6px; border-left:0; }
+      .onboarding-step + .onboarding-step { border-top:1px solid rgba(255,255,255,.065); }
+      .settings-layout { grid-template-columns:1fr; }
+      .library-toolbar { align-items:flex-start; flex-wrap:wrap; }
+      .library-filter { width:100%; margin-left:0; }
+      .library-row { grid-template-columns:minmax(0,1fr) auto; gap:8px; }
+      .library-count { grid-column:2; }
+    }
+    @media (prefers-reduced-motion:reduce) { *,*::before,*::after { animation-duration:.01ms!important; transition-duration:.01ms!important; } }
+  </style>
+</head>
+<body>
+  <div class="workspace">
+    <aside class="rail" aria-label="Annota 导航">
+      <a class="rail-mark" href="#home" aria-label="Annota 首页"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 19 7.5-14 7.5 14M8.2 13.2h7.6"/><path d="M3 7V3h4M17 3h4v4M21 17v4h-4M7 21H3v-4" opacity=".55"/></svg></a>
+      <nav class="rail-nav">
+        <a class="rail-link is-active" href="#home" data-route="home" aria-label="首页"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 10 8.5-7 8.5 7v9a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3.5 19v-9Z"/><path d="M9 20v-6h6v6"/></svg><span>首页</span></a>
+        <a class="rail-link" href="#library" data-route="library" aria-label="我的库"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16M4 12h16M4 18.5h16"/><path d="M7 3v5M17 10v4M10 16v5"/></svg><span>我的库</span></a>
+      </nav>
+      <div class="rail-spacer"></div>
+      <nav class="rail-nav">
+        <a class="rail-link" href="#settings" data-route="settings" aria-label="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="m19.4 15 .1.1 1.1 1.9-1.7 2.9-2.2-.5a7.9 7.9 0 0 1-1.6.9l-.8 2.1h-3.4l-.8-2.1a7.9 7.9 0 0 1-1.6-.9l-2.2.5-1.7-2.9 1.1-1.9A8.3 8.3 0 0 1 5.5 13l-2-1v-3l2-1a8.3 8.3 0 0 1 .2-1.6l-1.1-1.9 1.7-2.9 2.2.5a7.9 7.9 0 0 1 1.6-.9l.8-2.1h3.4l.8 2.1a7.9 7.9 0 0 1 1.6.9l2.2-.5 1.7 2.9-1.1 1.9a8.3 8.3 0 0 1 .2 1.6l2 1v3l-2 1a8.3 8.3 0 0 1-.3 1.9Z" transform="translate(0 1) scale(.9)"/></svg><span>设置</span></a>
+      </nav>
+      <div class="rail-engine" id="rail-engine" title="本地服务检测中" aria-label="本地服务状态"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><circle cx="12" cy="12" r="5.5"/></svg></div>
+    </aside>
+
+    <div class="main-column">
+      <div class="page-shell">
+        <header class="page-top">
+          <div class="crumb"><i class="crumb-mark"></i><span id="crumb-label">ANNOTATION SPACE / HOME</span></div>
+          <div class="local-state" id="local-state"><i></i><span>本地优先 · 数据留在此设备</span></div>
+        </header>
+
+        <main>
+          <section class="screen is-active" id="screen-home" aria-label="首页">
+            <div class="home-hero">
+              <div class="hero-copy">
+                <div class="eyebrow">A LAYER FOR WHAT MATTERS</div>
+                <h1>重要内容，<br><em>值得留下一层。</em></h1>
+                <p>在视频、图片和文章上标记关键一刻。内容仍在原处，标注由你保存、整理和带走。</p>
+                <form class="open-form" id="open-form">
+                  <input id="quick-url" type="text" placeholder="粘贴视频或网页链接" autocomplete="url" spellcheck="false" aria-label="视频或网页链接">
+                  <button class="primary-button" type="submit"><span>打开内容</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
+                </form>
+                <div class="platform-links"><span>常用平台</span><a class="platform-link" href="https://www.bilibili.com/">Bilibili</a><a class="platform-link" href="https://www.youtube.com/">YouTube</a><a class="platform-link" href="https://www.douyin.com/">抖音</a></div>
+              </div>
+
+              <div class="frame-art" aria-label="区域标注示意图">
+                <div class="frame-art-head"><span>ANNOTATION PREVIEW</span><span>00:03.2 · VIDEO</span></div>
+                <div class="frame-screen"><div class="scene-field"></div><div class="scene-horizon"></div><div class="scene-block"></div><div class="scene-box"><span class="scene-label">tractor</span><i class="scene-crosshair"></i></div></div>
+                <div class="frame-art-foot"><span>FRAME</span><div class="timeline" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><span>REGION</span></div>
+              </div>
+            </div>
+
+            <section aria-labelledby="recent-heading">
+              <div class="section-head"><div><h2 id="recent-heading">继续</h2><p>最近在原内容上留下的标注</p></div><a href="#library" class="text-link">打开我的库 →</a></div>
+              <div class="recent-list" id="recent-list" aria-live="polite"></div>
+              <div class="onboarding" id="onboarding-guide">
+                <div class="onboarding-step"><span class="step-number">01</span><span class="step-copy"><strong>打开一段内容</strong><span>粘贴视频、图片或网页链接。</span></span></div>
+                <div class="onboarding-step"><span class="step-number">02</span><span class="step-copy"><strong>锚定重要区域</strong><span>按 ⌥D 或点工具坞的「标注」，框出画面。</span></span></div>
+                <div class="onboarding-step"><span class="step-number">03</span><span class="step-copy"><strong>整理并带走</strong><span>侧栏查看标注；更多菜单可导出 Pack。</span></span></div>
+              </div>
+            </section>
+            <div class="dictionary-strip"><span>查词工具</span><a href="https://dictionary.cambridge.org/" target="_blank" rel="noopener noreferrer">Cambridge Dictionary ↗</a><a href="https://www.youdao.com/" target="_blank" rel="noopener noreferrer">有道词典 ↗</a><a href="https://dict.eudic.net/" target="_blank" rel="noopener noreferrer">欧路词典 ↗</a></div>
+          </section>
+
+          <section class="screen" id="screen-library" aria-label="我的库">
+            <div class="eyebrow">YOUR LOCAL COLLECTION</div>
+            <div class="section-head" style="align-items:center;margin-top:10px;margin-bottom:0"><div><h2 style="font-size:29px">我的库</h2><p>只整理标注与链接；视频和图片仍由原平台托管。</p></div><button id="export-all" class="secondary-button">导出全部数据</button></div>
+            <div class="library-toolbar"><input id="library-search" class="va-input library-search" type="search" placeholder="搜索标题、平台或标注词" aria-label="搜索我的库"><div class="library-filter"><button class="filter-button is-active" data-filter="all">全部</button><button class="filter-button" data-filter="video">视频</button><button class="filter-button" data-filter="image">图片</button><button class="filter-button" data-filter="article">文章</button></div></div>
+            <div id="library-list" class="library-list"></div>
+          </section>
+
+          <section class="screen" id="screen-settings" aria-label="设置">
+            <div class="eyebrow">ANNOTA PREFERENCES</div>
+            <div class="section-head" style="align-items:center;margin-top:10px"><div><h2 style="font-size:29px">设置</h2><p>控制本地体验、查词和数据导出。</p></div></div>
+            <div class="settings-layout">
+              <section class="setting-section"><h3>外观</h3><p>页面工作区主题。视频上的标注工具保持深色高对比。</p><div class="setting-actions"><button class="secondary-button" data-theme-choice="dark">深色</button><button class="secondary-button" data-theme-choice="light">浅色</button><button class="secondary-button" data-theme-choice="system">跟随系统</button></div></section>
+              <section class="setting-section"><h3>数据与隐私</h3><p>标注默认保存在本地。你可以随时导出完整数据副本。</p><div class="setting-actions"><button class="secondary-button" id="export-settings">导出全部标注</button><button class="secondary-button" id="refresh-library">刷新本地数据</button></div></section>
+              <section class="setting-section"><h3>查词网站</h3><p>编辑标注时使用外部词典，词典内容由其服务方维护。</p><div class="setting-actions"><a class="platform-link" href="https://dictionary.cambridge.org/" target="_blank" rel="noopener noreferrer">Cambridge ↗</a><a class="platform-link" href="https://www.youdao.com/" target="_blank" rel="noopener noreferrer">有道 ↗</a><a class="platform-link" href="https://dict.eudic.net/" target="_blank" rel="noopener noreferrer">欧路 ↗</a></div></section>
+              <section class="setting-section"><h3>Agent 接入</h3><p>本地 MCP 服务地址，供兼容的 agent 调用 Annota 工具。</p><div class="setting-actions"><code class="mcp-address">http://127.0.0.1:8794/mcp</code><button id="copy-mcp" class="secondary-button">复制地址</button></div></section>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+  </div>
+  <div id="page-toast" class="page-toast" role="status" aria-live="polite"></div>
+  <script>
+    const api = (path) => fetch(path, { headers: { Accept: 'application/json' } });
+    const toast = document.getElementById('page-toast');
+    let toastTimer;
+    let records = [];
+    let activeFilter = 'all';
+    function notify(text) { toast.textContent = text; toast.classList.add('is-visible'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove('is-visible'), 2600); }
+    function safeUrl(value) {
+      try { const u = new URL(value); return ['http:', 'https:'].includes(u.protocol) ? u.href : ''; } catch (_) { return ''; }
+    }
+    function openContent(raw) {
+      let value = (raw || '').trim();
+      if (!value) return;
+      if (!/^https?:\/\//i.test(value)) value = 'https://' + value;
+      const url = safeUrl(value);
+      if (!url) { notify('请输入有效的 http(s) 网址'); return; }
+      window.location.href = url;
+    }
+    document.getElementById('open-form').addEventListener('submit', (event) => { event.preventDefault(); openContent(document.getElementById('quick-url').value); });
+
+    const screens = ['home', 'library', 'settings'];
+    function setRoute(name) {
+      const route = screens.includes(name) ? name : 'home';
+      for (const screen of screens) document.getElementById('screen-' + screen).classList.toggle('is-active', screen === route);
+      document.querySelectorAll('[data-route]').forEach((link) => link.classList.toggle('is-active', link.dataset.route === route));
+      document.getElementById('crumb-label').textContent = 'ANNOTATION SPACE / ' + route.toUpperCase();
+      if (route === 'library') renderLibrary();
+    }
+    window.addEventListener('hashchange', () => setRoute(location.hash.slice(1)));
+    setRoute(location.hash.slice(1));
+
+    function platformName(media) {
+      const name = (media && media.platform) || '';
+      return ({ bilibili: 'Bilibili', douyin: '抖音', youtube: 'YouTube' })[name] || name || '网页内容';
+    }
+    function recordTitle(pack, id) {
+      const media = pack.media || {};
+      const reference = media.title || media.name || media.videoId || id.replaceAll('_', ' ');
+      return String(reference).replace(/^(bilibili|douyin|youtube)[:_]/i, '');
+    }
+    function recordUpdated(pack) {
+      const entries = Array.isArray(pack.entries) ? pack.entries : [];
+      const date = entries.map((e) => e.created || '').filter(Boolean).sort().pop();
+      if (!date) return '本地标注';
+      const d = new Date(date);
+      return Number.isNaN(d.getTime()) ? '本地标注' : '最近标注 ' + d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+    }
+    function recordUpdatedTime(pack) {
+      const dates = (Array.isArray(pack.entries) ? pack.entries : []).map((e) => Date.parse(e.created || '')).filter(Number.isFinite);
+      return dates.length ? Math.max(...dates) : 0;
+    }
+    async function loadRecords() {
+      try {
+        const response = await api('/api/list');
+        if (!response.ok) throw new Error('HTTP ' + response.status);
+        const files = (await response.json()).files || [];
+        const packs = await Promise.all(files.slice(0, 100).map(async (file) => {
+          const id = String(file).replace(/\.json$/i, '');
+          try {
+            const r = await api('/api/anno/' + encodeURIComponent(id));
+            const pack = await r.json();
+            return { id, file, pack, media: pack.media || {}, entries: Array.isArray(pack.entries) ? pack.entries : [] };
+          } catch (_) { return null; }
+        }));
+        records = packs.filter((item) => item && item.entries.length > 0).sort((a, b) => recordUpdatedTime(b.pack) - recordUpdatedTime(a.pack));
+        renderRecent(); renderLibrary();
+        document.getElementById('rail-engine').title = '本地标注服务已连接';
+      } catch (error) {
+        document.getElementById('rail-engine').style.color = '#ef7379';
+        document.getElementById('rail-engine').title = '本地服务暂不可用';
+        renderRecent(); renderLibrary();
+      }
+    }
+    function cardFor(item) {
+      const url = safeUrl(item.media.url || '');
+      const card = document.createElement(url ? 'a' : 'div');
+      card.className = 'recent-card';
+      if (url) { card.href = url; card.title = '在原平台打开'; }
+      const mark = document.createElement('span'); mark.className = 'media-mark';
+      mark.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="m10 9 5 3-5 3V9Z"/></svg>';
+      const copy = document.createElement('span'); copy.className = 'recent-copy';
+      const title = document.createElement('strong'); title.textContent = recordTitle(item.pack, item.id);
+      const meta = document.createElement('span'); meta.textContent = platformName(item.media) + ' · ' + recordUpdated(item.pack);
+      copy.append(title, meta);
+      const count = document.createElement('span'); count.className = 'recent-count'; count.textContent = item.entries.length + ' 条';
+      card.append(mark, copy, count);
+      return card;
+    }
+    function renderRecent() {
+      const list = document.getElementById('recent-list'); list.textContent = '';
+      document.getElementById('onboarding-guide').style.display = records.length ? 'none' : 'grid';
+      if (records.length) {
+        records.slice(0, 4).forEach((item) => list.appendChild(cardFor(item)));
+        return;
+      }
+      const empty = document.createElement('div'); empty.className = 'empty-record';
+      const mark = document.createElement('span'); mark.className = 'empty-mark';
+      mark.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v14H4z"/><path d="M8 9h8M8 13h5"/></svg>';
+      const copy = document.createElement('span'); copy.className = 'empty-copy';
+      const title = document.createElement('strong'); title.textContent = '你的本地库还空着';
+      const desc = document.createElement('span'); desc.textContent = '打开一段内容，框出一个词或区域，第一条记忆就会留在这里。';
+      copy.append(title, desc);
+      const button = document.createElement('button'); button.className = 'secondary-button'; button.textContent = '开始第一步';
+      button.onclick = () => { document.getElementById('quick-url').focus(); document.getElementById('quick-url').scrollIntoView({ block:'center', behavior:'smooth' }); };
+      empty.append(mark, copy, button); list.appendChild(empty);
+    }
+    function renderLibrary() {
+      const list = document.getElementById('library-list');
+      if (!list) return;
+      const q = (document.getElementById('library-search').value || '').trim().toLocaleLowerCase();
+      list.textContent = '';
+      const filtered = records.filter((item) => {
+        const type = item.media.type || 'video';
+        const terms = [recordTitle(item.pack, item.id), platformName(item.media), ...item.entries.map((e) => e.word + ' ' + (e.label || ''))].join(' ').toLocaleLowerCase();
+        return (activeFilter === 'all' || type === activeFilter) && (!q || terms.includes(q));
+      });
+      if (!filtered.length) {
+        const empty = document.createElement('div'); empty.className = 'empty-library';
+        empty.textContent = records.length ? '没有匹配的本地标注。' : '这里会汇集你标注过的视频、图片和文章。当前还没有记录。';
+        list.appendChild(empty); return;
+      }
+      for (const item of filtered) {
+        const row = document.createElement('div'); row.className = 'library-row';
+        const info = document.createElement('div');
+        const link = document.createElement('a'); link.textContent = recordTitle(item.pack, item.id);
+        const url = safeUrl(item.media.url || ''); if (url) { link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer'; }
+        const meta = document.createElement('div'); meta.className = 'library-meta'; meta.textContent = platformName(item.media) + ' · ' + recordUpdated(item.pack);
+        info.append(link, meta);
+        const count = document.createElement('span'); count.className = 'library-count'; count.textContent = item.entries.length + ' 条';
+        const exportButton = document.createElement('button'); exportButton.className = 'secondary-button'; exportButton.textContent = '导出 Pack';
+        exportButton.onclick = () => downloadJson(item.pack, 'annota_' + item.id + '.json');
+        row.append(info, count, exportButton); list.appendChild(row);
+      }
+    }
+    document.getElementById('library-search').addEventListener('input', renderLibrary);
+    document.querySelectorAll('[data-filter]').forEach((button) => button.addEventListener('click', () => {
+      activeFilter = button.dataset.filter;
+      document.querySelectorAll('[data-filter]').forEach((item) => item.classList.toggle('is-active', item === button));
+      renderLibrary();
+    }));
+    function downloadJson(data, filename) {
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click(); URL.revokeObjectURL(a.href);
+    }
+    async function exportAll() {
+      await loadRecords();
+      downloadJson({ format: 'annota-export/1', exported: new Date().toISOString(), packs: records.map((r) => r.pack) }, 'annota-library.json');
+      notify('已导出 ' + records.length + ' 个 Pack');
+    }
+    document.getElementById('export-all').addEventListener('click', exportAll);
+    document.getElementById('export-settings').addEventListener('click', exportAll);
+    document.getElementById('refresh-library').addEventListener('click', () => loadRecords().then(() => notify('本地记录已刷新')));
+    document.getElementById('copy-mcp').addEventListener('click', async () => {
+      try { await window.__ANNOTA__.copyToClipboard({ text: 'http://127.0.0.1:8794/mcp' }); notify('MCP 地址已复制'); }
+      catch (_) { notify('复制失败，请手动复制地址'); }
+    });
+    document.querySelectorAll('[data-theme-choice]').forEach((button) => button.addEventListener('click', () => {
+      const choice = button.dataset.themeChoice;
+      localStorage.setItem('annota:theme', choice);
+      document.documentElement.dataset.theme = choice === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : choice;
+      document.querySelectorAll('[data-theme-choice]').forEach((item) => item.classList.toggle('is-active', item === button));
+      notify('外观已更新');
+    }));
+    const storedTheme = localStorage.getItem('annota:theme');
+    const initialTheme = storedTheme || 'dark';
+    document.documentElement.dataset.theme = initialTheme === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : initialTheme;
+    document.querySelectorAll('[data-theme-choice]').forEach((item) => item.classList.toggle('is-active', item.dataset.themeChoice === initialTheme));
+    loadRecords();
+  </script>
+</body>
+</html>

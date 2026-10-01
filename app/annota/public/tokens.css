@@ -21,6 +21,11 @@
 
   /* 页面态浅色 */
   --va-page-bg: #0B0E13;
+  --va-page-surface: #111216;
+  --va-page-surface-raised: #151619;
+  --va-page-border: rgba(255, 255, 255, 0.075);
+  --va-page-ink: #F1F0ED;
+  --va-page-muted: #838A94;
   --va-page-bg-light: #FAFAFC;
   --va-card-bg-light: #FFFFFF;
   --va-text-light: #17181C;
@@ -76,6 +81,11 @@
 /* 页面态浅色模式（起始页/库/设置等），通过 <html data-theme="light"> 切换 */
 [data-theme="light"] {
   --va-page-bg: var(--va-page-bg-light);
+  --va-page-surface: #FFFFFF;
+  --va-page-surface-raised: #F4F5F7;
+  --va-page-border: #E7E8EC;
+  --va-page-ink: #17181C;
+  --va-page-muted: #626B78;
   --va-text: var(--va-text-light);
   --va-text-secondary: #4B5563;
   --va-text-muted: #9CA3AF;

@@ -21,6 +21,22 @@ const TOOLBAR_HEIGHT: f64 = 56.0;
 const SYNC_HOSTS: &[&str] = &["127.0.0.1", "localhost", "::1"];
 const SYNC_PORT: u16 = 8793;
 
+fn titlebar_inset(window: &tauri::Window, scale: f64) -> u32 {
+    let measured = match (window.outer_position(), window.inner_position()) {
+        (Ok(outer), Ok(inner)) => inner.y.saturating_sub(outer.y).max(0) as u32,
+        _ => 0,
+    };
+    #[cfg(target_os = "macos")]
+    {
+        if measured == 0 { (32.0 * scale) as u32 } else { measured }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = scale;
+        measured
+    }
+}
+
 // ---------- 桥接脚本：注入 window.__ANNOTA__ + vaCapture/vaCopy/vaFetch ----------
 const BRIDGE_JS: &str = r#"
 (function () {
@@ -61,46 +77,6 @@ const BRIDGE_JS: &str = r#"
   window.vaFetch = function (method, url, body) {
     return invoke('va_fetch', { method: method || 'GET', url: url, body: body });
   };
-
-  // 自检：延迟 2s 验证 __ANNOTA__.captureFrame 与 vaFetch 在 webview 中可用
-  setTimeout(function () {
-    function badge(text, color) {
-      try {
-        var d = document.createElement('div');
-        d.textContent = text;
-        d.style.cssText = 'position:fixed;left:8px;top:8px;z-index:2147483600;padding:6px 10px;background:' + (color || '#c00') + ';color:#fff;font:14px sans-serif;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.4);';
-        document.body.appendChild(d);
-      } catch (e) {}
-    }
-    try {
-      window.__ANNOTA__.captureFrame().then(function (res) {
-        window.__TAURI_INTERNALS__.invoke('bridge_probe_reply', {
-          keys: ['capture-smoke', location.hostname, res.width + 'x' + res.height]
-        });
-        badge('captureFrame OK ' + res.width + 'x' + res.height, '#2a8');
-      }).catch(function (e) {
-        window.__TAURI_INTERNALS__.invoke('bridge_probe_reply', {
-          keys: ['capture-smoke-err', String(e.message)]
-        });
-        badge('captureFrame ERR ' + e.message, '#c00');
-      });
-      window.vaFetch('GET', 'http://127.0.0.1:8793/api/health').then(function (r) {
-        var statusStr = String((r && r.status) !== undefined ? r.status : (r && r.ok ? 'ok' : JSON.stringify(r)));
-        window.__TAURI_INTERNALS__.invoke('bridge_probe_reply', {
-          keys: ['vaFetch-smoke', location.hostname, statusStr]
-        });
-        badge('vaFetch OK ' + statusStr, '#28c');
-      }).catch(function (e) {
-        var info = (e && (e.message || e.stack)) ? (String(e.message) + ' | ' + String(e.stack)) : String(e);
-        window.__TAURI_INTERNALS__.invoke('bridge_probe_reply', {
-          keys: ['vaFetch-smoke-err', location.hostname, info.slice(0, 200)]
-        });
-        badge('vaFetch ERR ' + info.slice(0, 120), '#c00');
-      });
-    } catch (e) {
-      badge('SMOKE ERR ' + e.message, '#c00');
-    }
-  }, 2000);
 
   emit('annota-bridge-ready', {});
 })();
@@ -247,6 +223,18 @@ async fn navigate_browser(app: tauri::AppHandle, url: String) -> Result<(), Stri
 }
 
 #[tauri::command]
+fn browser_action(app: tauri::AppHandle, action: String) -> Result<(), String> {
+    let script = match action.as_str() {
+        "back" => "history.back()",
+        "forward" => "history.forward()",
+        "reload" => "location.reload()",
+        _ => return Err("不支持的浏览器操作".to_string()),
+    };
+    let webview = app.get_webview("browser").ok_or_else(|| "未找到 browser webview".to_string())?;
+    webview.eval(script).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 async fn va_fetch(
     method: String,
     url: String,
@@ -283,11 +271,13 @@ fn apply_layout(app: &AppHandle) -> Result<(), String> {
     let window = app.get_window("main").ok_or_else(|| "主窗口不存在".to_string())?;
     let size = window.inner_size().map_err(|e| e.to_string())?;
     let sf = window.scale_factor().map_err(|e| e.to_string())?;
+    let top_inset = titlebar_inset(&window, sf);
     let toolbar_h = (TOOLBAR_HEIGHT * sf) as u32;
+    let browser_top = top_inset.saturating_add(toolbar_h);
 
     if let Some(toolbar) = app.get_webview("toolbar") {
         toolbar
-            .set_position(PhysicalPosition::new(0, 0))
+            .set_position(PhysicalPosition::new(0, top_inset as i32))
             .map_err(|e| e.to_string())?;
         toolbar
             .set_size(PhysicalSize::new(size.width, toolbar_h))
@@ -295,22 +285,24 @@ fn apply_layout(app: &AppHandle) -> Result<(), String> {
     }
     if let Some(browser) = app.get_webview("browser") {
         browser
-            .set_position(PhysicalPosition::new(0, toolbar_h))
+            .set_position(PhysicalPosition::new(0, browser_top as i32))
             .map_err(|e| e.to_string())?;
         browser
             .set_size(PhysicalSize::new(
                 size.width,
-                size.height.saturating_sub(toolbar_h),
+                size.height.saturating_sub(browser_top),
             ))
             .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
-fn setup_webviews(window: &tauri::Window) -> Result<(), String> {
+fn setup_webviews(window: &tauri::Window, app: &AppHandle) -> Result<(), String> {
     let size = window.inner_size().map_err(|e| e.to_string())?;
     let sf = window.scale_factor().map_err(|e| e.to_string())?;
+    let top_inset = titlebar_inset(window, sf);
     let toolbar_h = (TOOLBAR_HEIGHT * sf) as u32;
+    let browser_top = top_inset.saturating_add(toolbar_h);
 
     // 工具栏 webview：加载本地 index.html（地址栏）
     let toolbar = WebviewBuilder::new("toolbar", WebviewUrl::App("index.html".into()))
@@ -319,14 +311,15 @@ fn setup_webviews(window: &tauri::Window) -> Result<(), String> {
     window
         .add_child(
             toolbar,
-            PhysicalPosition::new(0, 0),
+            PhysicalPosition::new(0, top_inset as i32),
             PhysicalSize::new(size.width, toolbar_h),
         )
         .map_err(|e| e.to_string())?;
 
-    // 浏览器 webview：默认打开本机 demo 页，注入桥 + annotate.user.js
-    let start_url = url::Url::parse("http://127.0.0.1:8793/dev/demo.html")
+    // 浏览器 webview：默认打开 Annota 本地工作区，注入桥 + annotate.user.js
+    let start_url = url::Url::parse("http://127.0.0.1:8793/")
         .map_err(|e| e.to_string())?;
+    let toolbar_handle = app.clone();
     let browser = WebviewBuilder::new("browser", WebviewUrl::External(start_url))
         .initialization_script(BRIDGE_JS)
         .initialization_script(ANNOTATE_JS)
@@ -335,14 +328,18 @@ fn setup_webviews(window: &tauri::Window) -> Result<(), String> {
             println!("[annota] browser navigation request: {}", url);
             true
         })
-        .on_page_load(|_webview, payload| {
+        .on_page_load(move |_webview, payload| {
             println!("[annota] browser page load: {:?} - {}", payload.event(), payload.url());
+            let url = serde_json::to_string(&payload.url().to_string()).unwrap_or_else(|_| "\"\"".to_string());
+            if let Some(toolbar) = toolbar_handle.get_webview("toolbar") {
+                let _ = toolbar.eval(&format!("window.__ANNOTA_SET_URL__&&window.__ANNOTA_SET_URL__({url})"));
+            }
         });
     let browser_wv = window
         .add_child(
             browser,
-            PhysicalPosition::new(0, toolbar_h),
-            PhysicalSize::new(size.width, size.height.saturating_sub(toolbar_h)),
+            PhysicalPosition::new(0, browser_top as i32),
+            PhysicalSize::new(size.width, size.height.saturating_sub(browser_top)),
         )
         .map_err(|e| e.to_string())?;
     println!("[annota] browser webview created, url={}", browser_wv.url().map(|u| u.to_string()).unwrap_or_default());
@@ -418,6 +415,63 @@ fn make_mcp_tools() -> tauri_plugin_mcp_server::McpBuilder {
             },
         )
         .tool(
+            "open_annotations",
+            "打开当前网页的 Annota 标注侧栏",
+            serde_json::json!({"type":"object","properties":{}}),
+            |_params: serde_json::Value| -> Result<String, String> {
+                let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
+                let webview = app.get_webview("browser").ok_or("browser webview 不存在")?;
+                webview.eval(r#"(function(){const h=document.querySelector('#annota-shadow-host');const b=h&&h.shadowRoot&&h.shadowRoot.querySelector('button[aria-label="列表"]');if(b)b.click()})()"#)
+                    .map_err(|e| e.to_string())?;
+                Ok("标注侧栏已打开".to_string())
+            },
+        )
+        .tool(
+            "start_annotation",
+            "在当前视频进入框选标注模式",
+            serde_json::json!({"type":"object","properties":{}}),
+            |_params: serde_json::Value| -> Result<String, String> {
+                let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
+                let webview = app.get_webview("browser").ok_or("browser webview 不存在")?;
+                webview.eval(r#"(function(){const h=document.querySelector('#annota-shadow-host');const b=h&&h.shadowRoot&&h.shadowRoot.querySelector('button[aria-label="标注"]');if(b)b.click()})()"#)
+                    .map_err(|e| e.to_string())?;
+                Ok("已请求进入标注模式".to_string())
+            },
+        )
+        .tool(
+            "propose_annotation",
+            "把 AI 候选框与词语送入 Annota 确认卡；只有用户确认保存后才会写入",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "box": {
+                        "type": "object",
+                        "properties": {
+                            "x": {"type":"number"}, "y": {"type":"number"},
+                            "w": {"type":"number"}, "h": {"type":"number"}
+                        },
+                        "required": ["x", "y", "w", "h"]
+                    },
+                    "word": {"type":"string"},
+                    "label": {"type":"string"},
+                    "pos": {"type":"string"},
+                    "t": {"type":"number"},
+                    "dur": {"type":"number"}
+                },
+                "required": ["box", "word"]
+            }),
+            |params: serde_json::Value| -> Result<String, String> {
+                let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
+                let webview = app.get_webview("browser").ok_or("browser webview 不存在")?;
+                let payload = serde_json::to_string(&params).map_err(|e| e.to_string())?;
+                let script = format!(
+                    "(function(p){{const ui=window.__ANNOTA_UI__;const ok=!!(ui&&ui.proposeAnnotation(p));window.__TAURI_INTERNALS__.invoke('bridge_probe_reply',{{keys:['proposal',String(ok)]}})}})({payload})"
+                );
+                webview.eval(&script).map_err(|e| e.to_string())?;
+                Ok("候选标注已送入确认卡；需要用户确认后才会保存".to_string())
+            },
+        )
+        .tool(
             "probe_bridge",
             "探测 browser webview 中 window.__ANNOTA__ 是否注入成功",
             serde_json::json!({"type":"object","properties":{}}),
@@ -425,7 +479,7 @@ fn make_mcp_tools() -> tauri_plugin_mcp_server::McpBuilder {
                 let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
                 let webview = app.get_webview("browser").ok_or("browser webview 不存在")?;
                 webview
-                    .eval(r#"(function(){ try { window.__TAURI_INTERNALS__.invoke('bridge_probe_reply', {keys: ['probe-smoke', typeof window.__ANNOTA__, typeof window.vaFetch]}); } catch(e) { window.__TAURI_INTERNALS__ && window.__TAURI_INTERNALS__.invoke('bridge_probe_reply', {keys: ['err', String(e.message)]}); } })()"#)
+                    .eval(r#"(function(){ const send=function(keys){try{window.__TAURI_INTERNALS__.invoke('bridge_probe_reply',{keys:keys})}catch(e){}};send(['bridge',typeof window.__ANNOTA__,typeof window.vaFetch]);if(typeof window.vaFetch==='function'){window.vaFetch('GET','http://127.0.0.1:8793/api/health').then(function(r){send(['va_fetch_ok',String(r.status),String(!!(r.json&&r.json.ok))])}).catch(function(e){send(['va_fetch_error',String(e&&e.message||e).slice(0,180)])})}})()"#)
                     .map_err(|e| e.to_string())?;
                 Ok("probe sent".to_string())
             },
@@ -443,6 +497,7 @@ pub fn main() {
             write_clipboard,
             bridge_probe_reply,
             navigate_browser,
+            browser_action,
             va_fetch
         ])
         .setup(|app| {
@@ -461,7 +516,7 @@ pub fn main() {
                 .build()
                 .map_err(|e| e.to_string())?;
 
-            setup_webviews(&window)?;
+            setup_webviews(&window, app.handle())?;
             apply_layout(app.handle())?;
 
             // 监听主窗口 resize，重新布局两个 child webview
