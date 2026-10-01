@@ -4,7 +4,7 @@
  */
 (function () {
   const TOKENS_CSS = `
-:root {
+:host, :root {
   --va-accent: #F5A623;
   --va-word: #F5A623;
   --va-comment: #38BDF8;

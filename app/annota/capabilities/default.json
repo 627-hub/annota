@@ -5,7 +5,12 @@
   "windows": ["main"],
   "webviews": ["toolbar", "browser"],
   "remote": {
-    "urls": ["https://*/*", "http://*/*"]
+    "urls": [
+      "http://127.0.0.1:8793/*",
+      "http://localhost:8793/*",
+      "https://*/*",
+      "http://*/*"
+    ]
   },
   "permissions": [
     "core:default",
@@ -18,6 +23,7 @@
     "allow-write-clipboard",
     "allow-va-fetch",
     "allow-navigate-browser",
+    "allow-browser-action",
     "allow-bridge-probe-reply"
   ]
 }

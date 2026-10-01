@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>Annota Browser</title>
+  <link rel="stylesheet" href="tokens.css" />
+  <style>
+    * { box-sizing: border-box; }
+    html, body { width:100%; height:100%; margin:0; overflow:hidden; }
+    body {
+      color:var(--va-text); background:#101114; font:13px/1.4 var(--va-font-ui);
+      -webkit-font-smoothing:antialiased; user-select:none;
+    }
+    .toolbar {
+      display:flex; align-items:center; gap:14px; width:100%; height:56px; padding:0 15px;
+      border-bottom:1px solid rgba(255,255,255,.075); background:#111216;
+      box-shadow:0 3px 15px rgba(0,0,0,.12);
+    }
+    .brand { display:flex; align-items:center; gap:9px; width:126px; flex:none; color:#f3f3f4; cursor:pointer; }
+    .brand:hover .brand-mark { border-color:rgba(245,166,35,.6); background:rgba(245,166,35,.16); }
+    .brand-mark {
+      position:relative; display:grid; place-items:center; width:31px; height:31px; flex:none;
+      border:1px solid rgba(245,166,35,.34); border-radius:10px; background:rgba(245,166,35,.105); color:var(--va-accent);
+    }
+    .brand-mark svg { width:19px; height:19px; }
+    .brand-copy { display:flex; flex-direction:column; min-width:0; line-height:1.15; }
+    .brand-name { font-size:13px; font-weight:680; letter-spacing:-.035em; }
+    .brand-sub { margin-top:1px; color:#727781; font-size:8px; font-weight:600; letter-spacing:.13em; }
+    .nav { display:flex; align-items:center; gap:2px; flex:none; }
+    .tool-button {
+      display:grid; place-items:center; width:32px; height:32px; padding:0; border:1px solid transparent; border-radius:9px;
+      background:transparent; color:#858a93; cursor:pointer; transition:background 120ms ease,color 120ms ease;
+    }
+    .tool-button:hover:not(:disabled) { background:rgba(255,255,255,.075); color:#f1f2f3; }
+    .tool-button:disabled { opacity:.36; cursor:default; }
+    .tool-button svg { width:16px; height:16px; }
+    .omnibox {
+      display:flex; align-items:center; gap:9px; min-width:100px; max-width:820px; height:36px; flex:1;
+      padding:0 8px 0 11px; border:1px solid rgba(255,255,255,.085); border-radius:11px;
+      background:#191a1e; transition:border-color 140ms ease,background 140ms ease,box-shadow 140ms ease;
+    }
+    .omnibox:focus-within { border-color:rgba(245,166,35,.52); background:#1c1c1f; box-shadow:0 0 0 3px rgba(245,166,35,.08); }
+    .site-icon { display:grid; place-items:center; width:19px; height:19px; flex:none; color:#7d838d; }
+    .site-icon svg { width:15px; height:15px; }
+    #url {
+      width:100%; min-width:0; height:32px; padding:0; border:0; outline:0; background:transparent;
+      color:#d7d8dc; font:12px var(--va-font-mono); user-select:text;
+    }
+    #url::placeholder { color:#686d76; font-family:var(--va-font-ui); }
+    .go-button {
+      display:grid; place-items:center; width:27px; height:27px; flex:none; padding:0; border:0; border-radius:8px;
+      background:var(--va-accent); color:#251908; cursor:pointer; transition:filter 120ms ease,transform 120ms ease;
+    }
+    .go-button:hover { filter:brightness(1.08); }
+    .go-button:active { transform:scale(.94); }
+    .go-button svg { width:15px; height:15px; }
+    .toolbar-separator { width:1px; height:22px; flex:none; background:rgba(255,255,255,.08); }
+    .engine-state { display:flex; align-items:center; gap:7px; min-width:62px; color:#7c828b; font-size:9px; font-weight:600; letter-spacing:.09em; white-space:nowrap; }
+    .engine-dot { width:6px; height:6px; border-radius:50%; background:#49bc86; box-shadow:0 0 8px rgba(73,188,134,.35); }
+    .engine-state[data-state="error"] .engine-dot { background:#ef7379; box-shadow:0 0 8px rgba(239,115,121,.35); }
+    .engine-state[data-state="busy"] .engine-dot { background:var(--va-accent); box-shadow:0 0 8px rgba(245,166,35,.4); }
+    .engine-state span:last-child { max-width:76px; overflow:hidden; text-overflow:ellipsis; }
+    button:focus-visible { outline:2px solid var(--va-accent); outline-offset:2px; }
+    @media (max-width:640px) {
+      .toolbar { gap:8px; padding:0 9px; }
+      .brand { width:34px; }
+      .brand-copy, .nav .forward, .toolbar-separator, .engine-state { display:none; }
+      .omnibox { height:34px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="toolbar" role="toolbar" aria-label="Annota 浏览器导航">
+    <div class="brand" id="home-button" role="button" tabindex="0" aria-label="Annota 首页" title="打开 Annota 首页">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 19 7.5-14 7.5 14M8.2 13.2h7.6"/><path d="M3 7V3h4M17 3h4v4M21 17v4h-4M7 21H3v-4" opacity=".55"/></svg>
+      </span>
+      <span class="brand-copy"><span class="brand-name">Annota</span><span class="brand-sub">CONTENT BROWSER</span></span>
+    </div>
+    <nav class="nav" aria-label="页面导航">
+      <button class="tool-button" type="button" aria-label="后退" title="后退" onclick="browserAction('back')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m14.5 5-7 7 7 7"/></svg></button>
+      <button class="tool-button forward" type="button" aria-label="前进" title="前进" onclick="browserAction('forward')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9.5 5 7 7-7 7"/></svg></button>
+      <button class="tool-button" type="button" aria-label="刷新" title="刷新" onclick="browserAction('reload')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.8 9a7 7 0 0 1 11.7-2L20 12M4 12l2.5 5a7 7 0 0 0 11.7-2"/></svg></button>
+    </nav>
+    <form class="omnibox" id="nav-form">
+      <span class="site-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></span>
+      <input id="url" type="text" spellcheck="false" autocomplete="off" placeholder="搜索或输入网址" aria-label="搜索或输入网址" />
+      <button class="go-button" type="submit" aria-label="打开网址" title="打开"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
+    </form>
+    <span class="toolbar-separator"></span>
+    <div class="engine-state" id="engine-state" data-state="ready" role="status" aria-live="polite"><i class="engine-dot"></i><span id="engine-label">LOCAL</span></div>
+  </header>
+  <script>
+    const input = document.getElementById('url');
+    const form = document.getElementById('nav-form');
+    const engine = document.getElementById('engine-state');
+    const engineLabel = document.getElementById('engine-label');
+    function invoke(cmd, args) {
+      const t = window.__TAURI_INTERNALS__ || window.__TAURI__;
+      if (!t || !t.invoke) throw new Error('Annota bridge 不可用');
+      return t.invoke(cmd, args);
+    }
+    input.value = 'http://127.0.0.1:8793/';
+    window.__ANNOTA_SET_URL__ = (url) => { input.value = url || ''; };
+    async function navigate() {
+      const value = input.value.trim();
+      if (!value) return;
+      engine.dataset.state = 'busy'; engineLabel.textContent = 'OPENING';
+      try {
+        await invoke('navigate_browser', { url: value });
+        engine.dataset.state = 'ready'; engineLabel.textContent = 'LOCAL';
+      } catch (e) {
+        engine.dataset.state = 'error'; engineLabel.textContent = 'ERROR';
+      }
+    }
+    form.addEventListener('submit', (event) => { event.preventDefault(); navigate(); });
+    async function browserAction(action) {
+      try { await invoke('browser_action', { action }); }
+      catch (e) { engine.dataset.state = 'error'; engineLabel.textContent = 'ERROR'; }
+    }
+    async function openHome() {
+      try { await invoke('navigate_browser', { url: 'http://127.0.0.1:8793/' }); }
+      catch (_) { engine.dataset.state = 'error'; engineLabel.textContent = 'ERROR'; }
+    }
+    document.getElementById('home-button').addEventListener('click', openHome);
+    document.getElementById('home-button').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openHome(); }
+    });
+    document.addEventListener('keydown', (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'l') {
+        event.preventDefault(); input.focus(); input.select();
+      }
+    });
+    setTimeout(async () => {
+      try {
+        const health = await window.vaFetch('GET', 'http://127.0.0.1:8793/api/health');
+        engine.dataset.state = health && health.ok ? 'ready' : 'error';
+        engineLabel.textContent = health && health.ok ? 'LOCAL' : 'OFFLINE';
+      } catch (e) {
+        engine.dataset.state = 'error'; engineLabel.textContent = 'OFFLINE';
+      }
+    }, 450);
+  </script>
+</body>
+</html>
