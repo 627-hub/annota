@@ -1,7 +1,7 @@
 [package]
 name = "annota"
 version = "0.1.0"
-description = "Annota · 标注浏览器 (Tauri v2 spike)"
+description = "Annota · 内容标注浏览器"
 authors = ["Annota"]
 edition = "2021"
 rust-version = "1.77.2"
@@ -22,7 +22,7 @@ xcap = "0.9.8"
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 url = "2"
 axum = "0.7"
-tower-http = { version = "0.6", features = ["cors", "fs"] }
+tower-http = { version = "0.6", features = ["fs"] }
 tokio = { version = "1", features = ["fs", "sync", "net", "rt"] }
 dashmap = "6"
 uuid = { version = "1", features = ["v4"] }

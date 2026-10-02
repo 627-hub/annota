@@ -14,24 +14,24 @@ HEADER_BASE = """// ==UserScript==
 // @name         {name}
 // @namespace    https://video-annotate.local/
 // @version      {version}
-// @description  给网页视频加可共享的词汇标注层（P0：手工标注 + 词库联想 + 时长 + 同步）
-// @author       video-annotate
+// @description  给视频和网页内容添加可共享标注（框选、时间锚点、词条与同步）
+// @author       Annota
 // @match        *://*/*
 {grant}// @run-at       document-idle
 // @noframes
 // ==/UserScript==
-// video-annotate · P0。Apple（macOS/iOS Safari）请用免费开源的 Userscripts，勿用付费的 Tampermonkey。
-// 构建 build.py ｜ 自测 dev/demo.html ｜ 文档 docs/spec.md、docs/sync.md、docs/mobile.md
+// Annota · 内容标注层。Apple（macOS/iOS Safari）可使用免费开源的 Userscripts。
+// 构建 build.py ｜ 自测 dev/demo.html ｜ 文档 README.md、docs/spec.md
 """
 
 # 变体：编辑版（桌面）、GM 编辑版、观看版（手机，只读 + 自动同步）
 VARIANTS = {
-    "annotate.user.js": {"name": "video-annotate (P0 编辑)", "grant": "// @grant        none\n", "config": ""},
-    "annotate.gm.user.js": {"name": "video-annotate (P0 编辑 · GM)", "grant": "// @grant        GM_xmlhttpRequest\n// @connect      *\n", "config": ""},
-    "annotate.view.user.js": {"name": "video-annotate 观看端（只读）", "grant": "// @grant        GM_xmlhttpRequest\n// @connect      *\n", "config": "window.VA_VIEW_ONLY=true;window.VA_AUTO_SYNC=true;\n"},
+    "annotate.user.js": {"name": "Annota（编辑）", "grant": "// @grant        none\n", "config": ""},
+    "annotate.gm.user.js": {"name": "Annota（编辑 · GM）", "grant": "// @grant        GM_xmlhttpRequest\n// @connect      *\n", "config": ""},
+    "annotate.view.user.js": {"name": "Annota（只读观看端）", "grant": "// @grant        GM_xmlhttpRequest\n// @connect      *\n", "config": "window.VA_VIEW_ONLY=true;window.VA_AUTO_SYNC=true;\n"},
 }
 
-PARTS = ["geometry.js", "adapter.js", "vocab.js"]
+PARTS = ["geometry.js", "adapter.js"]
 TAIL = ["design-tokens.js", "overlay-theme.js", "core.js"]
 
 
@@ -45,11 +45,6 @@ def main():
     body = []
     for p in PARTS:
         body.append("/* ===== src/%s ===== */\n%s\n" % (p, read_src(p)))
-
-    # 内联词库（build_vocab.py 产物），供中英联想；缺失则空
-    vpath = os.path.join(DIST, "vocab.json")
-    vocab = open(vpath, encoding="utf-8").read().strip() if os.path.exists(vpath) else "[]"
-    body.append("/* ===== data: vocab.json (%d bytes) ===== */\nwindow.VA_VOCAB=%s;\n" % (len(vocab), vocab))
 
     # 烧入同步地址候选（由 dev/hub.py 写入 dist/.syncurl），实现零配置
     spath = os.path.join(DIST, ".syncurl")

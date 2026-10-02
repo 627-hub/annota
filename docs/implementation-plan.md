@@ -100,18 +100,19 @@
 | 1.6 | **设置**：外观/同步/词典/AI/快捷键/数据 | 可改默认词典链接模板 |
 | 1.7 | **Onboarding**：触发式三步气泡 | 新用户 3 分钟内完成首条标注 |
 | 1.8 | **内置 agent 面板**：SidePanel 聊天 UI + function calling + MCP tools 调用审计 | 用户说「这个词在画面哪里？」→ agent 调 `capture_frame` + `words_at` 回答 |
-| 1.9 | **词库下线**：移除 `src/vocab.js`、`build_vocab.py`、内联 vocab.json | 注入产物 ~50KB gz |
+| 1.9 | ~~**词库下线**：移除 `src/vocab.js`、`build_vocab.py`、内联 vocab.json~~ | ✅ 2026-10-02 完成，注入产物约 27.8 KB gz |
 | 1.10 | **分发**：GitHub Releases（Tauri dmg/exe）+ 扩展 zip + userscript + GitHub Pages 官网 | 用户从 release 下载 dmg 双击可用 |
-| 1.11 | **测试**：geometry/vocab 单测保留；Tauri 截图/MCP 冒烟 | 改 `src/*.js` 仍跑 `build.py` + 单测 |
+| 1.11 | **测试**：geometry 单测；Tauri 截图/MCP 冒烟 | 改 `src/*.js` 仍跑 `build.py` + 单测 |
 
-**进度（2026-10-01）**
+**进度（2026-10-02）**
 
 | 项 | 状态 |
 |---|---|
 | 1.1 / 1.2 / 1.3 / 1.4 / 1.5 / 1.7 / 1.11 | ✅ 完成（1.3 为时间轴+词汇两 tab，来源 tab 待补；1.5 缺条目编辑/删除） |
 | 1.6 设置 | ◐ 外观三档 + MCP 地址复制已做；词典模板/同步/快捷键项待补 |
-| 1.8 内置 agent 面板 | ⏳ 进行中（MCP server 已就绪，聊天 UI + 调用审计未做） |
-| 1.9 词库下线 / 1.10 分发 | ⏳ 待做 |
+| 1.8 内置 agent 面板 | ⏸️ 搁置（MCP server 已就绪；聊天 UI + 调用审计尚未做） |
+| 1.9 词库下线 | ✅ 完成（构建不再注入词库；词典外链替代） |
+| 1.10 分发 | ◐ 进行中（README/Pages/发行工作流完成，macOS DMG 已构建；Pages 部署、Windows 安装包与打标签发布待执行） |
 
 ### R2 多媒态（预计 3–4 周）
 

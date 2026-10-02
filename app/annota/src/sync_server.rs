@@ -1,7 +1,7 @@
 use axum::{
     body::Bytes,
     extract::{Path as AxumPath, State},
-    http::StatusCode,
+    http::{header::CONTENT_TYPE, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -12,14 +12,16 @@ use dashmap::DashMap;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tauri::{AppHandle, Manager};
 use tokio::fs;
 use tokio::sync::Mutex;
-use tower_http::cors::CorsLayer;
 use tower_http::services::ServeDir;
 
-const HOST: &str = "0.0.0.0";
+const HOST: &str = "127.0.0.1";
 const PORT: u16 = 8793;
 const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
+const SERVICE_INDEX: &str = include_str!("../../service/index.html");
+const APP_TOKENS_CSS: &str = include_str!("../public/tokens.css");
 
 #[derive(Clone)]
 pub struct AppState {
@@ -40,27 +42,22 @@ impl AppState {
     }
 }
 
-pub fn resolve_store_path() -> PathBuf {
+pub fn resolve_store_path(app: &AppHandle) -> PathBuf {
     if let Ok(p) = std::env::var("ANNOTA_STORE") {
         return PathBuf::from(p);
     }
-    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
-        let manifest = PathBuf::from(manifest);
-        if let Some(root) = manifest.parent().and_then(|p| p.parent()) {
-            return root.join("app/service/store");
-        }
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        for ancestor in exe.ancestors() {
-            let candidate = ancestor.join("app/service/store");
-            if candidate.exists() {
-                return candidate;
+    if cfg!(debug_assertions) {
+        if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+            let manifest = PathBuf::from(manifest);
+            if let Some(root) = manifest.parent().and_then(|p| p.parent()) {
+                return root.join("app/service/store");
             }
         }
     }
-    std::env::current_dir()
-        .unwrap_or_default()
-        .join("app/service/store")
+    app.path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::env::temp_dir().join("Annota"))
+        .join("store")
 }
 
 pub fn resolve_project_root() -> PathBuf {
@@ -80,34 +77,30 @@ pub fn resolve_project_root() -> PathBuf {
     std::env::current_dir().unwrap_or_default()
 }
 
-pub fn resolve_notes_dir() -> PathBuf {
+pub fn resolve_notes_dir(app: &AppHandle) -> PathBuf {
     if let Ok(p) = std::env::var("NOTES_DIR") {
         return PathBuf::from(p);
     }
-    if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
-        let manifest = PathBuf::from(manifest);
-        if let Some(root) = manifest.parent().and_then(|p| p.parent()) {
-            return root.join("app/service/notes");
-        }
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        for ancestor in exe.ancestors() {
-            let candidate = ancestor.join("app/service/notes");
-            if candidate.exists() {
-                return candidate;
+    if cfg!(debug_assertions) {
+        if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+            let manifest = PathBuf::from(manifest);
+            if let Some(root) = manifest.parent().and_then(|p| p.parent()) {
+                return root.join("app/service/notes");
             }
         }
     }
-    std::env::current_dir()
-        .unwrap_or_default()
-        .join("app/service/notes")
+    app.path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::env::temp_dir().join("Annota"))
+        .join("notes")
 }
 
 pub async fn run_server(store: PathBuf, root: PathBuf, notes_dir: PathBuf) {
     let state = AppState::new(store, root, notes_dir);
 
-    let app = Router::new()
+    let mut app = Router::new()
         .route("/", get(root_handler))
+        .route("/app/annota/public/tokens.css", get(tokens_css))
         .route("/api/health", get(health))
         .route("/api/list", get(list))
         .route("/api/ai", get(ai_status))
@@ -115,10 +108,11 @@ pub async fn run_server(store: PathBuf, root: PathBuf, notes_dir: PathBuf) {
         .route(
             "/api/anno/:media_id",
             get(get_anno).put(put_anno).post(put_anno),
-        )
-        .fallback_service(ServeDir::new(state.root.clone()))
-        .layer(CorsLayer::very_permissive())
-        .with_state(state);
+        );
+    if cfg!(debug_assertions) {
+        app = app.fallback_service(ServeDir::new(state.root.clone()));
+    }
+    let app = app.with_state(state);
 
     let addr = format!("{}:{}", HOST, PORT);
     let listener = match tokio::net::TcpListener::bind(&addr).await {
@@ -258,44 +252,28 @@ async fn note(State(state): State<AppState>, body: Bytes) -> Response {
 }
 
 async fn root_handler(State(state): State<AppState>) -> Response {
-    let index = state.root.join("app/service/index.html");
-    if index.is_file() {
-        match fs::read_to_string(&index).await {
-            Ok(html) => Html(html).into_response(),
-            Err(e) => json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("read index: {e}"),
-            ),
+    #[cfg(not(debug_assertions))]
+    let _ = &state;
+    #[cfg(debug_assertions)]
+    {
+        let index = state.root.join("app/service/index.html");
+        if index.is_file() {
+            match fs::read_to_string(&index).await {
+                Ok(html) => return Html(html).into_response(),
+                Err(e) => {
+                    return json_error(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        &format!("read index: {e}"),
+                    )
+                }
+            }
         }
-    } else {
-        Html(landing_page(&state.store)).into_response()
     }
+    Html(SERVICE_INDEX).into_response()
 }
 
-fn landing_page(store: &Path) -> String {
-    let store_str = store.to_string_lossy();
-    format!(
-        r#"<!doctype html><html lang="zh"><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Annota · 同步服务</title>
-<style>
-body{{font:15px/1.7 -apple-system,"PingFang SC",sans-serif;background:#0b0e13;color:#e6edf3;
-margin:0;padding:28px;max-width:720px}}
-h1{{font-size:19px;color:#f0b429}}
-code{{color:#9ecbff;background:#161b22;padding:2px 6px;border-radius:4px}}
-.k{{color:#8b949e}}
-.qr{{margin-top:18px;padding:14px;background:#161b22;border-radius:10px;border:1px solid #30363d}}
-</style>
-<h1>Annota · 同步服务</h1>
-<p>状态：<b style="color:#7ee787">运行中</b>　存储：<code>{}</code></p>
-<p>API：<code>GET/PUT /api/anno/&lt;mediaId&gt;</code>，<code>GET /api/list</code>，<code>GET /api/health</code></p>
-<div class="qr">
-<p class="k">手机自测：同一 Wi‑Fi 下打开 <code>http://&lt;本机IP&gt;:{}/dev/demo.html</code><br>
-脚本内 <code>⚙ → 同步地址</code> 填 <code>http://&lt;本机IP&gt;:{}</code></p>
-</div>
-</html>"#,
-        store_str, PORT, PORT
-    )
+async fn tokens_css() -> Response {
+    ([(CONTENT_TYPE, "text/css; charset=utf-8")], APP_TOKENS_CSS).into_response()
 }
 
 fn key_to_file(store: &Path, key: &str) -> PathBuf {

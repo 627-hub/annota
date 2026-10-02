@@ -1,4 +1,4 @@
-# 交接文件 · video-annotate
+# 交接文件 · Annota
 
 > 一句话：**给「别人的内容」加一层可共享的标注**（视频 / 图片 / 文章皆可），众包积累标注与对话数据，
 > 终局是训一个 JEV 式 word↔region 决策模型。**不生产内容、不托管媒体**，只存标注。
@@ -8,8 +8,8 @@
 
 - 项目路径：`video-annotate/`（仓库根）
 - 从 `../ielts-7.5` 拆出（词库/SRS/Anki 为可选下游消费者）
-- **git 状态：全部未提交**（`git init` 过，无任何 commit）
-- 本文日期：2026-09-30（含 AI 陪练/截图/笔记 与 图片·文章·社交 愿景）
+- **最近提交**：`099e44b`（R1 桌面 UI 与浏览器壳）；本地仍有 R1-4/R1-5 工作区改动。
+- 本文日期：2026-10-02
 
 ---
 
@@ -18,36 +18,37 @@
 ### 标注（编辑端）
 - 任意网页 `<video>` 叠层热区；热区 = `word + 中文 + 词性`，按时间窗口显示。
 - **拖框标注**：`✎ 标注` → 暂停 → 框选 → 弹层填词。
-- **中英词库联想**：输英文（前缀/子串）或中文（释义）→ 下拉选 → 自动填 词/义/词性；词库内联 **11,821 词**（雅思+托福）。
+- **填词标注**：词必填、释义/词性选填；EditorCard 查词行外链剑桥/有道/欧路（内联词库 11,821 词已按决策 A3 下线，745KB→0）。
 - **时间可调**：每个标注可改 **开始 `t`**（或 `⏱ 用当前`）与**时长 `dur`**（默认 1.0s）；区间 `[t−0.15, t+dur]`。
 - 本地存储 `localStorage`（按 `mediaId` 分桶）；导出/导入 JSON pack。
 - 平台适配：`bilibili`（播放页/主播放器/SPA 切集）、**`douyin`（穿透 shadow DOM 找 `<video>`）**、`youtube`、`generic`；`ⓘ` 诊断面板；真全屏兜底提示；找不到视频时有「未检测到视频·诊断」浮标。
 
 ### 同步
 - 工具条 **`⇅ 同步`**：拉取→合并→回传（union），去重 `(word + |Δt|<0.4 + IoU>0.6)`；`⚙` 里另有仅上传/仅下载。
-- 服务端 `app/service/sync_server.py`（**纯标准库**）：**单端口 8793** 同时供静态 + API；CORS 全开。
+- 桌面版内置 Rust 服务监听 **127.0.0.1:8793**（本地页面 + 同步 API）；独立 `app/service/sync_server.py` 是纯标准库 LAN 服务，供 userscript 配对同步。
 - **零配置**：候选地址烧进脚本（`window.VA_SYNC_URLS`：127.0.0.1 / 局域网IP / `.local`），运行期自动探测。
 - 请求通道优先级：`vaFetch(自建浏览器主进程)` ≈ `chrome 扩展后台` > `GM_xmlhttpRequest` > `fetch`（前两者绕过 CORS/混合内容）。
 
-### AI 陪练（豆包）+ 截图 + 笔记（本轮新增）
-- 服务端 LLM 代理：`GET /api/ai`（状态）、`POST /api/chat`（转发到豆包/方舟或任意 OpenAI 兼容端点）。**密钥只在服务端**（`sec`/环境变量）。
+### AI 上下文桥 + 截图 + 笔记
+- 桌面 Rust 服务目前 `GET /api/ai` 仅报告 LLM 配置状态；内置聊天 Agent UI 与工具调用审计（R1-3）**搁置**。
+- 独立 Python 服务保留可选 LLM 代理；密钥只从环境变量读取，不随发行包分发。
 - **不做第二个豆包**：浏览器内**不内置聊天**（桌面豆包/系统助手更强）。工具条 **`📋 发豆包`** 一键把「**画面截图 + 视频上下文**（平台/链接/标题/进度/已标注词）」写进**富剪贴板** → 到桌面豆包粘贴即问。
 - **截图**（让豆包「看见画面」）：自建浏览器 `capturePage` / 扩展 `captureVisibleTab` / 同源 canvas 兜底；截图含标注框。
 - **笔记 + 数据沉淀**：`⚙ → 📝 存笔记` → 把「截图 + 生词表」写成 Markdown（`NOTES_DIR`，可指向 Obsidian 库），
   并把 `{media, entries}` 追加进 `data.jsonl`（标注数据沉淀）。
-- 本地服务保留 `/api/ai`、`/api/chat`（**备用**：留给后续动作型 AI 与 MCP，不在 UI 暴露）。
+- MCP server 默认 `127.0.0.1:8794/mcp`，与桌面同步服务分别监听。
 
 ### 分发形态（都可运行）
 | 形态 | 路径 | 说明 |
 |---|---|---|
-| **自建浏览器（Electron）** | `app/browser/` | 品牌载体；内置 core；同步/截图走主进程 |
+| **自建浏览器（Tauri v2）** | `app/annota/` | 品牌载体；内置 core；Rust 本地服务与 MCP |
 | **MV3 扩展** | `app/extension/` | Chrome/Edge；`background.js` 代发请求 + 截图 |
 | **userscript** | `dist/annotate*.user.js` | 编辑 / GM / 观看端（只读+自动同步） |
 | Android 自带油猴的开源浏览器 | `docs/browser.md` | Ezo / GuaBrowser / Solipsism / Cromite，零 fork |
 
 ### 辅助
 - `dev/hub.py`：一键入口（探测地址→烧地址→构建→起服务→入口页+二维码）；`--tunnel` 起 https 隧道（带自检）。
-- 测试：`geometry.test.mjs`(9) + `vocab.test.mjs`(4) + `smoke.mjs`（假 DOM 冒烟）。
+- 测试：`geometry.test.mjs`(9) + `smoke.mjs`（假 DOM 冒烟）。
 - 文档：`docs/spec.md`、`install.md`、`mobile.md`、`sync.md`、`browser.md`、**`ai.md`**、**`notes.md`**。
 
 ---
@@ -55,11 +56,11 @@
 ## 2. 怎么跑
 
 ```bash
-python3 dev/hub.py                 # 一键：构建+起服务(8793)+入口页 http://127.0.0.1:8793/
-bash dev/app.sh                    # 自建浏览器（Electron，依赖已装）
+python3 dev/hub.py                 # userscript 本地服务与入口页
+(cd app/annota && cargo tauri dev) # Tauri 桌面浏览器
 python3 app/service/sync_server.py # 只起服务（0.0.0.0:8793）
-python3 build.py                   # src/*.js + vocab → dist/*.user.js + app/*/core.js
-node --test dev/geometry.test.mjs dev/vocab.test.mjs && node dev/smoke.mjs
+python3 build.py                   # src/*.js → dist/*.user.js + app/*/core.js
+node --test dev/geometry.test.mjs && node dev/smoke.mjs
 bash dev/portable.sh <url>         # 用系统 Chromium 系浏览器加载扩展
 ```
 
@@ -82,15 +83,13 @@ video-annotate/
 ├── src/
 │   ├── geometry.js      # 内容区坐标（contain/cover/fill…；DOMRect 兼容；clamp/IoU）——可单测
 │   ├── adapter.js       # 平台：generic/bilibili/douyin/youtube；选主视频(穿透 shadow DOM)；mediaId
-│   ├── vocab.js         # 中英词库联想索引——可单测
 │   └── core.js          # 叠层/拖框/绑词/时间/同步/导入导出/诊断/观看端/AI面板/截图/笔记
 ├── build.py             # 拼装产物（UTF-8 BOM；写 dist/ 与 app/extension|browser/core.js）
-├── build_vocab.py       # 词表 → dist/vocab.json
-├── dist/                # annotate.{user,gm,view}.user.js + vocab.json
+├── dist/                # annotate.{user,gm,view}.user.js（不内联词库）
 ├── app/
-│   ├── browser/         # main.js(窗口/net.fetch/capturePage/rich clipboard) + shell-preload + webview-preload + index.html + renderer.js + core.js
+│   ├── annota/          # Tauri v2 桌面浏览器、Rust 同步服务与 MCP server
 │   ├── extension/       # manifest.json + background.js(fetch+captureVisibleTab) + core.js
-│   └── service/         # sync_server.py（静态 + 同步 + /api/chat + /api/note）；store/ notes/(gitignore)
+│   └── service/         # 本地页 + 纯标准库 sync_server.py；store/ notes/(gitignore)
 ├── dev/                 # hub.py / serve.py / app.sh / portable.sh / demo.html / 单测 / smoke / sample.mp4
 ├── schemas/annotation.schema.json   # W3C Web Annotation 对齐草案
 ├── docs/                # spec install mobile sync browser ai notes
@@ -101,7 +100,7 @@ video-annotate/
 ### 数据 / 接口速查
 - **pack**：`{format:"video-annotate/0.1", media:{platform,videoId,url,intrinsic:{w,h}}, entries:[{id,t,box:{x,y,w,h},word,label,pos,dur,created}]}`
 - **box**：左上角 `x,y,w,h`（0–1），按**内容区**归一化（去黑边），配 `intrinsic` 复投影 → 兼容全屏/画中画/缩放。
-- **API**：`GET /api/health`、`GET /api/list`、`GET|PUT /api/anno/<mediaId>`、`GET /api/ai`、`POST /api/chat`、`POST /api/note`；`GET /` = 入口页。
+- **桌面 API**：`GET /api/health`、`GET /api/list`、`GET|PUT /api/anno/<mediaId>`、`GET /api/ai`、`POST /api/note`；`GET /` = Annota 首页。Python 服务有独立接口实现。
 - **笔记产物**：`<NOTES_DIR>/<date>_<mediaId>.md` + `.../shot.png` + `<NOTES_DIR>/data.jsonl`。
 - **终局模型（未开始）**：JEV 式 word↔region 决策（Choice/Noul/Score，prefill-only）——见 `docs/spec.md §9`。
 
@@ -111,10 +110,10 @@ video-annotate/
 
 1. **拆出独立项目**：目标（AI 应用 + 标注大模型）与雅思线偏离。
 2. **只共享标注、不搬媒体**：绕开托管版权；标注可去中心化交换（Pack/Feed）。
-3. **自建浏览器用 Electron 壳**（不 fork Chromium）：品牌认知需要「下载即用的标注浏览器」，但 fork Chromium 维护地狱。
+3. **自建浏览器用 Tauri v2 壳**（不 fork Chromium）：品牌认知需要「下载即用的标注浏览器」，但 fork Chromium 维护地狱。
 4. **同步优先 GM/扩展/浏览器主进程通道**：`https 页面 → http 局域网` 会被**混合内容**拦截，只有扩展/主进程能绕。
 5. **通用聊天不自建，交给桌面豆包**；我们只做「**上下文桥**（截图+秒数+标注）+ 动作型 AI」——上下文与数据才是护城河。
-6. **词库内联**：离线可用（代价：产物 ~745KB）。
+6. **词库内联 → 已下线**：曾离线可用（代价 ~745KB）；R1 按决策 A3 整体移除（745KB→0，注入产物约 27.8 KB gz），查词改走外链词典。
 7. **坐标必须内容区归一化**：曾因 `getBoundingClientRect()` 的 `width/height` 与代码里的 `w/h` 不一致 → 全 NaN → 框选失效；已兼容并加回归测试。
 8. **产物带 UTF-8 BOM**：本地简单 http 服务不给 charset，中文会乱码。
 9. **不造轮子**：追踪/分割用现成（CoTracker/SAM2）；字幕查词/Anki 用现成（Yomitan/asbplayer）；通用语音/Agent 用桌面豆包。

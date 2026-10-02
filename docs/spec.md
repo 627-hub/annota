@@ -87,7 +87,7 @@
 > 时间用标准 Media Fragments（`t=`）；空间用**归一化 box 自定义选择器**（见 §4.3）。
 > 兼容：一条 Annotation 若要「点/轨迹」，用 `va:kind: point|span|track` 扩展。
 > 时长：内部 `dur`（秒，默认 **1.0**）表示该词出现的时间长度；导出 W3C 时并入时间片段 `t=start,end`。
-> 词条：`word/label/pos` 由本地词库（`dist/vocab.json`，雅思+托福 **11,821 词**）**中英联想**填充，人手可改。
+> 词条：`word/label/pos` 由人工填写（词必填，释义/词性选填——内联词库已按决策 A3 下线），查词走外链词典。
 
 ### 4.2 Pack / Feed
 Pack 用 `AnnotationCollection` 组织，Feed 是「一个可拉取的 Pack 列表」：

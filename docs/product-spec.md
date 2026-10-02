@@ -14,8 +14,8 @@
 
 ## 1. 现状诊断：差距清单
 
-P0 已把最难的地基打完（内容区坐标、词库联想、零配置同步、三形态分发、W3C 对齐 schema），
-但产品成熟度的短板全部在「体验层」：
+P0 已把最难的地基打完（内容区坐标、零配置同步、三形态分发、W3C 对齐 schema；词库联想已按决策 A3 下线），
+但产品成熟度的短板集中在「体验层」：
 
 | 维度 | 现状（P0） | 成熟产品（目标） |
 |---|---|---|
@@ -368,7 +368,7 @@ SidePanel（右缘抽屉 360px；窄屏 bottom sheet 70vh；开合：Dock「词�
 
 | 类 | 要求 |
 |---|---|
-| 性能 | 注入产物 ~50KB gz（**内联词库整体下线**：745KB→0，决策 A3；`dist` 停发 vocab.json，`src/vocab.js` / `build_vocab.py` 移除）；叠层交互 <16ms；单视频 1000 条标注不卡（列表虚拟化）；被动监听不拖累宿主滚动 |
+| 性能 | 注入产物 ≤50KB gz（**内联词库整体下线**：745KB→0，决策 A3；`dist` 停发 vocab.json，`src/vocab.js` / `build_vocab.py` 移除）；叠层交互 <16ms；单视频 1000 条标注不卡（列表虚拟化）；被动监听不拖累宿主滚动 |
 | 兼容 | Chrome/Edge ≥120；Safari（Userscripts）观看端；Electron 现版；Android 扩展浏览器 / iOS 观看端 |
 | 健壮 | 平台选择器失配 → 诊断提示 + generic 降级（已有思路产品化）；真全屏限制保持「网页全屏」引导提示；CSP 挫败 → 提示换扩展/自建浏览器形态 |
 | 分发 | **三步走（决策 A4）**：① R1 GitHub 公开 + Releases 直发（dmg/exe/扩展 zip/userscript；官网 = GitHub Pages 起步，复用入口页「扫码/点击/试玩」设计）；② R2+ 独立官网（域名 + 下载统计 + 文档）；③ 商店最后（Chrome Web Store 上架时用 optional host permissions 或平台域名白名单应对 all-URLs 审核；Edge Add-ons 较宽松可先试；Safari 需 Apple 开发者账号；移动 store 远期）。dmg 公证 + exe 签名；Tauri bundler + GitHub Releases 自动更新（Electron 保留 R1 备选） |
@@ -435,7 +435,7 @@ SidePanel（右缘抽屉 360px；窄屏 bottom sheet 70vh；开合：Dock「词�
 - **A1 产品名：Annota**（§5.2）。
 - **A2 起始页冷启动**：本地三步卡 + 「先试玩」demo + 查词工具行；无假推荐、无占位假卡（§6.6）。
 - **A3 本地词库下线**：11,821 词内联（~745KB）整体移除；`dist` 停发 vocab.json，`src/vocab.js` / `build_vocab.py` 移除（词库资产归 `../ielts-7.5` 自持）。
-  理由：词典外链更全面更新，产品更轻（745KB → ~50KB gz）。EditorCard 词必填、释义/词性**选填**（schema 不变：label/pos 字段保留，来源改手填）；
+  理由：词典外链更全面更新，产品更轻（745KB → 当前注入产物约 27.8 KB gz）。EditorCard 词必填、释义/词性**选填**（schema 不变：label/pos 字段保留，来源改手填）；
   WordCard / 起始页工具行 / 设置提供查词外链（默认词典 + `{word}` 占位模板）；Anki 导出时空释义由下游补。后续可选：接免费在线词典 API（opt-in + IndexedDB 缓存）恢复自动填。
 - **A4 分发顺序：GitHub → 官网 → 商店最后**（§12）：先 Releases 直发（开发者模式装扩展 / 装脚本 / dmg）；
   商店上架推后，届时用 optional host permissions 或平台域名白名单应对 all-URLs 审核（Edge Add-ons 较宽松可先试；Safari 需 Apple 开发者账号）。
