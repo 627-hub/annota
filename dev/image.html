@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>video-annotate · image demo</title>
+<style>
+  body{margin:0;background:#0b0e13;color:#e6edf3;font:14px/1.6 -apple-system,"PingFang SC",sans-serif}
+  .wrap{max-width:1000px;margin:0 auto;padding:20px}
+  h1{font-size:18px}
+  .note{color:#8b949e;font-size:13px;background:#11161d;border:1px solid #222a34;border-radius:8px;padding:10px 12px}
+  code{color:#9ecbff}
+  figure{margin:16px 0 0}
+  figcaption{color:#8b949e;font-size:12px;margin-top:6px}
+  img{max-width:100%;display:block;border:1px solid #222a34;border-radius:8px;background:#000}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>video-annotate · 图片标注调试页</h1>
+  <div class="note">
+    大图应被识别为图片媒态（无时间轴）。拖框标注后刷新，框位应保持。<br>
+    · 用 http 打开：<code>python3 -m http.server 8792</code> → <code>http://127.0.0.1:8792/dev/image.html</code>
+  </div>
+  <figure>
+    <img src="sample-image.png" alt="demo 大图" width="960" height="600">
+    <figcaption>本地大图 1600×1000（≥200px 门槛通过）</figcaption>
+  </figure>
+</div>
+<script src="../dist/annotate.user.js"></script>
+</body>
+</html>

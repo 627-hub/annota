@@ -66,6 +66,17 @@ def valid_box(b):
     return True
 
 
+def valid_quote(q):
+    if not isinstance(q, dict):
+        return False
+    exact = q.get("exact")
+    return isinstance(exact, str) and bool(exact.strip())
+
+
+def valid_anchor(e):
+    return valid_box(e.get("box")) or valid_quote(e.get("quote"))
+
+
 def to_float(v, d=0.0):
     try:
         return float(v)
@@ -87,15 +98,21 @@ def iou(a, b):
 def same(e, o):
     if (e.get("word") or "") != (o.get("word") or ""):
         return False
-    if abs(to_float(e.get("t")) - to_float(o.get("t"))) >= 0.4:
-        return False
-    return iou(e.get("box"), o.get("box")) > 0.6
+    eb, ob = valid_box(e.get("box")), valid_box(o.get("box"))
+    if eb and ob:
+        if abs(to_float(e.get("t")) - to_float(o.get("t"))) >= 0.4:
+            return False
+        return iou(e.get("box"), o.get("box")) > 0.6
+    eq, oq = valid_quote(e.get("quote")), valid_quote(o.get("quote"))
+    if eq and oq:
+        return e["quote"]["exact"] == o["quote"]["exact"]   # 文本锚点：同一段文字即同一标注
+    return False
 
 
 def merge_entries(a, b):
     out = []
     for e in list(a) + list(b):
-        if not isinstance(e, dict) or not e.get("word") or not valid_box(e.get("box")):
+        if not isinstance(e, dict) or not e.get("word") or not valid_anchor(e):
             continue
         if any(same(e, o) for o in out):
             continue
@@ -320,7 +337,8 @@ li{margin:4px 0}a{color:#58a6ff}.k{color:#8b949e}</style>
                 else:
                     entries = merge_entries(cur.get("entries", []), incoming.get("entries", []) or [])
                 media = incoming.get("media") or cur.get("media") or {"videoId": key}
-                pack = {"format": "video-annotate/0.1", "media": media, "entries": entries}
+                fmt = incoming.get("format") or cur.get("format") or "video-annotate/0.1"
+                pack = {"format": fmt, "media": media, "entries": entries}
                 write_pack(key, pack)
         except Exception as e:
             return self._json(500, {"error": "merge failed: %s" % e})
@@ -341,18 +359,28 @@ def render_note(title, media, entries, chat, img_rel, created):
     L = ["---",
          "title: %s" % title.replace("\n", " "),
          "source: %s" % (media.get("url") or ""),
-         "media: %s" % (media.get("videoId") or ""),
+         "media: %s" % (media.get("mediaId") or media.get("videoId") or ""),
          "platform: %s" % (media.get("platform") or ""),
+         "type: %s" % (media.get("type") or "video"),
          "created: %s" % created,
          "tags: [video-annotate, language, %s]" % (media.get("platform") or "video"),
          "---", "", "# %s" % title, ""]
     if img_rel:
         L += ["![%s](%s)" % (title, img_rel), ""]
+    timed = (media.get("type") or "video") == "video"
     if entries:
-        L += ["## 生词（标注）", "", "| 词 | 释义 | 词性 | 时刻(s) | 时长(s) |", "|---|---|---|---|---|"]
+        if timed:
+            L += ["## 生词（标注）", "", "| 词 | 释义 | 词性 | 时刻(s) | 时长(s) |", "|---|---|---|---|---|"]
+        else:
+            L += ["## 生词（标注）", "", "| 词 | 释义 | 词性 | 锚点 |", "|---|---|---|---|"]
         for e in entries:
-            L.append("| %s | %s | %s | %s | %s |" % (
-                e.get("word", ""), (e.get("label") or "").replace("|", "/"), e.get("pos", ""), e.get("t", ""), e.get("dur", "")))
+            if timed:
+                L.append("| %s | %s | %s | %s | %s |" % (
+                    e.get("word", ""), (e.get("label") or "").replace("|", "/"), e.get("pos", ""), e.get("t", ""), e.get("dur", "")))
+            else:
+                anchor = ((e.get("quote") or {}).get("exact") or "区域标注").replace("|", "/").replace("\n", " ")
+                L.append("| %s | %s | %s | %s |" % (
+                    e.get("word", ""), (e.get("label") or "").replace("|", "/"), e.get("pos", ""), anchor))
         L.append("")
     if chat:
         L += ["## 与豆包对话", ""]

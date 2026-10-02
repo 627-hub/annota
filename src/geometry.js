@@ -86,5 +86,22 @@
     return un > 0 ? inter / un : 0;
   }
 
-  return { contentRect, boxToPixels, pixelsToBox, clampBox, dragToBox, iou };
+  // 两个视口矩形是否相交（长图逐帧剔除用；接受 {x,y,w,h} 或 {left,top,width,height}）
+  function intersects(a, b) {
+    const ax = a.x != null ? a.x : a.left, ay = a.y != null ? a.y : a.top;
+    const aw = a.w != null ? a.w : a.width, ah = a.h != null ? a.h : a.height;
+    const bx = b.x != null ? b.x : b.left, by = b.y != null ? b.y : b.top;
+    const bw = b.w != null ? b.w : b.width, bh = b.h != null ? b.h : b.height;
+    return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+  }
+
+  // 长图：整图归一化 box → 当前滚动窗口内的像素矩形（超窗口返回 null）
+  // imgRect: 整图在视口的 rect（超长时 y 为负/超出视口）；viewport: {x,y,w,h}
+  function scrollMap(box, imgRect, viewport) {
+    const p = boxToPixels(box, imgRect);
+    if (viewport && !intersects(p, viewport)) return null;
+    return p;
+  }
+
+  return { contentRect, boxToPixels, pixelsToBox, clampBox, dragToBox, iou, intersects, scrollMap };
 });

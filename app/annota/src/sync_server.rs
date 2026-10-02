@@ -364,8 +364,13 @@ async fn put_anno(
             .cloned()
             .or_else(|| cur.get("media").cloned())
             .unwrap_or_else(|| json!({ "videoId": media_id }));
+        let format = incoming
+            .get("format")
+            .and_then(|v| v.as_str())
+            .or_else(|| cur.get("format").and_then(|v| v.as_str()))
+            .unwrap_or("video-annotate/0.1");
         let pack = json!({
-            "format": "video-annotate/0.1",
+            "format": format,
             "media": media,
             "entries": merged,
         });
@@ -482,6 +487,19 @@ fn valid_box(b: &Value) -> bool {
     true
 }
 
+fn valid_quote(q: &Value) -> bool {
+    q.get("exact")
+        .and_then(|v| v.as_str())
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false)
+}
+
+// box 与 quote 二选一即可（文章 = quote，视频/图片 = box）
+fn valid_anchor(e: &Value) -> bool {
+    valid_box(e.get("box").unwrap_or(&Value::Null))
+        || valid_quote(e.get("quote").unwrap_or(&Value::Null))
+}
+
 fn to_float(v: &Value, default: f64) -> f64 {
     v.as_f64().unwrap_or(default)
 }
@@ -523,12 +541,24 @@ fn same(e: &Value, o: &Value) -> bool {
     if e_word != o_word {
         return false;
     }
-    let e_t = to_float(e.get("t").unwrap_or(&Value::Null), 0.0);
-    let o_t = to_float(o.get("t").unwrap_or(&Value::Null), 0.0);
-    if (e_t - o_t).abs() >= 0.4 {
-        return false;
+    let eb = valid_box(e.get("box").unwrap_or(&Value::Null));
+    let ob = valid_box(o.get("box").unwrap_or(&Value::Null));
+    if eb && ob {
+        let e_t = to_float(e.get("t").unwrap_or(&Value::Null), 0.0);
+        let o_t = to_float(o.get("t").unwrap_or(&Value::Null), 0.0);
+        if (e_t - o_t).abs() >= 0.4 {
+            return false;
+        }
+        return iou(e.get("box").unwrap_or(&Value::Null), o.get("box").unwrap_or(&Value::Null)) > 0.6;
     }
-    iou(e.get("box").unwrap_or(&Value::Null), o.get("box").unwrap_or(&Value::Null)) > 0.6
+    let eq = valid_quote(e.get("quote").unwrap_or(&Value::Null));
+    let oq = valid_quote(o.get("quote").unwrap_or(&Value::Null));
+    if eq && oq {
+        let e_exact = e.get("quote").and_then(|q| q.get("exact")).and_then(|v| v.as_str()).unwrap_or("");
+        let o_exact = o.get("quote").and_then(|q| q.get("exact")).and_then(|v| v.as_str()).unwrap_or("");
+        return e_exact == o_exact;   // 文本锚点：同一段文字即同一标注
+    }
+    false
 }
 
 fn merge_entries(a: &[Value], b: &[Value]) -> Vec<Value> {
@@ -540,7 +570,7 @@ fn merge_entries(a: &[Value], b: &[Value]) -> Vec<Value> {
         if e.get("word").and_then(|v| v.as_str()).map(|s| s.is_empty()).unwrap_or(true) {
             continue;
         }
-        if !valid_box(e.get("box").unwrap_or(&Value::Null)) {
+        if !valid_anchor(e) {
             continue;
         }
         if out.iter().any(|o| same(e, o)) {
@@ -681,8 +711,9 @@ fn render_note(
         "---".to_string(),
         format!("title: {}", title.replace('\n', " ")),
         format!("source: {}", media.get("url").and_then(|v| v.as_str()).unwrap_or("")),
-        format!("media: {}", media.get("videoId").and_then(|v| v.as_str()).unwrap_or("")),
+        format!("media: {}", media.get("mediaId").and_then(|v| v.as_str()).or_else(|| media.get("videoId").and_then(|v| v.as_str())).unwrap_or("")),
         format!("platform: {}", media.get("platform").and_then(|v| v.as_str()).unwrap_or("")),
+        format!("type: {}", media.get("type").and_then(|v| v.as_str()).unwrap_or("video")),
         format!("created: {}", created),
         format!(
             "tags: [video-annotate, language, {}]",
@@ -697,11 +728,17 @@ fn render_note(
         lines.push(format!("![{}]({})", title, img_rel));
         lines.push("".to_string());
     }
+    let timed = media.get("type").and_then(|v| v.as_str()).map(|s| s == "video").unwrap_or(true);
     if !entries.is_empty() {
         lines.push("## 生词（标注）".to_string());
         lines.push("".to_string());
-        lines.push("| 词 | 释义 | 词性 | 时刻(s) | 时长(s) |".to_string());
-        lines.push("|---|---|---|---|---|".to_string());
+        if timed {
+            lines.push("| 词 | 释义 | 词性 | 时刻(s) | 时长(s) |".to_string());
+            lines.push("|---|---|---|---|---|".to_string());
+        } else {
+            lines.push("| 词 | 释义 | 词性 | 锚点 |".to_string());
+            lines.push("|---|---|---|---|".to_string());
+        }
         for e in entries {
             let word = e.get("word").and_then(|v| v.as_str()).unwrap_or("");
             let label = e
@@ -710,9 +747,20 @@ fn render_note(
                 .unwrap_or("")
                 .replace('|', "/");
             let pos = e.get("pos").and_then(|v| v.as_str()).unwrap_or("");
-            let t = e.get("t").and_then(|v| v.as_str()).unwrap_or("");
-            let dur = e.get("dur").and_then(|v| v.as_str()).unwrap_or("");
-            lines.push(format!("| {} | {} | {} | {} | {} |", word, label, pos, t, dur));
+            if timed {
+                let t = e.get("t").and_then(|v| v.as_str()).unwrap_or("");
+                let dur = e.get("dur").and_then(|v| v.as_str()).unwrap_or("");
+                lines.push(format!("| {} | {} | {} | {} | {} |", word, label, pos, t, dur));
+            } else {
+                let anchor = e
+                    .get("quote")
+                    .and_then(|q| q.get("exact"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("区域标注")
+                    .replace('|', "/")
+                    .replace('\n', " ");
+                lines.push(format!("| {} | {} | {} | {} |", word, label, pos, anchor));
+            }
         }
         lines.push("".to_string());
     }
@@ -737,4 +785,50 @@ fn render_note(
         }
     }
     lines.join("\n") + "\n"
+}
+
+#[cfg(test)]
+mod r2_merge_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn accepts_quote_without_box() {
+        let e = json!({ "id": "q1", "word": "agriculture", "quote": { "exact": "the tea was planted" } });
+        let out = merge_entries(&[], &[e]);
+        assert_eq!(out.len(), 1, "quote 条目应被保留");
+    }
+
+    #[test]
+    fn accepts_box_without_quote() {
+        let e = json!({ "id": "b1", "word": "tractor", "box": { "x": 0.1, "y": 0.2, "w": 0.3, "h": 0.4 }, "t": 3.0 });
+        let out = merge_entries(&[], &[e]);
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn rejects_entry_without_any_anchor() {
+        let e = json!({ "id": "x", "word": "noanchor" });
+        assert!(merge_entries(&[], &[e]).is_empty());
+    }
+
+    #[test]
+    fn rejects_empty_quote_exact() {
+        let e = json!({ "id": "x", "word": "w", "quote": { "exact": "   " } });
+        assert!(merge_entries(&[], &[e]).is_empty());
+    }
+
+    #[test]
+    fn dedupes_quotes_by_exact() {
+        let a = json!({ "id": "q1", "word": "w", "quote": { "exact": "same text", "prefix": "a" } });
+        let b = json!({ "id": "q2", "word": "w", "quote": { "exact": "same text", "prefix": "b" } });
+        assert_eq!(merge_entries(&[a], &[b]).len(), 1);
+    }
+
+    #[test]
+    fn keeps_distinct_quotes_and_boxes() {
+        let q = json!({ "id": "q", "word": "w", "quote": { "exact": "one" } });
+        let b = json!({ "id": "b", "word": "w", "box": { "x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2 }, "t": 1.0 });
+        assert_eq!(merge_entries(&[q], &[b]).len(), 2, "quote 与 box 是不同锚点");
+    }
 }

@@ -25,6 +25,62 @@ button { color: inherit; }
 }
 .va-ui-root[data-ui-hidden="1"] .va-panel { visibility: hidden; }
 
+/* ---------- 更多菜单（⚙ 浮层） ---------- */
+.va-more-menu {
+  position: fixed;
+  right: 24px;
+  bottom: 88px;
+  z-index: 2147483003;
+  width: min(320px, calc(100vw - 32px));
+  max-height: min(70vh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px;
+  pointer-events: auto;
+  border: 1px solid rgba(255,255,255,.105);
+  border-radius: 16px;
+  background: rgba(16,18,22,.96);
+  -webkit-backdrop-filter: blur(22px) saturate(145%);
+  backdrop-filter: blur(22px) saturate(145%);
+  box-shadow: 0 18px 52px rgba(0,0,0,.5), inset 0 1px rgba(255,255,255,.055);
+  color: var(--va-text);
+  font: 12px/1.5 var(--va-font-ui);
+}
+.va-more-menu .va-btn { width: 100%; justify-content: flex-start; margin: 1px 0; }
+.va-more-menu .va-btn.is-active { border-color: rgba(245,166,35,.35); background: rgba(245,166,35,.12); color: #f3d4a2; }
+.va-more-menu .va-input { width: 100%; margin-top: 4px; }
+.va-dock[data-side="left"] ~ .va-more-menu { right: auto; left: 24px; }
+
+/* ---------- 手动选择对象（picker） ---------- */
+.va-pick-box {
+  position: fixed;
+  z-index: 2147483001;
+  pointer-events: none;
+  border: 2px solid var(--va-accent);
+  border-radius: 4px;
+  background: rgba(245,166,35,.08);
+  box-shadow: 0 0 0 9999px rgba(0,0,0,.28);
+  transition: left 60ms linear, top 60ms linear, width 60ms linear, height 60ms linear;
+}
+.va-pick-hint {
+  position: fixed;
+  z-index: 2147483002;
+  left: 50%;
+  top: 16px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  padding: 8px 14px;
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 10px;
+  background: rgba(16,18,22,.94);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  color: #d5d8dc;
+  font: 12px/1.4 var(--va-font-ui);
+  box-shadow: 0 10px 30px rgba(0,0,0,.4);
+}
+.va-pick-hint[data-valid="1"] { border-color: rgba(245,166,35,.4); color: #f3d4a2; }
+
 /* ---------- GlassDock（C1） ---------- */
 .va-dock {
   position: fixed;
@@ -160,6 +216,8 @@ button { color: inherit; }
 .va-mark { border:1.5px solid var(--va-word); border-radius:5px; background:rgba(245,166,35,.105); pointer-events:auto; cursor:pointer; transition:background 120ms ease, box-shadow 120ms ease; }
 .va-mark:hover { background:rgba(245,166,35,.19); box-shadow:0 0 0 2px rgba(245,166,35,.12); }
 .va-mark.is-hl { background:rgba(245,166,35,.28); box-shadow:0 0 0 3px rgba(245,166,35,.2); }
+.va-mark.is-stale { border-color:#ef7379; border-style:dashed; background:rgba(239,115,121,.08); }
+.va-mark.is-stale .va-mark-label { border-color:rgba(239,115,121,.4); color:#f0b0b4; }
 .va-mark.is-flash { animation: va-flash 160ms ease; }
 .va-mark-label { position:absolute; left:-1px; top:-24px; display:inline-flex; align-items:center; gap:5px; max-width:min(240px,70vw); overflow:hidden; padding:3px 8px; border:1px solid rgba(245,166,35,.28); border-radius:8px; background:rgba(18,20,24,.94); color:#f3d4a2; font:600 10px/1.35 var(--va-font-ui); text-overflow:ellipsis; white-space:nowrap; box-shadow:0 4px 12px rgba(0,0,0,.22); }
 .va-mark-label::before { content:""; width:5px; height:5px; flex:none; border-radius:50%; background:var(--va-word); }
@@ -304,6 +362,10 @@ button { color: inherit; }
 .va-dictionary-label { margin-right:2px; color:#737b85; font-size:10px; }
 .va-dictionary a { color:#c4a36f; font-size:10px; text-decoration:none; }
 .va-dictionary a:hover { color:#ffd18a; text-decoration:underline; }
+.va-quote-preview { margin:2px 0 4px; padding:8px 10px; border-left:2px solid var(--va-word); background:rgba(245,166,35,.06); color:#e6decf; font:12px/1.5 var(--va-font-ui); border-radius:0 6px 6px 0; max-height:88px; overflow:auto; }
+.va-quote-preview::before { content:"“"; }
+.va-quote-preview::after { content:"”"; }
+.va-entry-time--none { font-size:12px; opacity:.7; }
 .va-pop-actions { display:flex; justify-content:flex-end; gap:7px; margin-top:16px; }
 .va-range { margin:0 0 4px; color:#bf9a62; font:10px var(--va-font-mono); }
 .va-btn { display:inline-flex; align-items:center; justify-content:center; gap:7px; min-height:34px; padding:0 11px; border:1px solid rgba(255,255,255,.1); border-radius:9px; background:rgba(255,255,255,.055); color:#c7cbd1; font:550 11px var(--va-font-ui); cursor:pointer; transition:all 120ms ease; }
