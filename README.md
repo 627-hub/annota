@@ -1,57 +1,87 @@
 # Annota
 
-给视频和网页内容加一层可带走的标注。把词条、时间点和画面区域放在一起；原内容仍由原平台托管，标注数据可导出。
+**给视频和网页内容加一层可带走的标注：在画面上框一块，记下词条，它就被钉在这一秒和这个位置。**
 
-Annota 提供独立桌面浏览器、Chrome/Edge 扩展和 userscript。桌面浏览器内置起始页、我的库、设置、本地同步服务与 MCP server。
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Release](https://img.shields.io/github/v/release/627-hub/annota)](https://github.com/627-hub/annota/releases)
+[![Website](https://img.shields.io/badge/website-627--hub.github.io%2Fannota-brightgreen)](https://627-hub.github.io/annota/)
+
+![在视频画面上标注一个词](docs/assets/demo-annotation.png)
+
+## 这是什么
+
+看视频或文章时遇到想记的东西，通常只能在另一个 App 里记一行字，跟当时那一幕就断了。Annota 把标注直接锚定到**内容本身**：视频里的时间点和画面区域，网页里的位置。原内容仍由原平台托管，Annota 只保存你写的那一层标注。
+
+标注默认留在本机，可以导出，也可以同步到自己的设备。数据属于标注者。
+
+## 演示
+
+- 在画面上框选区域，填词条、释义、词性，绑定出现时间（截图见上）。
+- 从时间轴、词汇表或来源面板回看，点击跳回对应的一帧。
+
+<details>
+<summary>更多界面截图（首页 / 我的库）</summary>
+
+![Annota 首页](docs/assets/demo-home.png)
+
+![Annota 我的库](docs/assets/demo-library.png)
+
+</details>
+
+<!-- 演示视频位：录制完成后，把视频链接或 <video> 放在这里 -->
+
+（演示视频制作中。）
 
 ## 功能
 
-- 在视频画面框选区域，记录词条、释义、词性、时间和持续时长。
-- 用时间轴、词汇和来源面板查看标注；AI 候选框以虚线显示，需人工确认后保存。
-- 通过本地数据服务同步标注、浏览本机内容库、导出 Pack。
-- 内置 MCP server，提供截图、剪贴板、浏览器导航与标注操作工具。
-- 编辑卡提供 Cambridge、有道和欧路词典外链。内置词库已移除，查词不要求下载词表。
+**标注**：在视频画面拖框选区域，记录词条、释义、词性、开始时间和持续时长。编辑器里可以一键外链 Cambridge、有道、欧路查词。
 
-内置聊天 Agent 面板及工具调用审计目前搁置；现有 MCP server 可由外部 MCP 客户端连接。
+**回看与管理**：时间轴、词汇、来源三个视图；「我的库」汇总本机所有标注，支持搜索、按类型筛选，导出 Pack。
 
-## 快速开始
+**同步**：本地服务把标注在设备之间同步，去重合并；局域网内手机可只读观看。
 
-### Annota 桌面浏览器
+**多种用法**：独立桌面浏览器、Chrome / Edge 扩展、userscript，三端共用同一份标注数据。
+
+**开放接口**：桌面端内置 MCP server，可被外部 AI 客户端调用截图、剪贴板、导航和标注操作。
+
+## 安装
+
+从 [Releases](https://github.com/627-hub/annota/releases) 下载对应版本。
+
+### 桌面版（推荐）
+
+- **macOS**：下载 `Annota_<版本>_aarch64.dmg`，打开后把 Annota 拖进「应用程序」。
+  当前安装包没有 Apple 开发者签名，首次打开若被系统拦截，请在「访达」里右键 Annota → **打开**。
+- **Windows**：下载 `Annota_<版本>_x64-setup.exe`，运行安装程序。
+  安装包未做代码签名，SmartScreen 可能提示，选择「更多信息 → 仍要运行」。
+
+打开即用：内置起始页、我的库、设置和本地同步服务，不需要额外配置。
+
+### 浏览器扩展
+
+1. 下载 `annota-extension-<版本>.zip` 并解压。
+2. 打开 `chrome://extensions`（或 `edge://extensions`），开启「开发者模式」。
+3. 点「加载已解压的扩展程序」，选中解压出的目录。
+
+### Userscript
+
+下载 `annotate.user.js`，装进任意用户脚本管理器（桌面 Tampermonkey / Violentmonkey；Apple 平台可用开源的 Userscripts）。观看端专用变体是 `annotate.view.user.js`。
+
+安装细节与移动端用法见 [`docs/install.md`](docs/install.md)、[`docs/mobile.md`](docs/mobile.md)。
+
+## 从源码运行
 
 需要 Rust stable、系统 WebView 构建依赖，以及 Tauri CLI 2：
 
 ```bash
 cargo install tauri-cli --version '^2' --locked
-python3 build.py
+python3 build.py                    # 生成 userscript 与扩展 core
 cd app/annota
-cargo tauri dev
+cargo tauri dev                     # 开发运行
+cargo tauri build                   # 打包 dmg / exe
 ```
 
-发布构建：
-
-```bash
-cd app/annota
-cargo tauri build
-```
-
-桌面应用在本机启动同步服务 `127.0.0.1:8793`，并启动 MCP streamable HTTP 服务 `127.0.0.1:8794/mcp`。本地标注存储在应用数据目录；开发模式默认使用 `app/service/store/`。
-
-### Chrome / Edge 扩展
-
-1. 在 `chrome://extensions` 或 `edge://extensions` 打开开发者模式。
-2. 选择“加载已解压的扩展程序”，选中仓库内 `app/extension/`。
-
-### Userscript
-
-构建后将以下任一脚本安装到兼容的用户脚本管理器：
-
-- `dist/annotate.user.js`：编辑端
-- `dist/annotate.gm.user.js`：使用 GM 请求接口的编辑端
-- `dist/annotate.view.user.js`：只读观看端，自动同步
-
-Apple 平台可使用开源 Userscripts。安装与移动端说明见 [`docs/install.md`](docs/install.md)、[`docs/mobile.md`](docs/mobile.md) 和 [`docs/browser.md`](docs/browser.md)。
-
-## 开发与验证
+### 开发与验证
 
 ```bash
 python3 build.py
@@ -60,25 +90,21 @@ node dev/smoke.mjs
 (cd app/annota && cargo check)
 ```
 
-`build.py` 从 `src/` 生成三种 userscript，并同步生成扩展/浏览器用的 `core.js`。完整产品约定见 [`docs/product-spec.md`](docs/product-spec.md)，技术与数据模型见 [`docs/spec.md`](docs/spec.md)。
+## 文档
 
-## 发行
+| 文档 | 内容 |
+|---|---|
+| [`docs/product-spec.md`](docs/product-spec.md) | 产品定位、界面规格、路线与决策 |
+| [`docs/spec.md`](docs/spec.md) | 数据模型、共享协议、模型路线 |
+| [`docs/install.md`](docs/install.md) | 各端安装与宿主选择 |
+| [`docs/sync.md`](docs/sync.md) | 同步机制 |
+| [`docs/mobile.md`](docs/mobile.md) | 移动端只读观看 |
+| [`docs/browser.md`](docs/browser.md) | 手机自带油猴浏览器 |
 
-推送 `main` 会用 GitHub Actions 部署 [`site/`](site/) 到 GitHub Pages（首次部署前，在仓库 **Settings → Pages → Build and deployment** 选择 **GitHub Actions**）。网站地址为 <https://627-hub.github.io/annota/>。为版本打上与 `tauri.conf.json` 一致的 `v*` 标签后，Actions 构建 macOS DMG、Windows 安装程序 EXE、扩展 ZIP 和 userscript 附件，并创建 GitHub Release。macOS 签名与公证需要维护者配置 Apple Developer 凭据；未配置时生成的 DMG 不带开发者签名。
+## 安全
 
-## 项目结构
+数据默认留在本机，服务只监听回环地址。报告漏洞与安全边界见 [`SECURITY.md`](SECURITY.md)。
 
-```text
-app/annota/          Tauri v2 桌面浏览器与 MCP server
-app/extension/       Chrome / Edge MV3 扩展
-app/service/         本地服务页面与 Python 标准库同步服务
-site/                GitHub Pages 下载与介绍页
-src/                 标注核心、平台适配、几何计算和设计 tokens
-dist/                可直接安装的 userscript 发行文件
-dev/                 构建辅助、演示页面与测试
-docs/                产品、安装、同步与技术文档
-```
+## 许可证
 
-## 项目状态
-
-R1 桌面 UI 与词库移除已完成，发行构建正在准备。内置 Agent 面板（R1-3）按计划搁置；图片和文章标注属于后续阶段。当前发行版本为 `0.1.0`。
+[Apache-2.0](LICENSE)。

@@ -6,6 +6,7 @@
   GET  /api/list                   列出已存 mediaId
   GET  /api/anno/<key>            取标注 pack（无则返回空 entries）
   PUT  /api/anno/<key>            合并写入 pack（去重），返回合并后结果
+                                 请求体含 "replace": true（或 ?replace=1）时整包替换
   POST /api/anno/<key>            同 PUT
   OPTIONS *                       预检
 
@@ -308,12 +309,18 @@ li{margin:4px 0}a{color:#58a6ff}.k{color:#8b949e}</style>
         except Exception as e:
             return self._json(400, {"error": "bad json: %s" % e})
 
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        replace = bool(incoming.get("replace")) or bool(query.get("replace"))
+
         try:
             with key_lock(key):        # 同 key 读-合并-写原子，避免并发丢写
                 cur = read_pack(key)
-                merged = merge_entries(cur.get("entries", []), incoming.get("entries", []) or [])
+                if replace:            # 整包替换：只保留本次提交的 entries（仍过滤/去重）
+                    entries = merge_entries([], incoming.get("entries", []) or [])
+                else:
+                    entries = merge_entries(cur.get("entries", []), incoming.get("entries", []) or [])
                 media = incoming.get("media") or cur.get("media") or {"videoId": key}
-                pack = {"format": "video-annotate/0.1", "media": media, "entries": merged}
+                pack = {"format": "video-annotate/0.1", "media": media, "entries": entries}
                 write_pack(key, pack)
         except Exception as e:
             return self._json(500, {"error": "merge failed: %s" % e})
