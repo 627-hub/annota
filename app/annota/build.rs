@@ -8,6 +8,9 @@ fn main() {
                     "va_fetch",
                     "navigate_browser",
                     "bridge_probe_reply",
+                    "agent_run",
+                    "agent_chat",
+                    "agent_cancel",
                 ]),
             ),
     )

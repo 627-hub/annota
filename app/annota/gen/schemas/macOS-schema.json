@@ -177,6 +177,24 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the agent_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-cancel",
+          "markdownDescription": "Enables the agent_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_chat command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-chat",
+          "markdownDescription": "Enables the agent_chat command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the agent_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-agent-run",
+          "markdownDescription": "Enables the agent_run command without any pre-configured scope."
+        },
+        {
           "description": "Enables the bridge_probe_reply command without any pre-configured scope.",
           "type": "string",
           "const": "allow-bridge-probe-reply",
@@ -211,6 +229,24 @@
           "type": "string",
           "const": "allow-write-clipboard",
           "markdownDescription": "Enables the write_clipboard command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_cancel command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-cancel",
+          "markdownDescription": "Denies the agent_cancel command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_chat command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-chat",
+          "markdownDescription": "Denies the agent_chat command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the agent_run command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-agent-run",
+          "markdownDescription": "Denies the agent_run command without any pre-configured scope."
         },
         {
           "description": "Denies the bridge_probe_reply command without any pre-configured scope.",

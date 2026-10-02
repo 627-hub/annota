@@ -72,22 +72,29 @@ def main():
     if not session:
         raise RuntimeError("MCP initialize did not return a session id")
 
+    request_id = 2
+
+    def step(name, arguments=None):
+        nonlocal request_id
+        out = call_tool(args.url, session, request_id, name, arguments)
+        request_id += 1
+        return out
+
     if args.navigate:
-        print(call_tool(args.url, session, 2, "navigate", {"url": args.navigate}))
+        print(step("navigate", {"url": args.navigate}))
         time.sleep(args.wait)
-    elif args.propose_word:
+    if args.propose_word:
         x, y, w, h = (float(value) for value in args.box.split(","))
-        proposal = {
+        print(step("propose_annotation", {
             "box": {"x": x, "y": y, "w": w, "h": h},
             "word": args.propose_word,
             "label": args.label,
             "t": args.time,
             "dur": args.duration,
-        }
-        print(call_tool(args.url, session, 2, "propose_annotation", proposal))
+        }))
         time.sleep(args.wait)
-    elif args.open_panel:
-        print(call_tool(args.url, session, 2, "open_annotations"))
+    if args.open_panel:
+        print(step("open_annotations"))
         time.sleep(args.wait)
 
     capture = json.loads(call_tool(args.url, session, 3, "capture_frame"))

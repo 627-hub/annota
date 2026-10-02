@@ -24,6 +24,9 @@
     "allow-va-fetch",
     "allow-navigate-browser",
     "allow-browser-action",
-    "allow-bridge-probe-reply"
+    "allow-bridge-probe-reply",
+    "allow-agent-run",
+    "allow-agent-chat",
+    "allow-agent-cancel"
   ]
 }

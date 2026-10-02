@@ -122,9 +122,28 @@
     .library-entry-empty { color:#7e858e; font-size:11px; }
     .settings-layout { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px; margin-top:24px; }
     .setting-section { padding:18px; border:1px solid var(--va-page-border); border-radius:14px; background:var(--va-page-surface-raised); }
+    .setting-section-wide { grid-column:1 / -1; }
     .setting-section h3 { margin:0; color:#e0e1e2; font-size:12px; font-weight:630; }
     .setting-section p { margin:5px 0 14px; color:#7c838d; font-size:10px; }
     .setting-actions { display:flex; gap:7px; flex-wrap:wrap; }
+    .settings-form { display:grid; gap:13px; }
+    .settings-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:11px; }
+    .settings-field { display:grid; gap:6px; min-width:0; }
+    .settings-field > span { color:#a4a9b1; font-size:10px; font-weight:620; }
+    .settings-field small { color:#727985; font-size:9px; line-height:1.45; }
+    .settings-input { width:100%; min-width:0; height:37px; padding:0 10px; border:1px solid rgba(255,255,255,.11); border-radius:9px; outline:none; background:rgba(255,255,255,.04); color:#e4e5e7; font-size:11px; }
+    .settings-input:focus { border-color:rgba(245,166,35,.58); box-shadow:0 0 0 3px rgba(245,166,35,.08); }
+    .settings-input[aria-invalid="true"] { border-color:rgba(241,117,123,.7); box-shadow:0 0 0 3px rgba(241,117,123,.09); }
+    .settings-input::placeholder { color:#68707a; }
+    .settings-toggle { display:flex; align-items:center; gap:9px; color:#c6c9ce; font-size:10px; cursor:pointer; }
+    .settings-toggle input { width:15px; height:15px; accent-color:#f5a623; }
+    .settings-feedback { min-height:16px; color:#78c99d; font-size:10px; }
+    .settings-feedback[data-state="error"] { color:#f19a9d; }
+    .settings-feedback[data-state="busy"] { color:#d7b878; }
+    .ai-status { display:flex; align-items:center; gap:8px; min-height:31px; color:#9299a3; font-size:10px; }
+    .ai-status i { width:7px; height:7px; flex:none; border-radius:50%; background:#777e88; }
+    .ai-status[data-state="ready"] i { background:#49bc86; box-shadow:0 0 8px rgba(73,188,134,.3); }
+    .ai-status[data-state="error"] i { background:#ef7379; }
     .secondary-button { min-height:34px; padding:0 11px; border:1px solid rgba(255,255,255,.1); border-radius:9px; background:rgba(255,255,255,.045); color:#c3c7cc; font-size:10px; cursor:pointer; }
     .secondary-button:hover { border-color:rgba(245,166,35,.25); color:#f0c57f; }
     .secondary-button.is-active { border-color:rgba(245,166,35,.34); background:rgba(245,166,35,.1); color:#f0c57f; }
@@ -163,6 +182,9 @@
     [data-theme="light"] .library-entry-empty { color:#626b78; }
     [data-theme="light"] .empty-copy strong { color:#24262a; }
     [data-theme="light"] .setting-section { box-shadow:0 5px 18px rgba(20,25,35,.035); }
+    [data-theme="light"] .settings-field > span,
+    [data-theme="light"] .settings-toggle { color:#4b5563; }
+    [data-theme="light"] .settings-input { border-color:#dfe1e6; background:#fff; color:#17181c; }
     :focus-visible { outline:2px solid var(--va-accent); outline-offset:2px; }
     @media (max-width:850px) {
       .page-shell { width:min(100% - 40px,760px); padding-top:28px; }
@@ -187,6 +209,7 @@
       .onboarding-step, .onboarding-step + .onboarding-step { padding:12px 6px; border-left:0; }
       .onboarding-step + .onboarding-step { border-top:1px solid rgba(255,255,255,.065); }
       .settings-layout { grid-template-columns:1fr; }
+      .settings-grid { grid-template-columns:1fr; }
       .library-toolbar { align-items:flex-start; flex-wrap:wrap; }
       .library-filter { width:100%; margin-left:0; }
       .library-main { grid-template-columns:minmax(0,1fr) auto; gap:8px; }
@@ -263,6 +286,27 @@
             <div class="eyebrow">ANNOTA PREFERENCES</div>
             <div class="section-head" style="align-items:center;margin-top:10px"><div><h2 style="font-size:29px">设置</h2><p>控制本地体验、查词和数据导出。</p></div></div>
             <div class="settings-layout">
+              <section class="setting-section setting-section-wide" aria-labelledby="runtime-settings-heading">
+                <h3 id="runtime-settings-heading">同步、快捷键与查词</h3>
+                <p>这些偏好由本地服务保存，并由视频页的运行时设置加载器读取。留空同步地址时会自动探测。</p>
+                <form class="settings-form" id="runtime-settings-form" novalidate>
+                  <div class="settings-grid">
+                    <label class="settings-field" for="sync-address"><span>同步服务地址</span><input class="settings-input" id="sync-address" type="url" inputmode="url" placeholder="留空以自动探测" autocomplete="url"><small>非空地址须为有效的 http(s) URL。</small></label>
+                    <label class="settings-field" for="dict-url-template"><span>词典 URL 模板</span><input class="settings-input" id="dict-url-template" type="url" inputmode="url" placeholder="https://dictionary.cambridge.org/dictionary/english/{word}"><small>留空使用 Cambridge 默认；自定义模板必须包含 {word}。</small></label>
+                  </div>
+                  <label class="settings-toggle"><input id="sync-auto" type="checkbox"><span>每次打开视频页后自动同步</span></label>
+                  <div class="settings-grid">
+                    <label class="settings-field" for="shortcut-annotate"><span>标注快捷键</span><input class="settings-input shortcut-input" id="shortcut-annotate" type="text" autocomplete="off" spellcheck="false" placeholder="alt+d"><small>修饰键 + 单个字母、数字或 F1–F12；留空禁用。</small></label>
+                    <label class="settings-field" for="shortcut-panel"><span>侧栏快捷键</span><input class="settings-input shortcut-input" id="shortcut-panel" type="text" autocomplete="off" spellcheck="false" placeholder="alt+l"><small>Esc 保留为关闭键。</small></label>
+                    <label class="settings-field" for="shortcut-overlay"><span>显示 / 隐藏标注快捷键</span><input class="settings-input shortcut-input" id="shortcut-overlay" type="text" autocomplete="off" spellcheck="false" placeholder="alt+s"></label>
+                  </div>
+                  <div class="setting-actions"><button class="primary-button" id="save-runtime-settings" type="submit">保存设置</button><span class="settings-feedback" id="settings-feedback" role="status" aria-live="polite"></span></div>
+                </form>
+              </section>
+              <section class="setting-section" aria-labelledby="ai-settings-heading"><h3 id="ai-settings-heading">AI 助手</h3><p>模型密钥仅从服务端环境变量读取；此处不会收集或保存 API key。</p><div class="settings-grid">
+                <label class="settings-field" for="ai-base-url"><span>模型服务地址</span><input class="settings-input" id="ai-base-url" type="url" inputmode="url" placeholder="留空使用默认地址" autocomplete="url"><small>可选；非空时须为有效的 http(s) URL。</small></label>
+                <label class="settings-field" for="ai-model"><span>模型名称</span><input class="settings-input" id="ai-model" type="text" maxlength="160" autocomplete="off" placeholder="留空使用默认模型"><small>可选；最多 160 个字符。</small></label>
+              </div><div class="ai-status" id="ai-status" role="status" aria-live="polite"><i aria-hidden="true"></i><span>正在读取模型状态…</span></div></section>
               <section class="setting-section"><h3>外观</h3><p>页面工作区主题。视频上的标注工具保持深色高对比。</p><div class="setting-actions"><button class="secondary-button" data-theme-choice="dark">深色</button><button class="secondary-button" data-theme-choice="light">浅色</button><button class="secondary-button" data-theme-choice="system">跟随系统</button></div></section>
               <section class="setting-section"><h3>数据与隐私</h3><p>标注默认保存在本地。你可以随时导出完整数据副本。</p><div class="setting-actions"><button class="secondary-button" id="export-settings">导出全部标注</button><button class="secondary-button" id="refresh-library">刷新本地数据</button></div></section>
               <section class="setting-section"><h3>查词网站</h3><p>编辑标注时使用外部词典；默认查词链接可在视频页右下 ⚙ 菜单的「DICTIONARY」里改。词典内容由其服务方维护。</p><div class="setting-actions"><a class="platform-link" href="https://dictionary.cambridge.org/" target="_blank" rel="noopener noreferrer">Cambridge ↗</a><a class="platform-link" href="https://www.youdao.com/" target="_blank" rel="noopener noreferrer">有道 ↗</a><a class="platform-link" href="https://dict.eudic.net/" target="_blank" rel="noopener noreferrer">欧路 ↗</a></div></section>
@@ -512,10 +556,162 @@
       document.querySelectorAll('[data-theme-choice]').forEach((item) => item.classList.toggle('is-active', item === button));
       notify('外观已更新');
     }));
+    const defaultRuntimeSettings = {
+      sync: { address: '', auto: false },
+      shortcuts: { annotate: 'alt+d', panel: 'alt+l', overlay: 'alt+s' },
+      dictUrlTemplate: '',
+      ai: { baseUrl: '', model: '' },
+    };
+    let runtimeSettings = JSON.parse(JSON.stringify(defaultRuntimeSettings));
+    const settingsFeedback = document.getElementById('settings-feedback');
+    function normalizedRuntimeSettings(value) {
+      const source = value && typeof value === 'object' ? value : {};
+      const sync = source.sync && typeof source.sync === 'object' ? source.sync : {};
+      const shortcuts = source.shortcuts && typeof source.shortcuts === 'object' ? source.shortcuts : {};
+      const ai = source.ai && typeof source.ai === 'object' ? source.ai : {};
+      return {
+        sync: {
+          address: typeof sync.address === 'string' ? sync.address : defaultRuntimeSettings.sync.address,
+          auto: typeof sync.auto === 'boolean' ? sync.auto : defaultRuntimeSettings.sync.auto,
+        },
+        shortcuts: {
+          annotate: typeof shortcuts.annotate === 'string' ? shortcuts.annotate : defaultRuntimeSettings.shortcuts.annotate,
+          panel: typeof shortcuts.panel === 'string' ? shortcuts.panel : defaultRuntimeSettings.shortcuts.panel,
+          overlay: typeof shortcuts.overlay === 'string' ? shortcuts.overlay : defaultRuntimeSettings.shortcuts.overlay,
+        },
+        dictUrlTemplate: typeof source.dictUrlTemplate === 'string' ? source.dictUrlTemplate : '',
+        ai: {
+          baseUrl: typeof ai.baseUrl === 'string' ? ai.baseUrl : defaultRuntimeSettings.ai.baseUrl,
+          model: typeof ai.model === 'string' ? ai.model : defaultRuntimeSettings.ai.model,
+        },
+      };
+    }
+    function setSettingsFeedback(message, state) {
+      settingsFeedback.textContent = message;
+      settingsFeedback.dataset.state = state || 'ready';
+    }
+    function validHttpUrl(value) {
+      if (!/^https?:\/\//i.test(value)) return false;
+      try { const url = new URL(value); return (url.protocol === 'http:' || url.protocol === 'https:') && !!url.host; }
+      catch (_) { return false; }
+    }
+    function validShortcut(value) {
+      if (!value) return true;
+      const parts = value.toLowerCase().split('+').map((part) => part.trim());
+      if (parts.length < 2 || parts.some((part) => !part)) return false;
+      const key = parts.pop();
+      const allowed = new Set(['alt', 'ctrl', 'meta', 'shift']);
+      const modifiers = parts;
+      return modifiers.length > 0 && new Set(modifiers).size === modifiers.length &&
+        modifiers.every((modifier) => allowed.has(modifier)) &&
+        (/^[a-z0-9]$/.test(key) || /^f(?:[1-9]|1[0-2])$/.test(key)) && key !== 'escape';
+    }
+    function fillRuntimeSettings(value) {
+      runtimeSettings = normalizedRuntimeSettings(value);
+      document.getElementById('sync-address').value = runtimeSettings.sync.address;
+      document.getElementById('sync-auto').checked = runtimeSettings.sync.auto;
+      document.getElementById('dict-url-template').value = runtimeSettings.dictUrlTemplate;
+      document.getElementById('shortcut-annotate').value = runtimeSettings.shortcuts.annotate;
+      document.getElementById('shortcut-panel').value = runtimeSettings.shortcuts.panel;
+      document.getElementById('shortcut-overlay').value = runtimeSettings.shortcuts.overlay;
+      document.getElementById('ai-base-url').value = runtimeSettings.ai.baseUrl;
+      document.getElementById('ai-model').value = runtimeSettings.ai.model;
+    }
+    async function loadRuntimeSettings() {
+      fillRuntimeSettings(defaultRuntimeSettings);
+      try {
+        const response = await fetch('/api/settings', { headers: { Accept: 'application/json' } });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || !body.settings) throw new Error(body.error || 'HTTP ' + response.status);
+        fillRuntimeSettings(body.settings);
+        setSettingsFeedback('已载入本地服务设置。', 'ready');
+      } catch (error) {
+        setSettingsFeedback('无法读取本地设置：' + (error.message || '服务暂不可用'), 'error');
+      }
+    }
+    document.getElementById('runtime-settings-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const addressInput = document.getElementById('sync-address');
+      const dictInput = document.getElementById('dict-url-template');
+      const aiBaseUrlInput = document.getElementById('ai-base-url');
+      const aiModelInput = document.getElementById('ai-model');
+      const address = addressInput.value.trim();
+      const dictUrlTemplate = dictInput.value.trim();
+      const aiBaseUrl = aiBaseUrlInput.value.trim();
+      const aiModel = aiModelInput.value.trim();
+      addressInput.removeAttribute('aria-invalid'); dictInput.removeAttribute('aria-invalid');
+      aiBaseUrlInput.removeAttribute('aria-invalid'); aiModelInput.removeAttribute('aria-invalid');
+      document.querySelectorAll('.shortcut-input').forEach((input) => input.removeAttribute('aria-invalid'));
+      if (address && !validHttpUrl(address)) {
+        addressInput.setAttribute('aria-invalid', 'true'); addressInput.focus();
+        setSettingsFeedback('同步服务地址必须是有效的 http(s) URL。', 'error'); return;
+      }
+      if (dictUrlTemplate && (!dictUrlTemplate.includes('{word}') || !validHttpUrl(dictUrlTemplate))) {
+        dictInput.setAttribute('aria-invalid', 'true'); dictInput.focus();
+        setSettingsFeedback('词典模板必须包含 {word}，且为有效的 http(s) URL。', 'error'); return;
+      }
+      if (aiBaseUrl && !validHttpUrl(aiBaseUrl)) {
+        aiBaseUrlInput.setAttribute('aria-invalid', 'true'); aiBaseUrlInput.focus();
+        setSettingsFeedback('模型服务地址必须是有效的 http(s) URL，或留空使用默认地址。', 'error'); return;
+      }
+      if (aiModel.length > 160) {
+        aiModelInput.setAttribute('aria-invalid', 'true'); aiModelInput.focus();
+        setSettingsFeedback('模型名称不能超过 160 个字符。', 'error'); return;
+      }
+      for (const [id, key, label] of [
+        ['shortcut-annotate', 'annotate', '标注'], ['shortcut-panel', 'panel', '侧栏'], ['shortcut-overlay', 'overlay', '显示 / 隐藏标注'],
+      ]) {
+        const input = document.getElementById(id);
+        const value = input.value.trim().toLowerCase();
+        if (!validShortcut(value)) {
+          input.setAttribute('aria-invalid', 'true'); input.focus();
+          setSettingsFeedback(label + '快捷键格式无效。请使用修饰键 + 单个字母、数字或 F1–F12，或留空禁用。', 'error'); return;
+        }
+        runtimeSettings.shortcuts[key] = value;
+      }
+      runtimeSettings.sync.address = address;
+      runtimeSettings.sync.auto = document.getElementById('sync-auto').checked;
+      runtimeSettings.dictUrlTemplate = dictUrlTemplate;
+      runtimeSettings.ai.baseUrl = aiBaseUrl;
+      runtimeSettings.ai.model = aiModel;
+      const saveButton = document.getElementById('save-runtime-settings');
+      saveButton.disabled = true; setSettingsFeedback('正在保存…', 'busy');
+      try {
+        const response = await fetch('/api/settings', {
+          method: 'PUT', headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify(runtimeSettings),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || body.error) throw new Error(body.error || 'HTTP ' + response.status);
+        if (body.settings) fillRuntimeSettings(body.settings);
+        setSettingsFeedback('设置已保存。视频页下次读取时会应用新的快捷键与同步规则。', 'ready');
+      } catch (error) {
+        setSettingsFeedback('保存失败：' + (error.message || '本地服务暂不可用'), 'error');
+      } finally { saveButton.disabled = false; }
+    });
+    async function loadAiStatus() {
+      const status = document.getElementById('ai-status');
+      const label = status.querySelector('span');
+      try {
+        const response = await fetch('/api/ai', { headers: { Accept: 'application/json' } });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || !body.ok) throw new Error(body.error || 'HTTP ' + response.status);
+        if (body.configured) {
+          status.dataset.state = 'ready';
+          label.textContent = '已配置' + (body.model ? ' · 模型 ' + String(body.model) : '') + ((body.base || body.baseUrl) ? ' · 地址 ' + String(body.base || body.baseUrl) : '');
+        } else {
+          status.dataset.state = 'error'; label.textContent = '未配置模型 · 请通过服务端环境变量设置模型与密钥' + (body.model ? ' · 模型 ' + String(body.model) : '') + ((body.base || body.baseUrl) ? ' · 地址 ' + String(body.base || body.baseUrl) : '');
+        }
+      } catch (error) {
+        status.dataset.state = 'error'; label.textContent = '暂时无法读取 AI 状态：' + (error.message || '本地服务不可用');
+      }
+    }
     const storedTheme = localStorage.getItem('annota:theme');
     const initialTheme = storedTheme || 'dark';
     document.documentElement.dataset.theme = initialTheme === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : initialTheme;
     document.querySelectorAll('[data-theme-choice]').forEach((item) => item.classList.toggle('is-active', item.dataset.themeChoice === initialTheme));
+    loadRuntimeSettings();
+    loadAiStatus();
     loadRecords();
   </script>
 </body>

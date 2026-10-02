@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Annota · 助手面板整页预览</title>
+<style>
+  html, body { height: 100%; }
+  body { margin: 0; background: #0c0d10; color: #e8e8ea; font: 14px/1.6 -apple-system, "PingFang SC", sans-serif; }
+  .stage { min-height: 100%; display: grid; place-items: center; padding: 32px 24px 64px; }
+  .player { width: min(880px, 100%); }
+  .screen { position: relative; aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid #2a2b31; border-radius: 14px; background: #000; box-shadow: 0 24px 70px rgba(0, 0, 0, .45); }
+  .screen video { width: 100%; height: 100%; display: block; object-fit: contain; background: #000; }
+  .meta { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-top: 14px; }
+  .meta h1 { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -.01em; }
+  .meta span { color: #85878f; font-size: 12px; }
+  .selfcheck { position: fixed; left: 8px; bottom: 6px; z-index: 2147483647; color: #9be29b; font: 11px ui-monospace, monospace; }
+</style>
+</head>
+<body>
+  <main class="stage">
+    <div class="player">
+      <div class="screen">
+        <video src="../../dev/sample.mp4" controls loop muted playsinline autoplay></video>
+      </div>
+      <div class="meta">
+        <h1>机械原理 · 第 1 讲</h1>
+        <span>00:00 / 00:05</span>
+      </div>
+    </div>
+  </main>
+  <div class="selfcheck" id="selfcheck">助手面板预览：等待注入…</div>
+  <script>
+    (function () {
+      var out = document.getElementById('selfcheck');
+      var tries = 0;
+      var timer = setInterval(function () {
+        tries += 1;
+        var host = document.querySelector('#annota-shadow-host');
+        var root = host && host.shadowRoot;
+        if (!root) { out.textContent = '等待注入… (' + tries + ')'; }
+        else {
+          // 先关掉可能已打开的 ⚙ 菜单（点「更多」切换）
+          var menuOpen = root.querySelector('.va-more-menu');
+          if (menuOpen) {
+            var buttons = root.querySelectorAll('button');
+            for (var m = 0; m < buttons.length; m++) {
+              if ((buttons[m].getAttribute('aria-label') || '') === '更多') { buttons[m].click(); break; }
+            }
+          }
+          // 面板 DOM 一直存在，用 .is-open 判断是否真的展开
+          var panel = root.querySelector('.va-panel');
+          var opened = !!(panel && panel.classList.contains('is-open'));
+          if (!opened) {
+            out.textContent = '打开侧栏… (' + tries + ')';
+            var all = root.querySelectorAll('button');
+            for (var i = 0; i < all.length; i++) {
+              if ((all[i].getAttribute('aria-label') || '') === '列表') { all[i].click(); break; }
+            }
+          } else {
+            var tabs = root.querySelectorAll('[role="tab"]');
+            var found = false;
+            for (var j = 0; j < tabs.length; j++) {
+              if ((tabs[j].textContent || '').trim() === '助手') { tabs[j].click(); found = true; break; }
+            }
+            if (found) {
+              out.textContent = '助手面板已打开 ✓';
+              var q = (new URLSearchParams(location.search)).get('q') || window.__ANNOTA_PREVIEW_Q__;
+              if (q) {
+                var ta = root.querySelector('.va-chat-input');
+                if (ta && !ta.value) {
+                  ta.value = q;
+                  ta.dispatchEvent(new Event('input', { bubbles: true }));
+                  setTimeout(function () {
+                    var form = root.querySelector('.va-chat-form');
+                    if (form && form.requestSubmit) form.requestSubmit();
+                  }, 300);
+                }
+              }
+              clearInterval(timer);
+            } else {
+              out.textContent = '找不到助手 tab';
+            }
+          }
+        }
+        if (tries > 60) { out.textContent = '注入超时'; clearInterval(timer); }
+      }, 250);
+    })();
+  </script>
+</body>
+</html>

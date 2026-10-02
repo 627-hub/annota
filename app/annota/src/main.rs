@@ -11,6 +11,8 @@ use tauri::webview::WebviewBuilder;
 use tauri_plugin_clipboard_manager::ClipboardExt;
 
 mod sync_server;
+mod agent;
+use agent::{agent_cancel, agent_chat, agent_run};
 
 // 全局 AppHandle，供 MCP tool handler 使用（clipboard 等需要后端状态）
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
@@ -52,7 +54,10 @@ const BRIDGE_JS: &str = r#"
 
   window.__ANNOTA__ = {
     captureFrame: function () { return invoke('capture_frame'); },
-    copyToClipboard: function (opts) { return invoke('write_clipboard', opts || {}); }
+    copyToClipboard: function (opts) { return invoke('write_clipboard', opts || {}); },
+    agentRun: function (messages) { return invoke('agent_run', { messages: messages || [] }); },
+    agentConfirm: function (confirmId) { return invoke('agent_chat', { confirmId: confirmId }); },
+    agentCancel: function (confirmId) { return invoke('agent_cancel', { confirmId: confirmId }); }
   };
 
   // 与 src/core.js 的「自建浏览器壳」约定对齐
@@ -450,6 +455,121 @@ fn find_pack_key_by_url(app: &tauri::AppHandle, page_url: &str) -> Option<String
     None
 }
 
+// ---------- 工具实现（MCP 与内置 agent 共用） ----------
+pub fn run_tool(name: &str, params: &Value) -> Result<String, String> {
+    match name {
+        "capture_frame" => {
+            let (w, h, buf) = capture_annota_window()?;
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
+            Ok(json!({ "format": "png", "width": w, "height": h, "bytes": buf.len(), "base64": b64 }).to_string())
+        }
+        "copy_to_clipboard" => {
+            let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
+            let image = params.get("image").and_then(|v| v.as_str()).map(String::from);
+            let text = params.get("text").and_then(|v| v.as_str()).map(String::from);
+            let html = params.get("html").and_then(|v| v.as_str()).map(String::from);
+            Ok(do_write_clipboard(app, image, text, html)?.to_string())
+        }
+        "navigate" => {
+            let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
+            let raw = params.get("url").and_then(|v| v.as_str()).ok_or("缺少 url 参数")?;
+            let target = resolve_nav_url(raw)?;
+            let parsed = url::Url::parse(&target).map_err(|e| e.to_string())?;
+            let webview = app.get_webview("browser").ok_or("browser webview 不存在")?;
+            webview.navigate(parsed).map_err(|e| e.to_string())?;
+            Ok(format!("navigating to {target}"))
+        }
+        "open_annotations" => {
+            let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
+            let webview = app.get_webview("browser").ok_or("browser webview 不存在")?;
+            webview.eval(r#"(function(){const h=document.querySelector('#annota-shadow-host');const b=h&&h.shadowRoot&&h.shadowRoot.querySelector('button[aria-label="列表"]');if(b)b.click()})()"#)
+                .map_err(|e| e.to_string())?;
+            Ok("标注侧栏已打开".to_string())
+        }
+        "start_annotation" => {
+            let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
+            let webview = app.get_webview("browser").ok_or("browser webview 不存在")?;
+            webview.eval(r#"(function(){const h=document.querySelector('#annota-shadow-host');const b=h&&h.shadowRoot&&h.shadowRoot.querySelector('button[aria-label="标注"]');if(b)b.click()})()"#)
+                .map_err(|e| e.to_string())?;
+            Ok("已请求进入标注模式".to_string())
+        }
+        "propose_annotation" => {
+            let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
+            let webview = app.get_webview("browser").ok_or("browser webview 不存在")?;
+            let payload = serde_json::to_string(params).map_err(|e| e.to_string())?;
+            let script = format!(
+                "(function(p){{const ui=window.__ANNOTA_UI__;const ok=!!(ui&&ui.proposeAnnotation(p));window.__TAURI_INTERNALS__.invoke('bridge_probe_reply',{{keys:['proposal',String(ok)]}})}})({payload})"
+            );
+            webview.eval(&script).map_err(|e| e.to_string())?;
+            Ok("候选标注已送入确认卡；需要用户确认后才会保存".to_string())
+        }
+        "words_at" => {
+            let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
+            let t = params.get("t").and_then(|v| v.as_f64()).ok_or("缺少 t 参数")?;
+            let radius = params.get("radius").and_then(|v| v.as_f64()).unwrap_or(0.5);
+            let explicit = params.get("media_id").and_then(|v| v.as_str()).map(String::from);
+            let page_url = app
+                .get_webview("browser")
+                .and_then(|w| w.url().ok())
+                .map(|u| u.to_string());
+            let derived = page_url.as_deref().map(media_id_from_url);
+
+            let mut pack = None;
+            let mut resolved = String::new();
+            if let Some(id) = explicit.or_else(|| derived.clone()) {
+                if let Some(found) = read_store_pack(app, &id) {
+                    resolved = id;
+                    pack = Some(found);
+                }
+            }
+            if pack.is_none() {
+                if let Some(key) = page_url.as_deref().and_then(|u| find_pack_key_by_url(app, u)) {
+                    if let Some(found) = read_store_pack(app, &key) {
+                        resolved = key;
+                        pack = Some(found);
+                    }
+                }
+            }
+            let pack = pack.ok_or_else(|| {
+                format!(
+                    "未找到当前内容的本地标注（media_id={:?}）；本地已有：{}",
+                    derived,
+                    store_keys(app).join(", ")
+                )
+            })?;
+
+            let entries = pack.get("entries").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            let words: Vec<Value> = entries
+                .into_iter()
+                .filter(|e| {
+                    let start = e.get("t").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let dur = e.get("dur").and_then(|v| v.as_f64()).unwrap_or(1.0);
+                    t >= start - radius && t <= start + dur + radius
+                })
+                .collect();
+
+            Ok(json!({
+                "media_id": resolved,
+                "page_url": page_url,
+                "t": t,
+                "radius": radius,
+                "count": words.len(),
+                "words": words,
+            })
+            .to_string())
+        }
+        "probe_bridge" => {
+            let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
+            let webview = app.get_webview("browser").ok_or("browser webview 不存在")?;
+            webview
+                .eval(r#"(function(){ const send=function(keys){try{window.__TAURI_INTERNALS__.invoke('bridge_probe_reply',{keys:keys})}catch(e){}};send(['bridge',typeof window.__ANNOTA__,typeof window.vaFetch]);if(typeof window.vaFetch==='function'){window.vaFetch('GET','http://127.0.0.1:8793/api/health').then(function(r){send(['va_fetch_ok',String(r.status),String(!!(r.json&&r.json.ok))])}).catch(function(e){send(['va_fetch_error',String(e&&e.message||e).slice(0,180)])})}})()"#)
+                .map_err(|e| e.to_string())?;
+            Ok("probe sent".to_string())
+        }
+        other => Err(format!("未知工具：{other}")),
+    }
+}
+
 // ---------- MCP tools ----------
 fn make_mcp_tools() -> tauri_plugin_mcp_server::McpBuilder {
     let capture_schema = serde_json::json!({
@@ -473,31 +593,13 @@ fn make_mcp_tools() -> tauri_plugin_mcp_server::McpBuilder {
             "capture_frame",
             "捕获当前 Annota 窗口（webview）的截图，返回 PNG base64 与元数据",
             capture_schema,
-            |_params: serde_json::Value| -> Result<String, String> {
-                let (w, h, buf) = capture_annota_window()?;
-                let b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
-                Ok(json!({
-                    "format": "png",
-                    "width": w,
-                    "height": h,
-                    "bytes": buf.len(),
-                    "base64": b64,
-                })
-                .to_string())
-            },
+            |params: serde_json::Value| -> Result<String, String> { run_tool("capture_frame", &params) },
         )
         .tool(
             "copy_to_clipboard",
             "将图片（PNG base64）、纯文本、HTML 写入系统剪贴板",
             clipboard_schema,
-            |params: serde_json::Value| -> Result<String, String> {
-                let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
-                let image = params.get("image").and_then(|v| v.as_str()).map(String::from);
-                let text = params.get("text").and_then(|v| v.as_str()).map(String::from);
-                let html = params.get("html").and_then(|v| v.as_str()).map(String::from);
-                let res = do_write_clipboard(app, image, text, html)?;
-                Ok(res.to_string())
-            },
+            |params: serde_json::Value| -> Result<String, String> { run_tool("copy_to_clipboard", &params) },
         )
         .tool(
             "navigate",
@@ -507,39 +609,19 @@ fn make_mcp_tools() -> tauri_plugin_mcp_server::McpBuilder {
                 "properties": { "url": { "type": "string", "description": "目标 URL" } },
                 "required": ["url"]
             }),
-            |params: serde_json::Value| -> Result<String, String> {
-                let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
-                let raw = params.get("url").and_then(|v| v.as_str()).ok_or("缺少 url 参数")?;
-                let target = resolve_nav_url(raw)?;
-                let parsed = url::Url::parse(&target).map_err(|e| e.to_string())?;
-                let webview = app.get_webview("browser").ok_or("browser webview 不存在")?;
-                webview.navigate(parsed).map_err(|e| e.to_string())?;
-                Ok(format!("navigating to {target}"))
-            },
+            |params: serde_json::Value| -> Result<String, String> { run_tool("navigate", &params) },
         )
         .tool(
             "open_annotations",
             "打开当前网页的 Annota 标注侧栏",
             serde_json::json!({"type":"object","properties":{}}),
-            |_params: serde_json::Value| -> Result<String, String> {
-                let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
-                let webview = app.get_webview("browser").ok_or("browser webview 不存在")?;
-                webview.eval(r#"(function(){const h=document.querySelector('#annota-shadow-host');const b=h&&h.shadowRoot&&h.shadowRoot.querySelector('button[aria-label="列表"]');if(b)b.click()})()"#)
-                    .map_err(|e| e.to_string())?;
-                Ok("标注侧栏已打开".to_string())
-            },
+            |params: serde_json::Value| -> Result<String, String> { run_tool("open_annotations", &params) },
         )
         .tool(
             "start_annotation",
             "在当前视频进入框选标注模式",
             serde_json::json!({"type":"object","properties":{}}),
-            |_params: serde_json::Value| -> Result<String, String> {
-                let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
-                let webview = app.get_webview("browser").ok_or("browser webview 不存在")?;
-                webview.eval(r#"(function(){const h=document.querySelector('#annota-shadow-host');const b=h&&h.shadowRoot&&h.shadowRoot.querySelector('button[aria-label="标注"]');if(b)b.click()})()"#)
-                    .map_err(|e| e.to_string())?;
-                Ok("已请求进入标注模式".to_string())
-            },
+            |params: serde_json::Value| -> Result<String, String> { run_tool("start_annotation", &params) },
         )
         .tool(
             "propose_annotation",
@@ -563,16 +645,7 @@ fn make_mcp_tools() -> tauri_plugin_mcp_server::McpBuilder {
                 },
                 "required": ["box", "word"]
             }),
-            |params: serde_json::Value| -> Result<String, String> {
-                let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
-                let webview = app.get_webview("browser").ok_or("browser webview 不存在")?;
-                let payload = serde_json::to_string(&params).map_err(|e| e.to_string())?;
-                let script = format!(
-                    "(function(p){{const ui=window.__ANNOTA_UI__;const ok=!!(ui&&ui.proposeAnnotation(p));window.__TAURI_INTERNALS__.invoke('bridge_probe_reply',{{keys:['proposal',String(ok)]}})}})({payload})"
-                );
-                webview.eval(&script).map_err(|e| e.to_string())?;
-                Ok("候选标注已送入确认卡；需要用户确认后才会保存".to_string())
-            },
+            |params: serde_json::Value| -> Result<String, String> { run_tool("propose_annotation", &params) },
         )
         .tool(
             "words_at",
@@ -586,84 +659,13 @@ fn make_mcp_tools() -> tauri_plugin_mcp_server::McpBuilder {
                 },
                 "required": ["t"]
             }),
-            |params: serde_json::Value| -> Result<String, String> {
-                let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
-                let t = params.get("t").and_then(|v| v.as_f64()).ok_or("缺少 t 参数")?;
-                let radius = params.get("radius").and_then(|v| v.as_f64()).unwrap_or(0.5);
-                let explicit = params
-                    .get("media_id")
-                    .and_then(|v| v.as_str())
-                    .map(String::from);
-                let page_url = app
-                    .get_webview("browser")
-                    .and_then(|w| w.url().ok())
-                    .map(|u| u.to_string());
-                let derived = page_url.as_deref().map(media_id_from_url);
-
-                let mut pack = None;
-                let mut resolved = String::new();
-                if let Some(id) = explicit.or_else(|| derived.clone()) {
-                    if let Some(found) = read_store_pack(app, &id) {
-                        resolved = id;
-                        pack = Some(found);
-                    }
-                }
-                if pack.is_none() {
-                    if let Some(key) = page_url
-                        .as_deref()
-                        .and_then(|u| find_pack_key_by_url(app, u))
-                    {
-                        if let Some(found) = read_store_pack(app, &key) {
-                            resolved = key;
-                            pack = Some(found);
-                        }
-                    }
-                }
-                let pack = pack.ok_or_else(|| {
-                    format!(
-                        "未找到当前内容的本地标注（media_id={:?}）；本地已有：{}",
-                        derived,
-                        store_keys(app).join(", ")
-                    )
-                })?;
-
-                let entries = pack
-                    .get("entries")
-                    .and_then(|v| v.as_array())
-                    .cloned()
-                    .unwrap_or_default();
-                let words: Vec<Value> = entries
-                    .into_iter()
-                    .filter(|e| {
-                        let start = e.get("t").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                        let dur = e.get("dur").and_then(|v| v.as_f64()).unwrap_or(1.0);
-                        t >= start - radius && t <= start + dur + radius
-                    })
-                    .collect();
-
-                Ok(json!({
-                    "media_id": resolved,
-                    "page_url": page_url,
-                    "t": t,
-                    "radius": radius,
-                    "count": words.len(),
-                    "words": words,
-                })
-                .to_string())
-            },
+            |params: serde_json::Value| -> Result<String, String> { run_tool("words_at", &params) },
         )
         .tool(
             "probe_bridge",
             "探测 browser webview 中 window.__ANNOTA__ 是否注入成功",
             serde_json::json!({"type":"object","properties":{}}),
-            |_params: serde_json::Value| -> Result<String, String> {
-                let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
-                let webview = app.get_webview("browser").ok_or("browser webview 不存在")?;
-                webview
-                    .eval(r#"(function(){ const send=function(keys){try{window.__TAURI_INTERNALS__.invoke('bridge_probe_reply',{keys:keys})}catch(e){}};send(['bridge',typeof window.__ANNOTA__,typeof window.vaFetch]);if(typeof window.vaFetch==='function'){window.vaFetch('GET','http://127.0.0.1:8793/api/health').then(function(r){send(['va_fetch_ok',String(r.status),String(!!(r.json&&r.json.ok))])}).catch(function(e){send(['va_fetch_error',String(e&&e.message||e).slice(0,180)])})}})()"#)
-                    .map_err(|e| e.to_string())?;
-                Ok("probe sent".to_string())
-            },
+            |params: serde_json::Value| -> Result<String, String> { run_tool("probe_bridge", &params) },
         )
 }
 
@@ -679,7 +681,10 @@ pub fn main() {
             bridge_probe_reply,
             navigate_browser,
             browser_action,
-            va_fetch
+            va_fetch,
+            agent_run,
+            agent_chat,
+            agent_cancel
         ])
         .setup(|app| {
             let _ = APP_HANDLE.set(app.handle().clone());
@@ -688,7 +693,13 @@ pub fn main() {
             let store_path = sync_server::resolve_store_path(app.handle());
             let root_path = sync_server::resolve_project_root();
             let notes_dir = sync_server::resolve_notes_dir(app.handle());
-            tauri::async_runtime::spawn(sync_server::run_server(store_path, root_path, notes_dir));
+            let settings_path = sync_server::resolve_settings_path(app.handle());
+            tauri::async_runtime::spawn(sync_server::run_server(
+                store_path,
+                root_path,
+                notes_dir,
+                settings_path,
+            ));
 
             let window = WindowBuilder::new(app, "main")
                 .title("Annota")
@@ -710,6 +721,20 @@ pub fn main() {
             let _id2 = app.listen("annota-bridge-ready", |_event| {
                 println!("[annota] __ANNOTA__ bridge ready");
             });
+
+            // 测试钩子：ANNOTA_AGENT_TEST=1 时后台跑一轮 agent，打印结果（仅 debug）
+            #[cfg(debug_assertions)]
+            if let Ok(prompt) = std::env::var("ANNOTA_AGENT_TEST") {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                    let messages = vec![json!({"role": "user", "content": prompt})];
+                    match agent_run(handle, messages).await {
+                        Ok(res) => println!("[annota][agent-test] OK {}", res),
+                        Err(e) => println!("[annota][agent-test] ERR {e}"),
+                    }
+                });
+            }
 
             let _ = window;
             Ok(())
