@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to build and publish
+        required: true
+        type: string
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 permissions:
   contents: write
@@ -22,7 +31,7 @@ jobs:
           python - <<'PY'
           import json, os, sys
           version = json.load(open("app/annota/tauri.conf.json", encoding="utf-8"))["version"]
-          tag = os.environ["GITHUB_REF_NAME"]
+          tag = os.environ["RELEASE_TAG"]
           if tag != f"v{version}":
               sys.exit(f"tag {tag} does not match app version v{version}")
           PY
@@ -69,7 +78,7 @@ jobs:
           python - <<'PY'
           import json, os, sys
           version = json.load(open("app/annota/tauri.conf.json", encoding="utf-8"))["version"]
-          tag = os.environ["GITHUB_REF_NAME"]
+          tag = os.environ["RELEASE_TAG"]
           if tag != f"v{version}":
               sys.exit(f"tag {tag} does not match app version v{version}")
           PY
@@ -79,7 +88,22 @@ jobs:
         run: choco install nsis --yes --no-progress
       - name: Install Tauri CLI
         run: cargo install tauri-cli --version 2.12.1 --locked
-      - name: Build desktop installer
+      - name: Detect Apple signing credentials
+        id: apple-signing
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          if [[ -n "$APPLE_CERTIFICATE" && -n "$APPLE_CERTIFICATE_PASSWORD" && -n "$APPLE_SIGNING_IDENTITY" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Build signed macOS installer
+        if: runner.os == 'macOS' && steps.apple-signing.outputs.enabled == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -87,6 +111,10 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: cargo tauri build --bundles ${{ matrix.bundle }}
+        working-directory: app/annota
+      - name: Build desktop installer
+        if: runner.os != 'macOS' || steps.apple-signing.outputs.enabled != 'true'
         run: cargo tauri build --bundles ${{ matrix.bundle }}
         working-directory: app/annota
       - uses: actions/upload-artifact@v4
@@ -108,4 +136,5 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          tag_name: ${{ env.RELEASE_TAG }}
           files: release-assets/*
