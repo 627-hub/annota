@@ -28,9 +28,7 @@
     book: '<path d="M5 4.5h11a3 3 0 0 1 3 3v12H8a3 3 0 0 1-3-3v-12Z"/><path d="M5 16.5a3 3 0 0 1 3-3h11"/>'
   };
 
-  // 词库索引（build_vocab.py 内联）与联想
-  const VOCAB = window.VA_VOCAB || [];
-  const VINDEX = (window.VASearch && VOCAB.length) ? window.VASearch.makeIndex(VOCAB) : null;
+  // 词库已下线（决策 A3，product-spec §16）：词必填、释义/词性手填，查词走外链词典。
 
   // 观看端：只读（隐藏标注/编辑），可自动同步。构建时烧入或 ⚙ 里切换。
   const VIEW_ONLY = !!window.VA_VIEW_ONLY ||
@@ -136,7 +134,8 @@
   const panelTabs = el('div'); panelTabs.className = 'va-panel-tabs';
   const tabTimeline = mkTab('时间轴', true);
   const tabWords = mkTab('词汇', false);
-  panelTabs.append(tabTimeline, tabWords);
+  const tabSources = mkTab('来源', false);
+  panelTabs.append(tabTimeline, tabWords, tabSources);
   const panelSearchWrap = el('div'); panelSearchWrap.className = 'va-panel-search';
   const panelSearch = el('input'); panelSearch.className = 'va-input';
   panelSearch.type = 'search'; panelSearch.placeholder = '筛选标注…'; panelSearch.setAttribute('aria-label', '筛选标注');
@@ -148,6 +147,7 @@
 
   tabTimeline.onclick = () => { panelTab = 'timeline'; updatePanelTabs(); renderPanel(); };
   tabWords.onclick = () => { panelTab = 'words'; updatePanelTabs(); renderPanel(); };
+  tabSources.onclick = () => { panelTab = 'sources'; updatePanelTabs(); renderPanel(); };
   panelSearch.addEventListener('input', renderPanel);
   panelSearch.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') panelSearch.value = ''; renderPanel(); });
 
@@ -245,7 +245,8 @@
   function updatePanelTabs() {
     tabTimeline.classList.toggle('is-active', panelTab === 'timeline');
     tabWords.classList.toggle('is-active', panelTab === 'words');
-    panelSearch.placeholder = panelTab === 'words' ? '筛选词汇…' : '筛选标注…';
+    tabSources.classList.toggle('is-active', panelTab === 'sources');
+    panelSearch.placeholder = panelTab === 'words' ? '筛选词汇…' : panelTab === 'sources' ? '筛选来源…' : '筛选标注…';
   }
   function togglePanel(force) {
     panelOpen = force == null ? !panelOpen : !!force;
@@ -273,6 +274,31 @@
     panelTitleSub.textContent = (state.video ? document.title : '当前页面') + ' · ' + state.entries.length + ' 条';
     entryList.textContent = '';
     const query = (panelSearch.value || '').trim().toLocaleLowerCase();
+    if (panelTab === 'sources') {
+      const mine = state.entries.slice().sort((a, b) => a.t - b.t);
+      const matched = query ? mine.filter((e) => (e.word + ' ' + (e.label || '') + ' ' + (e.pos || '')).toLocaleLowerCase().includes(query)) : mine;
+      const words = new Set(matched.map((e) => (e.word || '').toLocaleLowerCase()).filter(Boolean)).size;
+      const seg = (title) => { const g = el('div', null, title); g.className = 'va-entry-group'; return g; };
+      const note = (text) => { const n = el('div', null, text); n.className = 'va-src-note'; return n; };
+
+      entryList.appendChild(seg('我的'));
+      const mineRow = el('div'); mineRow.className = 'va-src-row';
+      const mineName = el('span', null, '本机标注'); mineName.className = 'va-src-name';
+      const mineTag = el('span', null, '我的'); mineTag.className = 'va-src-tag';
+      const mineCount = el('span', null, query ? '匹配 ' + matched.length + ' / 共 ' + mine.length + ' 条' : matched.length + ' 条 · ' + words + ' 个词');
+      mineCount.className = 'va-src-count';
+      mineRow.append(mineName, mineTag, mineCount);
+      entryList.appendChild(mineRow);
+      if (query && !matched.length) entryList.appendChild(note('没有匹配的标注，换个词试试。'));
+
+      entryList.appendChild(seg('他人'));
+      entryList.appendChild(note('共享标注将随去中心化标注交换开放：同一段内容下，他人公开的标注会自动汇入这里。'));
+
+      entryList.appendChild(seg('AI 建议'));
+      entryList.appendChild(note('AI 候选框不会直接写入：经 MCP propose_annotation 进入确认卡，你核对保存后才成为标注。'));
+      panelFoot.textContent = query ? '来源筛选 · 我的匹配 ' + matched.length + ' 条' : '来源 · 我的 ' + mine.length + ' 条';
+      return;
+    }
     let items;
     if (panelTab === 'words') {
       const byWord = new Map();
@@ -733,8 +759,16 @@
     const dictionary = el('div'); dictionary.className = 'va-dictionary';
     const dictionaryLabel = el('span', null, '查词'); dictionaryLabel.className = 'va-dictionary-label';
     dictionary.appendChild(dictionaryLabel);
+    // 默认词典链接模板：localStorage `annota:dictUrlTemplate`（含 {word} 占位，须 http(s)）；隐私模式读取可能抛，回退剑桥
+    const dictTemplate = (function () {
+      try {
+        const v = localStorage.getItem('annota:dictUrlTemplate');
+        if (v && v.indexOf('{word}') >= 0 && isHttp(v)) return v;
+      } catch (e) {}
+      return 'https://dictionary.cambridge.org/dictionary/english/{word}';
+    })();
     const dictLinks = [
-      ['剑桥', (word) => 'https://dictionary.cambridge.org/dictionary/english/' + encodeURIComponent(word)],
+      ['查词', (word) => dictTemplate.replace('{word}', encodeURIComponent(word))],
       ['有道', (word) => 'https://www.youdao.com/result?word=' + encodeURIComponent(word) + '&lang=en'],
       ['欧路', (word) => 'https://dict.eudic.net/dicts/en/' + encodeURIComponent(word)],
     ].map(([name, href]) => {

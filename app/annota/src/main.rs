@@ -504,9 +504,9 @@ pub fn main() {
             let _ = APP_HANDLE.set(app.handle().clone());
 
             // 启动本地同步服务（Python sync_server.py 的 Rust 移植）
-            let store_path = sync_server::resolve_store_path();
+            let store_path = sync_server::resolve_store_path(app.handle());
             let root_path = sync_server::resolve_project_root();
-            let notes_dir = sync_server::resolve_notes_dir();
+            let notes_dir = sync_server::resolve_notes_dir(app.handle());
             tauri::async_runtime::spawn(sync_server::run_server(store_path, root_path, notes_dir));
 
             let window = WindowBuilder::new(app, "main")

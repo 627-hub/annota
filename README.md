@@ -1,113 +1,84 @@
-# video-annotate · 内容标注层
+# Annota
 
-> 给「别人的内容」加一层**可共享的标注**——**视频 / 图片 / 文章皆可**；众包积累标注与对话数据，
-> 最终训练一个 **JEV 式 word↔region（词↔画面区域）决策模型**。
->
-> **不生产内容、不托管媒体。** 只解决「标注 → 合并 → 分发 → 渲染 → 训练」的技术问题。
-> 资产是用户投入时间积累并共享的标注数据；数据属于标注者，可导出、可自持、去中心化交换。
->
-> **定位**：不止数据标注，更是「**内容之上的社交标注层**」。扩展方向见 `docs/spec.md §15` 与 `HANDOVER.md §7`。
+给视频和网页内容加一层可带走的标注。把词条、时间点和画面区域放在一起；原内容仍由原平台托管，标注数据可导出。
 
-## 定位
-- **主题**：AI 应用 + 视频标注大模型。
-- **首个应用场景**：语言学习（在平台视频上把词锚到画面区域，查词/收词）。
-- 与 `../ielts-7.5` 的关系：本项目从那里拆出；词库/SRS/Anki 等作为**可选下游消费者**复用，不构成依赖。
+Annota 提供独立桌面浏览器、Chrome/Edge 扩展和 userscript。桌面浏览器内置起始页、我的库、设置、本地同步服务与 MCP server。
 
-## 三种用法（越来越「下载即用」）
-| 方式 | 说明 |
-|---|---|
-| **MV3 扩展** | `app/extension/`；桌面 `chrome://extensions` 加载已解压，或 `bash dev/portable.sh <url>`（独立资料夹，不动日常浏览器）。请求走扩展后台，**绕过 CORS/混合内容** |
-| **userscript** | `dist/*.user.js`，装进任意管理器（三端通用；手机只读用观看端） |
-| **自建浏览器** | ★ `app/browser/`（Electron）：打开即浏览器、内置标注、零配置。`bash dev/app.sh` |
-| **开源浏览器自带油猴** | 手机装 **Ezo / GuaBrowser / Solipsism / Cromite** 任一个，扫码装脚本即可（见 [`docs/browser.md`](docs/browser.md)） |
+## 功能
 
-## 快速开始（一条命令）
+- 在视频画面框选区域，记录词条、释义、词性、时间和持续时长。
+- 用时间轴、词汇和来源面板查看标注；AI 候选框以虚线显示，需人工确认后保存。
+- 通过本地数据服务同步标注、浏览本机内容库、导出 Pack。
+- 内置 MCP server，提供截图、剪贴板、浏览器导航与标注操作工具。
+- 编辑卡提供 Cambridge、有道和欧路词典外链。内置词库已移除，查词不要求下载词表。
+
+内置聊天 Agent 面板及工具调用审计目前搁置；现有 MCP server 可由外部 MCP 客户端连接。
+
+## 快速开始
+
+### Annota 桌面浏览器
+
+需要 Rust stable、系统 WebView 构建依赖，以及 Tauri CLI 2：
+
 ```bash
-python3 dev/hub.py
-```
-它会：探测本机地址 → **把同步地址烧进脚本（零配置）** → 构建 → 起两个服务 → 打开**入口页**（含手机二维码）。
-入口页三件事：**手机扫码安装 / 电脑点击安装 / 先试玩**。之后在 B站视频上点 `⇅ 同步` 即可，不用配任何东西。
-
-## 现状
-- 阶段：**P0 可用**。完整设计见 [`docs/spec.md`](docs/spec.md)。
-- 已能：任意 `<video>` 拖框绑词（**中英联想**）、**可调时刻/时长**、本地存储、**一键 `⇅ 同步`**、导入导出、B站/抖音适配、诊断面板、**🤖 AI 陪练（豆包 + 截图 + 语音）**、**📝 笔记导出（Obsidian）+ 数据沉淀**。
-- 词库：内联 **11,821 词**（雅思+托福，来源 `../ielts-7.5`），`dist/annotate.user.js` 约 735KB。
-- 终局模型：JEV 式决策（`Choice` / `Noul` / `Score` 三原语，prefill-only 概率，不生成）。
-
-## 交付形态：自建浏览器（品牌）+ 扩展/脚本（铺量）
-> 目标：**让用户知道「这是个标注浏览器，下载即用」**——无论是英语/小语种情境学习，还是通用视频数据标注。
-
-| 形态 | 用途 | 状态 |
-|---|---|---|
-| **`app/browser/`（Electron 自建浏览器）** | 品牌载体：打开即浏览器、内置标注、零配置 | ✅ 可运行（`bash dev/app.sh`） |
-| **`app/extension/`（MV3 扩展）** | Chrome/Edge 铺量，一键安装 | ✅ 可加载 |
-| **userscript（三端 + 只读观看端）** | 任意管理器 / 手机只读 | ✅ |
-| Android 自带油猴引擎的开源浏览器 | 手机端零 fork | 见 [`docs/browser.md`](docs/browser.md) |
-
-- 桌面扩展：Chrome/Edge（`chrome://extensions` 加载 `app/extension/`）；Safari 用 Userscripts。
-- 手机只观看不编辑：装「观看端」变体（只读 + 打开即自动同步）。
-- 安装细节见 [`docs/install.md`](docs/install.md) / [`docs/mobile.md`](docs/mobile.md) / [`docs/browser.md`](docs/browser.md)。
-
-## 结构
-```
-video-annotate/
-├── docs/spec.md           # 设计文档（数据模型/共享/模型路线）
-├── docs/install.md        # 各端免费宿主 + 安装
-├── docs/sync.md           # 同步：上传/下载
-├── docs/ai.md             # AI 陪练（豆包/OpenAI 兼容）
-├── docs/notes.md          # 笔记导出（Obsidian）+ 数据沉淀
-├── docs/mobile.md         # 移动端测试（局域网）
-├── schemas/               # W3C Web Annotation 对齐的 JSON Schema
-├── src/geometry.js        # 内容区坐标（可单测）
-├── src/adapter.js         # 平台：bilibili/douyin/youtube/generic
-├── src/vocab.js           # 中英词库联想（可单测）
-├── src/core.js            # 叠层/拖框/绑词/时间/同步/导入导出
-├── build_vocab.py         # ielts-7.5 词表 → dist/vocab.json
-├── build.py               # src/*.js + vocab → dist/annotate.user.js
-├── dist/annotate.user.js     # 脚本产物（@grant none）
-├── dist/annotate.gm.user.js  # GM 变体（GM_xmlhttpRequest，移动端/https 同步用）
-├── dist/vocab.json           # 轻量词库（雅思+托福 11,821 词）
-├── app/browser/           # ★ 自建浏览器（Electron 壳，内置标注，下载即用）
-├── app/extension/         # MV3 扩展（Chrome/Edge，铺量）
-├── app/service/           # sync_server.py：单端口服务（静态 + 同步 API）
-└── dev/                   # hub.py 一键入口 / serve.py / demo.html / 单测 / 冒烟
+cargo install tauri-cli --version '^2' --locked
+python3 build.py
+cd app/annota
+cargo tauri dev
 ```
 
-## 路线（详见 spec §10）
-- **P0** 跨端 userscript 核心：任意 `<video>` 拖框绑词、本地存储、导入导出、内容区坐标 + 单测。
-- **P1** 包成 MV3 扩展 + AI 建议框（云开放词表）+ 词库附义。
-- **P2** W3C 兼容 Pack/Feed + 去中心化交换 + 客户端合并去重。
-- **P3** 观看端叠加（他人标注）。
-- **P4** 学习闭环（可选，接 `ielts-7.5`）。
-- **P5** 平台适配（B站→抖音）。
-- **P6** 轨迹/动作标注。
-- **M0–M3** 移动端：Android 借扩展浏览器 → iOS 借脚本管理器（观看优先）→ 标注降级 → 自建 webview（可选）。
-- **M** 终局：训 + 评测 JEV 式 word↔region 决策模型。
+发布构建：
 
-## 开发 / 调试
-> 日常直接用 `python3 dev/hub.py`（一键）。以下是拆开手动跑：
 ```bash
-python3 build_vocab.py             # ../ielts-7.5 词表 → dist/vocab.json（可选，已入库）
-python3 build.py                   # src/*.js + vocab → dist/annotate.user.js（带 UTF-8 BOM）
-node --test dev/geometry.test.mjs dev/vocab.test.mjs   # 单测（9 + 4）
-node dev/smoke.mjs                 # 假 DOM 冒烟测试（抓运行时错误）
-python3 app/service/sync_server.py # 单端口 8793：静态 + 同步 API（`/` 有入口页）
-python3 dev/hub.py --tunnel        # 可选：https 隧道（手机跨网；国内域名可能被污染，见 mobile.md）
+cd app/annota
+cargo tauri build
 ```
-> 服务默认绑 `0.0.0.0`（便于手机访问），会暴露到局域网，仅可信网络使用。移动端步骤见 [`docs/mobile.md`](docs/mobile.md)。
-> 静态与 API 同一端口（8793）且带 `charset=utf-8`；`dev/serve.py`(8792) 是纯静态备用。
-- `dev/demo.html` 直接 `<script>` 引入 `dist/annotate.user.js`，**无需管理器即可本地测**。
-- 真实用法：把 `dist/annotate.user.js` 装进免费管理器（桌面 TM/Violentmonkey，Apple 用 Userscripts）。
 
-## B站适配说明
-- 只在播放页启用（`/video/`、`/bangumi/play/`、`/cheese/play/`、`/festival/`、`/list/`），首页 feed 不打扰。
-- 主视频优先取 `.bpx-player-video-wrap video` 等选择器，避免拿到悬停预览的小视频。
-- 支持 SPA 切集（URL 的 BV/ep/ss 变化即换一份标注）。
-- **已知限制**：`<video>` 元素**自身**进入真全屏时浏览器不允许叠加（此时右上会提示改用「网页全屏/影院模式」）；播放器容器全屏、网页全屏均正常。
-- 右上工具栏点 **ⓘ** 打开诊断面板（platform/mediaId/video 分辨率/objectFit/rect/content/entries），实机排查截图用。
+桌面应用在本机启动同步服务 `127.0.0.1:8793`，并启动 MCP streamable HTTP 服务 `127.0.0.1:8794/mcp`。本地标注存储在应用数据目录；开发模式默认使用 `app/service/store/`。
 
-## 设计要点
-- 数据模型对齐 **W3C Web Annotation**（`target`=视频+时间片段+归一化 box，`body`=词条），去中心化共享直接继承标准。
-- **只共享标注**，不搬媒体；Pack 可托管任意静态 URL，客户端合并。
-- `box` 为**左上角 `x,y,w,h`**（0–1），归一化到**视频内容区** + 记 `intrinsic`，兼容黑边/全屏/画中画/缩放。
-- AI 只**提议 + 打分**，人确认（不做全自动、不做动作/跨镜头终审）。
+### Chrome / Edge 扩展
+
+1. 在 `chrome://extensions` 或 `edge://extensions` 打开开发者模式。
+2. 选择“加载已解压的扩展程序”，选中仓库内 `app/extension/`。
+
+### Userscript
+
+构建后将以下任一脚本安装到兼容的用户脚本管理器：
+
+- `dist/annotate.user.js`：编辑端
+- `dist/annotate.gm.user.js`：使用 GM 请求接口的编辑端
+- `dist/annotate.view.user.js`：只读观看端，自动同步
+
+Apple 平台可使用开源 Userscripts。安装与移动端说明见 [`docs/install.md`](docs/install.md)、[`docs/mobile.md`](docs/mobile.md) 和 [`docs/browser.md`](docs/browser.md)。
+
+## 开发与验证
+
+```bash
+python3 build.py
+node --test dev/geometry.test.mjs
+node dev/smoke.mjs
+(cd app/annota && cargo check)
+```
+
+`build.py` 从 `src/` 生成三种 userscript，并同步生成扩展/浏览器用的 `core.js`。完整产品约定见 [`docs/product-spec.md`](docs/product-spec.md)，技术与数据模型见 [`docs/spec.md`](docs/spec.md)。
+
+## 发行
+
+推送 `main` 会用 GitHub Actions 部署 [`site/`](site/) 到 GitHub Pages（首次部署前，在仓库 **Settings → Pages → Build and deployment** 选择 **GitHub Actions**）。网站地址为 <https://627-hub.github.io/annota/>。为版本打上与 `tauri.conf.json` 一致的 `v*` 标签后，Actions 构建 macOS DMG、Windows 安装程序 EXE、扩展 ZIP 和 userscript 附件，并创建 GitHub Release。macOS 签名与公证需要维护者配置 Apple Developer 凭据；未配置时生成的 DMG 不带开发者签名。
+
+## 项目结构
+
+```text
+app/annota/          Tauri v2 桌面浏览器与 MCP server
+app/extension/       Chrome / Edge MV3 扩展
+app/service/         本地服务页面与 Python 标准库同步服务
+site/                GitHub Pages 下载与介绍页
+src/                 标注核心、平台适配、几何计算和设计 tokens
+dist/                可直接安装的 userscript 发行文件
+dev/                 构建辅助、演示页面与测试
+docs/                产品、安装、同步与技术文档
+```
+
+## 项目状态
+
+R1 桌面 UI 与词库移除已完成，发行构建正在准备。内置 Agent 面板（R1-3）按计划搁置；图片和文章标注属于后续阶段。当前发行版本为 `0.1.0`。

@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101114">
+  <meta name="description" content="Annota 为视频和网页内容添加可带走的时间与画面区域标注。">
+  <title>Annota — 把重要内容留在原处</title>
+  <style>
+    :root { color-scheme: dark; --bg:#101114; --panel:#17181d; --line:#292a30; --ink:#f0f0f2; --muted:#999ba4; --accent:#f5a623; --green:#68c697; }
+    * { box-sizing:border-box; }
+    html { min-width:320px; background:var(--bg); scroll-behavior:smooth; }
+    body { margin:0; color:var(--ink); font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif; -webkit-font-smoothing:antialiased; }
+    a { color:inherit; text-decoration:none; }
+    .wrap { width:min(1120px,calc(100% - 48px)); margin:0 auto; }
+    header { height:76px; display:flex; align-items:center; border-bottom:1px solid rgba(255,255,255,.06); }
+    .nav { display:flex; align-items:center; justify-content:space-between; }
+    .brand { display:flex; align-items:center; gap:11px; font-size:16px; font-weight:700; letter-spacing:-.03em; }
+    .brand-mark { display:grid; place-items:center; width:34px; height:34px; border:1px solid rgba(245,166,35,.4); border-radius:11px; color:var(--accent); background:rgba(245,166,35,.09); }
+    .brand-mark svg { width:20px; height:20px; }
+    .nav-links { display:flex; align-items:center; gap:27px; color:#b6b7bd; font-size:13px; }
+    .nav-links a:hover { color:var(--ink); }
+    .nav-cta { padding:8px 13px; border:1px solid var(--line); border-radius:9px; }
+    main { overflow:hidden; }
+    .hero { display:grid; grid-template-columns:1.08fr .92fr; align-items:center; gap:46px; padding:92px 0 82px; }
+    .eyebrow { display:flex; align-items:center; gap:9px; margin-bottom:22px; color:#b3a17f; font-size:10px; font-weight:700; letter-spacing:.17em; text-transform:uppercase; }
+    .eyebrow::before { content:""; width:20px; height:1px; background:var(--accent); }
+    h1 { max-width:650px; margin:0; font-size:clamp(42px,6vw,68px); line-height:1.1; letter-spacing:-.065em; font-weight:720; }
+    h1 span { color:var(--accent); }
+    .lead { max-width:515px; margin:24px 0 0; color:#a4a5ad; font-size:16px; line-height:1.85; }
+    .hero-actions { display:flex; flex-wrap:wrap; gap:11px; margin-top:31px; }
+    .button { min-height:44px; display:inline-flex; align-items:center; justify-content:center; gap:9px; padding:0 16px; border:1px solid var(--line); border-radius:10px; color:#dfe0e4; font-size:13px; font-weight:650; transition:transform .15s ease,border-color .15s ease,background .15s ease; }
+    .button:hover { transform:translateY(-1px); border-color:#484950; background:#1b1c21; }
+    .button.primary { border-color:var(--accent); background:var(--accent); color:#231806; }
+    .button.primary:hover { background:#ffb536; }
+    .button svg { width:16px; height:16px; }
+    .release-note { min-height:24px; margin:13px 0 0; color:#777983; font-size:11px; }
+    .preview { position:relative; padding:23px; border:1px solid #303137; border-radius:24px; background:linear-gradient(145deg,#1c1d22,#141519 65%); box-shadow:0 30px 90px rgba(0,0,0,.34); }
+    .preview-top { display:flex; justify-content:space-between; margin-bottom:14px; color:#82858e; font-size:9px; font-weight:650; letter-spacing:.15em; }
+    .frame { position:relative; aspect-ratio:1.48; overflow:hidden; border:1px solid #303137; border-radius:14px; background:#111216; }
+    .scene { position:absolute; inset:0; background:radial-gradient(ellipse at 55% 78%,rgba(137,87,33,.2),transparent 40%),linear-gradient(180deg,#1d1d22 0%,#191a1f 52%,#121317 53%); }
+    .scene::before { content:""; position:absolute; width:32%; height:63%; left:13%; bottom:14%; border-radius:48% 48% 20% 20%; background:linear-gradient(140deg,#26272b,#17181c); border:1px solid #32333a; }
+    .scene::after { content:""; position:absolute; width:19%; height:50%; right:14%; bottom:14%; border-radius:50% 50% 13% 13%; background:linear-gradient(140deg,#2b2b30,#18191d); border:1px solid #393941; }
+    .annotation { position:absolute; width:31%; height:34%; top:34%; left:48%; border:1px solid var(--accent); border-radius:5px; box-shadow:0 0 0 4px rgba(245,166,35,.09); }
+    .word { position:absolute; top:calc(34% - 28px); left:48%; padding:3px 8px; border:1px solid rgba(245,166,35,.36); border-radius:6px; background:#211b12; color:#ffcb70; font:11px ui-monospace,SFMono-Regular,monospace; }
+    .timeline { height:1px; position:absolute; bottom:19%; left:0; right:0; background:#303137; }
+    .frame-meta { display:flex; justify-content:space-between; margin-top:12px; color:#737680; font:9px ui-monospace,SFMono-Regular,monospace; letter-spacing:.1em; }
+    .preview-caption { display:flex; justify-content:space-between; align-items:center; margin-top:20px; padding-top:17px; border-top:1px solid #2a2b31; color:#9a9ca4; font-size:11px; }
+    .live { display:flex; align-items:center; gap:7px; color:#aeb0b8; }
+    .live i { width:6px; height:6px; border-radius:50%; background:var(--green); box-shadow:0 0 9px rgba(104,198,151,.5); }
+    .features { display:grid; grid-template-columns:repeat(3,1fr); gap:13px; padding:0 0 84px; }
+    .feature { min-height:161px; padding:22px; border:1px solid var(--line); border-radius:15px; background:rgba(255,255,255,.018); }
+    .feature-index { margin-bottom:20px; color:var(--accent); font:11px ui-monospace,SFMono-Regular,monospace; }
+    .feature h2 { margin:0; font-size:15px; letter-spacing:-.02em; }
+    .feature p { margin:8px 0 0; color:#9698a1; font-size:12px; line-height:1.7; }
+    .downloads { margin-bottom:75px; padding:25px 28px; display:flex; align-items:center; justify-content:space-between; gap:20px; border:1px solid var(--line); border-radius:16px; background:#15161a; }
+    .downloads strong { display:block; font-size:14px; }
+    .downloads p { margin:4px 0 0; color:#888a93; font-size:12px; }
+    .downloads a { flex:none; color:#edbd6a; font-size:12px; }
+    footer { border-top:1px solid rgba(255,255,255,.06); color:#777983; font-size:11px; }
+    .footer-inner { min-height:70px; display:flex; align-items:center; justify-content:space-between; gap:14px; }
+    .footer-links { display:flex; gap:18px; }
+    .footer-links a:hover { color:var(--ink); }
+    @media (max-width:760px) {
+      .wrap { width:min(100% - 34px,560px); }
+      header { height:66px; }
+      .nav-links { gap:15px; }
+      .nav-links .hide-small { display:none; }
+      .hero { grid-template-columns:1fr; gap:42px; padding:67px 0 60px; }
+      h1 { font-size:clamp(42px,11vw,60px); }
+      .lead { font-size:15px; }
+      .preview { max-width:520px; }
+      .features { grid-template-columns:1fr; gap:10px; padding-bottom:56px; }
+      .feature { min-height:auto; }
+      .feature-index { margin-bottom:12px; }
+      .downloads { align-items:flex-start; flex-direction:column; margin-bottom:52px; }
+      .footer-inner { padding:16px 0; align-items:flex-start; flex-direction:column; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="wrap nav" aria-label="主导航">
+      <a class="brand" href="#top" aria-label="Annota 首页">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 19 7.5-14 7.5 14M8.2 13.2h7.6"/><path d="M3 7V3h4M17 3h4v4M21 17v4h-4M7 21H3v-4" opacity=".55"/></svg></span>
+        Annota
+      </a>
+      <div class="nav-links">
+        <a class="hide-small" href="#features">功能</a>
+        <a class="hide-small" href="https://github.com/627-hub/annota">源码</a>
+        <a class="nav-cta" href="https://github.com/627-hub/annota/releases">所有版本 ↗</a>
+      </div>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="wrap hero">
+      <div>
+        <div class="eyebrow">A layer for what matters</div>
+        <h1>把重要内容，<br><span>留在原处。</span></h1>
+        <p class="lead">给视频和网页内容加上词条、时间点与画面区域。内容仍在原平台，标注属于你，可以同步、导出，随时带走。</p>
+        <div class="hero-actions">
+          <a class="button primary" id="mac-download" href="https://github.com/627-hub/annota/releases" aria-label="下载 macOS 版">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-5-5 5 5 5-5M4 17v3h16v-3"/></svg>macOS 版
+          </a>
+          <a class="button" id="windows-download" href="https://github.com/627-hub/annota/releases" aria-label="下载 Windows 版">Windows 版 ↗</a>
+        </div>
+        <p class="release-note" id="release-status" aria-live="polite">打开 GitHub Releases 查看最新桌面版与脚本。</p>
+      </div>
+
+      <div class="preview" aria-label="Annota 视频标注界面示意图">
+        <div class="preview-top"><span>ANNOTATION PREVIEW</span><span>00:03.2 · VIDEO</span></div>
+        <div class="frame"><div class="scene"></div><div class="timeline"></div><div class="annotation"></div><div class="word">tractor</div></div>
+        <div class="frame-meta"><span>FRAME　 ━━━━╋━━━━━━━</span><span>REGION</span></div>
+        <div class="preview-caption"><span>词条、时间与画面区域，放在同一条标注里。</span><span class="live"><i></i>本地优先</span></div>
+      </div>
+    </section>
+
+    <section class="wrap features" id="features" aria-label="Annota 功能">
+      <article class="feature"><div class="feature-index">01 / ANNOTATE</div><h2>落在画面上的标注</h2><p>框选区域，填写词条与释义，再把标注锚定到视频时间。</p></article>
+      <article class="feature"><div class="feature-index">02 / KEEP</div><h2>自己的内容库</h2><p>在本机浏览与整理标注，导出 Pack，换设备也能带走。</p></article>
+      <article class="feature"><div class="feature-index">03 / CONNECT</div><h2>开放的工具接口</h2><p>桌面端内置 MCP server，可连接外部 AI 客户端与工具。</p></article>
+    </section>
+
+    <section class="wrap downloads">
+      <div><strong id="version-heading">Annota 桌面版</strong><p>桌面浏览器、Chrome / Edge 扩展与 userscript，按你的使用方式选择。</p></div>
+      <a href="https://github.com/627-hub/annota/releases">查看扩展与所有下载项 →</a>
+    </section>
+  </main>
+
+  <footer><div class="wrap footer-inner"><span>Annota · 内容之上的标注层</span><div class="footer-links"><a href="https://github.com/627-hub/annota">GitHub</a><a href="https://github.com/627-hub/annota/releases">Releases</a><a href="https://github.com/627-hub/annota/issues">反馈问题</a></div></div></footer>
+
+  <script>
+    (async function () {
+      if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+      window.addEventListener('pageshow', () => window.scrollTo(0, 0), { once: true });
+      const repo = '627-hub/annota';
+      const status = document.getElementById('release-status');
+      try {
+        const response = await fetch('https://api.github.com/repos/' + repo + '/releases/latest', { headers: { Accept: 'application/vnd.github+json' } });
+        if (!response.ok) throw new Error('no published release');
+        const release = await response.json();
+        const assets = release.assets || [];
+        const dmg = assets.find((asset) => asset.name.toLowerCase().endsWith('.dmg'));
+        const exe = assets.find((asset) => asset.name.toLowerCase().endsWith('.exe'));
+        const mac = document.getElementById('mac-download');
+        const windows = document.getElementById('windows-download');
+        const version = release.tag_name || '最新版本';
+        document.getElementById('version-heading').textContent = 'Annota ' + version;
+        if (dmg) { mac.href = dmg.browser_download_url; mac.textContent = 'macOS 版 · 下载'; }
+        if (exe) { windows.href = exe.browser_download_url; windows.textContent = 'Windows 版 · 下载'; }
+        status.textContent = '当前版本 ' + version + (dmg && exe ? ' · macOS / Windows 可下载' : ' · 查看 Releases 获取可用文件');
+      } catch (_) {
+        status.textContent = '首个桌面发行版准备中；源码与后续下载见 GitHub Releases。';
+      }
+    })();
+  </script>
+</body>
+</html>

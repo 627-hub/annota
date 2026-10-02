@@ -1,0 +1,111 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  portable:
+    name: Package extension and userscripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Check tag version and build scripts
+        run: |
+          python - <<'PY'
+          import json, os, sys
+          version = json.load(open("app/annota/tauri.conf.json", encoding="utf-8"))["version"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          if tag != f"v{version}":
+              sys.exit(f"tag {tag} does not match app version v{version}")
+          PY
+          python build.py
+      - name: Package portable downloads
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          cp dist/*.user.js release-assets/
+          (cd app/extension && zip -q -r "../../release-assets/annota-extension-${GITHUB_REF_NAME}.zip" manifest.json background.js core.js)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portable-downloads
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 5
+
+  desktop:
+    name: Build ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS DMG
+            os: macos-latest
+            bundle: dmg
+            artifact: macos-dmg
+            path: app/annota/target/release/bundle/dmg/*.dmg
+          - name: Windows installer
+            os: windows-latest
+            bundle: nsis
+            artifact: windows-installer
+            path: app/annota/target/release/bundle/nsis/*.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check tag version and build scripts
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os, sys
+          version = json.load(open("app/annota/tauri.conf.json", encoding="utf-8"))["version"]
+          tag = os.environ["GITHUB_REF_NAME"]
+          if tag != f"v{version}":
+              sys.exit(f"tag {tag} does not match app version v{version}")
+          PY
+          python build.py
+      - name: Install NSIS
+        if: runner.os == 'Windows'
+        run: choco install nsis --yes --no-progress
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version 2.12.1 --locked
+      - name: Build desktop installer
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: cargo tauri build --bundles ${{ matrix.bundle }}
+        working-directory: app/annota
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.path }}
+          if-no-files-found: error
+          retention-days: 5
+
+  publish:
+    name: Publish GitHub Release
+    needs: [portable, desktop]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-assets/*
