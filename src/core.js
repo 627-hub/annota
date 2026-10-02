@@ -496,11 +496,25 @@
   menuPanel.className = 'va-more-menu';
   const syncBox = el('input'); syncBox.className = 'va-input';
   syncBox.setAttribute('aria-label', '同步地址');
+  // 默认词典链接模板（编辑器读同一个 key；须含 {word} 且为 http(s)）
+  const dictBox = el('input'); dictBox.className = 'va-input';
+  dictBox.setAttribute('aria-label', '默认词典链接模板');
+  dictBox.placeholder = 'https://dictionary.cambridge.org/dictionary/english/{word}';
+  function saveDictTemplate() {
+    const v = dictBox.value.trim();
+    try {
+      if (!v) { localStorage.removeItem('annota:dictUrlTemplate'); setSyncStatus('词典已恢复默认'); return; }
+      if (v.indexOf('{word}') < 0 || !isHttp(v)) { setSyncStatus('词典模板需含 {word} 且为 http(s)'); return; }
+      localStorage.setItem('annota:dictUrlTemplate', v);
+    } catch (e) {}
+    setSyncStatus('词典模板已保存');
+  }
   function toggleMenu() {
     const on = menuPanel.style.display === 'none';
     if (!on) { menuPanel.style.display = 'none'; btnCfg.classList.remove('is-active'); menuPanel.remove(); return; }
     btnCfg.classList.add('is-active');
     syncBox.value = syncUrl();
+    try { dictBox.value = localStorage.getItem('annota:dictUrlTemplate') || ''; } catch (e) {}
     const viewBtn = mkbtn(isView() ? '只读模式 · 已开启' : '只读模式', () => {
       try { localStorage.setItem('va:viewOnly', isView() ? '0' : '1'); } catch (e) {}
       applyMode();
@@ -530,6 +544,13 @@
       rowDir,
       row,
       el('div', { color: '#66717d', fontSize: '9px', padding: '2px 9px 0', overflowWrap: 'anywhere' }, cands ? '备选：' + cands : '默认 http://127.0.0.1:8793'),
+      el('div', { height: '1px', background: 'rgba(255,255,255,.08)', margin: '5px 3px' }),
+      el('div', { color: '#9b8260', fontSize: '9px', fontWeight: '700', letterSpacing: '.1em', padding: '0 9px 3px' }, 'DICTIONARY'),
+      el('div', { color: '#89919b', fontSize: '10px', padding: '0 9px' }, '默认查词链接（用 {word} 占位）'),
+      dictBox,
+      el('div', { display: 'flex', gap: '6px', marginTop: '6px' },
+        mkbtn('保存模板', saveDictTemplate),
+        mkbtn('恢复默认', () => { dictBox.value = ''; try { localStorage.removeItem('annota:dictUrlTemplate'); } catch (e) {} setSyncStatus('词典已恢复默认'); })),
     );
     menuPanel.style.display = 'block';
     uiRoot.appendChild(menuPanel);

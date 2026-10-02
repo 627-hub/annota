@@ -14,6 +14,34 @@ python3 dev/hub.py
 
 **最快验证**（连管理器都不用）：手机打开入口页上的「先试玩」链接（`http://<IP>:8793/dev/demo.html`），页内已内嵌脚本。
 
+## 观看端（只读）· 手机验证清单
+
+观看端就是 `dist/annotate.view.user.js`：构建时烧入 `VA_VIEW_ONLY=true` + `VA_AUTO_SYNC=true`，
+叠层**隐藏「标注」按钮**并关闭标注模式，页面打开后自动同步。适合手机只看不编辑。
+
+步骤：
+
+1. 电脑上跑 `python3 dev/hub.py`（**必须**这一步：它会把局域网同步地址烧进脚本）。
+2. 手机与电脑连同一个 Wi‑Fi，扫入口页上的二维码装观看端；或直接打开
+   `http://<电脑IP>:8793/dist/annotate.view.user.js`。
+3. 打开一个视频页（B站 / YouTube）看效果。
+
+成功判据：
+
+- Dock 出现，但**没有「标注」入口**；`⚙` 里「只读模式 · 已开启」。
+- 视频页出现已有标注的热区/词卡；打开页面后标注自动出现（说明同步生效）。
+
+常见卡点：
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| 完全没有热区 | 没用 `hub.py`，装的是仓库里 `VA_SYNC_URLS=[]` 的脚本 | 改用 hub.py 构建出的脚本 |
+| 手机打不开入口页 | 防火墙 / VPN / 访客网络 | 放行 python（hub.py 会打印命令）；关手机 VPN；用主 Wi‑Fi |
+| 热区有，但同步不动 | https 站点 → http 局域网属混合内容 | 用支持 `GM_xmlhttpRequest` 的管理器（Violentmonkey / Tampermonkey / Stay）；iOS 的 Userscripts 对该 API 支持不稳定，属已知限制 |
+| 传输被拦 | 手机浏览器不允许跨协议请求 | 用 `--tunnel` 起 https 隧道，或改用扩展通道 |
+
+回报问题时请带上：机型 / 系统版本、浏览器与脚本管理器、打开的视频链接、Dock 是否出现、是否有热区、同步是否成功、控制台报错。
+
 ### 手机连不上局域网？跨网用隧道
 ```bash
 python3 dev/hub.py --tunnel      # 用 cloudflared 起 https 隧道（手机在任何网络都能用）
