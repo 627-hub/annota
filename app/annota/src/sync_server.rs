@@ -1,6 +1,6 @@
 use axum::{
     body::Bytes,
-    extract::{Path as AxumPath, State},
+    extract::{Path as AxumPath, Query, State},
     http::{header::CONTENT_TYPE, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{get, post},
@@ -10,6 +10,7 @@ use base64::Engine;
 use chrono::Local;
 use dashmap::DashMap;
 use serde_json::{json, Value};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager};
@@ -168,6 +169,7 @@ async fn get_anno(State(state): State<AppState>, AxumPath(media_id): AxumPath<St
 async fn put_anno(
     State(state): State<AppState>,
     AxumPath(media_id): AxumPath<String>,
+    Query(query): Query<HashMap<String, String>>,
     body: Bytes,
 ) -> Response {
     if body.len() > MAX_BODY_BYTES {
@@ -186,6 +188,13 @@ async fn put_anno(
         .or_insert_with(|| Arc::new(Mutex::new(())))
         .clone();
 
+    // 整包替换：请求体 "replace": true 或 ?replace=1
+    let replace = incoming
+        .get("replace")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+        || matches!(query.get("replace").map(String::as_str), Some("1") | Some("true"));
+
     let pack = {
         let _guard = lock.lock().await;
         let cur = read_pack(&state.store, &media_id).await;
@@ -195,7 +204,11 @@ async fn put_anno(
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
-        let merged = merge_entries(&existing, &incoming_entries);
+        let merged = if replace {
+            merge_entries(&[], &incoming_entries)
+        } else {
+            merge_entries(&existing, &incoming_entries)
+        };
         let media = incoming
             .get("media")
             .cloned()
@@ -280,7 +293,7 @@ fn key_to_file(store: &Path, key: &str) -> PathBuf {
     store.join(format!("{}.json", sanitize_key(key)))
 }
 
-fn sanitize_key(key: &str) -> String {
+pub fn sanitize_key(key: &str) -> String {
     let mut out: String = key
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })

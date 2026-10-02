@@ -347,6 +347,109 @@ fn setup_webviews(window: &tauri::Window, app: &AppHandle) -> Result<(), String>
     Ok(())
 }
 
+// ---------- 标注查询辅助（words_at） ----------
+// 从当前页 URL 推导 mediaId，与 src/adapter.js 的规则保持一致
+fn media_id_from_url(raw: &str) -> String {
+    let url = match url::Url::parse(raw) {
+        Ok(u) => u,
+        Err(_) => return raw.to_string(),
+    };
+    let host = url.host_str().unwrap_or("").to_ascii_lowercase();
+    let path = url.path().to_string();
+    let query = |k: &str| -> Option<String> {
+        url.query_pairs()
+            .find(|(key, _)| key == k)
+            .map(|(_, v)| v.into_owned())
+    };
+    let plat = if host == "bilibili.com" || host.ends_with(".bilibili.com") {
+        "bilibili"
+    } else if host == "douyin.com" || host.ends_with(".douyin.com") {
+        "douyin"
+    } else if host == "youtube.com" || host.ends_with(".youtube.com") || host == "youtu.be" {
+        "youtube"
+    } else {
+        "generic"
+    };
+    let after = |prefix: &str| -> Option<String> {
+        path.strip_prefix(prefix)
+            .map(|rest| rest.split(['/', '?']).next().unwrap_or("").to_string())
+            .filter(|s| !s.is_empty())
+    };
+    match plat {
+        "bilibili" => {
+            if let Some(v) = after("/video/") {
+                return format!("bilibili:{v}");
+            }
+            if let Some(v) = after("/bangumi/play/") {
+                return format!("bilibili:{v}");
+            }
+            if let Some(v) = after("/cheese/play/") {
+                return format!("bilibili:cheese:{v}");
+            }
+            if let Some(bv) = query("bvid") {
+                return format!("bilibili:{bv}");
+            }
+        }
+        "douyin" => {
+            if let Some(mid) = query("modal_id") {
+                return format!("douyin:{mid}");
+            }
+            if let Some(v) = after("/video/") {
+                return format!("douyin:{v}");
+            }
+            if let Some(v) = after("/note/") {
+                return format!("douyin:{v}");
+            }
+        }
+        "youtube" => {
+            if let Some(v) = query("v") {
+                return format!("youtube:{v}");
+            }
+        }
+        _ => {}
+    }
+    format!("{plat}:{}{}", url.origin().ascii_serialization(), path)
+}
+
+fn read_store_pack(app: &tauri::AppHandle, key: &str) -> Option<Value> {
+    let store = sync_server::resolve_store_path(app);
+    let path = store.join(format!("{}.json", sync_server::sanitize_key(key)));
+    let raw = fs::read_to_string(path).ok()?;
+    serde_json::from_str::<Value>(&raw).ok()
+}
+
+fn store_keys(app: &tauri::AppHandle) -> Vec<String> {
+    let store = sync_server::resolve_store_path(app);
+    let mut keys = Vec::new();
+    if let Ok(entries) = fs::read_dir(&store) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if let Some(stem) = name.strip_suffix(".json") {
+                keys.push(stem.to_string());
+            }
+        }
+    }
+    keys.sort();
+    keys
+}
+
+// 兜底：按页面 URL 在本地库中找回对应 pack
+fn find_pack_key_by_url(app: &tauri::AppHandle, page_url: &str) -> Option<String> {
+    for key in store_keys(app) {
+        if let Some(pack) = read_store_pack(app, &key) {
+            let url = pack
+                .get("media")
+                .and_then(|m| m.get("url"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            if url == page_url {
+                return Some(key);
+            }
+        }
+    }
+    None
+}
+
 // ---------- MCP tools ----------
 fn make_mcp_tools() -> tauri_plugin_mcp_server::McpBuilder {
     let capture_schema = serde_json::json!({
@@ -469,6 +572,84 @@ fn make_mcp_tools() -> tauri_plugin_mcp_server::McpBuilder {
                 );
                 webview.eval(&script).map_err(|e| e.to_string())?;
                 Ok("候选标注已送入确认卡；需要用户确认后才会保存".to_string())
+            },
+        )
+        .tool(
+            "words_at",
+            "查询某个时间点（秒）出现的标注词条，返回词、释义、时间与画面区域；缺省针对当前页面",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "t": {"type": "number", "description": "时间点（秒）"},
+                    "media_id": {"type": "string", "description": "可选；缺省用当前页面对应的标注"},
+                    "radius": {"type": "number", "description": "时间容差秒数，默认 0.5"}
+                },
+                "required": ["t"]
+            }),
+            |params: serde_json::Value| -> Result<String, String> {
+                let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
+                let t = params.get("t").and_then(|v| v.as_f64()).ok_or("缺少 t 参数")?;
+                let radius = params.get("radius").and_then(|v| v.as_f64()).unwrap_or(0.5);
+                let explicit = params
+                    .get("media_id")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let page_url = app
+                    .get_webview("browser")
+                    .and_then(|w| w.url().ok())
+                    .map(|u| u.to_string());
+                let derived = page_url.as_deref().map(media_id_from_url);
+
+                let mut pack = None;
+                let mut resolved = String::new();
+                if let Some(id) = explicit.or_else(|| derived.clone()) {
+                    if let Some(found) = read_store_pack(app, &id) {
+                        resolved = id;
+                        pack = Some(found);
+                    }
+                }
+                if pack.is_none() {
+                    if let Some(key) = page_url
+                        .as_deref()
+                        .and_then(|u| find_pack_key_by_url(app, u))
+                    {
+                        if let Some(found) = read_store_pack(app, &key) {
+                            resolved = key;
+                            pack = Some(found);
+                        }
+                    }
+                }
+                let pack = pack.ok_or_else(|| {
+                    format!(
+                        "未找到当前内容的本地标注（media_id={:?}）；本地已有：{}",
+                        derived,
+                        store_keys(app).join(", ")
+                    )
+                })?;
+
+                let entries = pack
+                    .get("entries")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let words: Vec<Value> = entries
+                    .into_iter()
+                    .filter(|e| {
+                        let start = e.get("t").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let dur = e.get("dur").and_then(|v| v.as_f64()).unwrap_or(1.0);
+                        t >= start - radius && t <= start + dur + radius
+                    })
+                    .collect();
+
+                Ok(json!({
+                    "media_id": resolved,
+                    "page_url": page_url,
+                    "t": t,
+                    "radius": radius,
+                    "count": words.len(),
+                    "words": words,
+                })
+                .to_string())
             },
         )
         .tool(
