@@ -29,16 +29,20 @@ pub struct AppState {
     store: PathBuf,
     root: PathBuf,
     notes_dir: PathBuf,
+    settings: PathBuf,
     locks: Arc<DashMap<String, Arc<Mutex<()>>>>,
+    settings_lock: Arc<Mutex<()>>,
 }
 
 impl AppState {
-    fn new(store: PathBuf, root: PathBuf, notes_dir: PathBuf) -> Self {
+    fn new(store: PathBuf, root: PathBuf, notes_dir: PathBuf, settings: PathBuf) -> Self {
         Self {
             store,
             root,
             notes_dir,
+            settings,
             locks: Arc::new(DashMap::new()),
+            settings_lock: Arc::new(Mutex::new(())),
         }
     }
 }
@@ -96,14 +100,33 @@ pub fn resolve_notes_dir(app: &AppHandle) -> PathBuf {
         .join("notes")
 }
 
-pub async fn run_server(store: PathBuf, root: PathBuf, notes_dir: PathBuf) {
-    let state = AppState::new(store, root, notes_dir);
+pub fn resolve_settings_path(app: &AppHandle) -> PathBuf {
+    if let Ok(path) = std::env::var("ANNOTA_SETTINGS") {
+        return PathBuf::from(path);
+    }
+    if cfg!(debug_assertions) {
+        if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+            let manifest = PathBuf::from(manifest);
+            if let Some(root) = manifest.parent().and_then(|p| p.parent()) {
+                return root.join("app/service/settings.json");
+            }
+        }
+    }
+    app.path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::env::temp_dir().join("Annota"))
+        .join("settings.json")
+}
+
+pub async fn run_server(store: PathBuf, root: PathBuf, notes_dir: PathBuf, settings: PathBuf) {
+    let state = AppState::new(store, root, notes_dir, settings);
 
     let mut app = Router::new()
         .route("/", get(root_handler))
         .route("/app/annota/public/tokens.css", get(tokens_css))
         .route("/api/health", get(health))
         .route("/api/list", get(list))
+        .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/ai", get(ai_status))
         .route("/api/note", post(note))
         .route(
@@ -145,6 +168,133 @@ async fn health(State(state): State<AppState>) -> Response {
         "host": HOST,
         "port": PORT,
     }))
+}
+
+fn default_settings() -> Value {
+    json!({
+        "sync": { "address": "", "auto": false },
+        "shortcuts": { "annotate": "alt+d", "panel": "alt+l", "overlay": "alt+s" },
+        "dictUrlTemplate": "",
+        "ai": { "baseUrl": "", "model": "" }
+    })
+}
+
+fn normalized_shortcut(value: Option<&Value>, default: &str) -> Result<String, String> {
+    let raw = value.and_then(Value::as_str).unwrap_or(default).trim().to_ascii_lowercase();
+    if raw.is_empty() {
+        return Ok(String::new());
+    }
+    if raw.len() > 32 {
+        return Err("快捷键长度不能超过 32 个字符".to_string());
+    }
+    let parts: Vec<&str> = raw.split('+').collect();
+    let key = parts.last().copied().unwrap_or("");
+    let valid_key = key.len() == 1 && key.chars().all(|c| c.is_ascii_alphanumeric())
+        || (key.starts_with('f') && key[1..].parse::<u8>().map(|n| (1..=12).contains(&n)).unwrap_or(false));
+    if !valid_key {
+        return Err(format!("不支持的快捷键：{raw}"));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for modifier in parts.iter().take(parts.len().saturating_sub(1)) {
+        if !matches!(*modifier, "alt" | "ctrl" | "meta" | "shift") || !seen.insert(*modifier) {
+            return Err(format!("快捷键修饰键无效：{raw}"));
+        }
+    }
+    Ok(raw)
+}
+
+fn normalize_settings(input: &Value) -> Result<Value, String> {
+    let defaults = default_settings();
+    let sync = input.get("sync").unwrap_or(&defaults["sync"]);
+    let address = sync.get("address").and_then(Value::as_str).unwrap_or("").trim();
+    if !address.is_empty() {
+        let parsed = url::Url::parse(address).map_err(|_| "同步地址必须是 http(s) URL".to_string())?;
+        if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+            return Err("同步地址必须是 http(s) URL".to_string());
+        }
+    }
+    let shortcuts = input.get("shortcuts").unwrap_or(&defaults["shortcuts"]);
+    let dict_template = input
+        .get("dictUrlTemplate")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    if !dict_template.is_empty() {
+        if !dict_template.contains("{word}") {
+            return Err("词典链接模板必须包含 {word}".to_string());
+        }
+        let sample = dict_template.replace("{word}", "annota");
+        let parsed = url::Url::parse(&sample).map_err(|_| "词典模板必须是有效的 http(s) URL".to_string())?;
+        if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+            return Err("词典模板必须是有效的 http(s) URL".to_string());
+        }
+    }
+    let ai = input.get("ai").unwrap_or(&defaults["ai"]);
+    let ai_base = ai.get("baseUrl").and_then(Value::as_str).unwrap_or("").trim();
+    if !ai_base.is_empty() {
+        let parsed = url::Url::parse(ai_base).map_err(|_| "AI Base URL 必须是 http(s) URL".to_string())?;
+        if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+            return Err("AI Base URL 必须是 http(s) URL".to_string());
+        }
+    }
+    let ai_model = ai.get("model").and_then(Value::as_str).unwrap_or("").trim();
+    if ai_model.len() > 160 {
+        return Err("AI 模型名过长".to_string());
+    }
+    Ok(json!({
+        "sync": {
+            "address": address,
+            "auto": sync.get("auto").and_then(Value::as_bool).unwrap_or(false)
+        },
+        "shortcuts": {
+            "annotate": normalized_shortcut(shortcuts.get("annotate"), "alt+d")?,
+            "panel": normalized_shortcut(shortcuts.get("panel"), "alt+l")?,
+            "overlay": normalized_shortcut(shortcuts.get("overlay"), "alt+s")?
+        },
+        "dictUrlTemplate": dict_template,
+        "ai": { "baseUrl": ai_base, "model": ai_model }
+    }))
+}
+
+async fn get_settings(State(state): State<AppState>) -> Response {
+    let settings = match fs::read_to_string(&state.settings).await {
+        Ok(text) => match serde_json::from_str::<Value>(&text).ok().and_then(|v| normalize_settings(&v).ok()) {
+            Some(settings) => settings,
+            None => return json_error(StatusCode::INTERNAL_SERVER_ERROR, "invalid settings file"),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => default_settings(),
+        Err(e) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("read settings: {e}")),
+    };
+    json_ok(json!({ "ok": true, "settings": settings }))
+}
+
+async fn put_settings(State(state): State<AppState>, body: Bytes) -> Response {
+    if body.len() > 64 * 1024 {
+        return json_error(StatusCode::PAYLOAD_TOO_LARGE, "settings body too large");
+    }
+    let incoming: Value = match serde_json::from_slice::<Value>(&body) {
+        Ok(v) if v.is_object() => v,
+        Ok(_) => return json_error(StatusCode::BAD_REQUEST, "settings must be an object"),
+        Err(e) => return json_error(StatusCode::BAD_REQUEST, &format!("bad json: {e}")),
+    };
+    let settings = match normalize_settings(&incoming) {
+        Ok(v) => v,
+        Err(e) => return json_error(StatusCode::BAD_REQUEST, &e),
+    };
+    let _guard = state.settings_lock.lock().await;
+    if let Some(parent) = state.settings.parent() {
+        if let Err(e) = fs::create_dir_all(parent).await {
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("create settings dir: {e}"));
+        }
+    }
+    let serialized = match serde_json::to_vec_pretty(&settings) {
+        Ok(v) => v,
+        Err(e) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("serialize settings: {e}")),
+    };
+    if let Err(e) = fs::write(&state.settings, serialized).await {
+        return json_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("write settings: {e}"));
+    }
+    json_ok(json!({ "ok": true, "settings": settings }))
 }
 
 async fn list(State(state): State<AppState>) -> Response {
@@ -228,21 +378,34 @@ async fn put_anno(
     json_ok(pack)
 }
 
-async fn ai_status() -> Response {
+async fn ai_status(State(state): State<AppState>) -> Response {
+    let saved = fs::read_to_string(&state.settings)
+        .await
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .unwrap_or_else(|| default_settings());
+    let saved_ai = saved.get("ai").cloned().unwrap_or(Value::Null);
     let base = std::env::var("LLM_BASE_URL")
-        .or_else(|_| std::env::var("ARK_BASE_URL"))
-        .unwrap_or_else(|_| "https://ark.cn-beijing.volces.com/api/v3".to_string());
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| std::env::var("ARK_BASE_URL").ok().filter(|v| !v.trim().is_empty()))
+        .or_else(|| saved_ai.get("baseUrl").and_then(Value::as_str).filter(|v| !v.trim().is_empty()).map(String::from))
+        .unwrap_or_else(|| "https://ark.cn-beijing.volces.com/api/v3".to_string());
     let key = std::env::var("LLM_API_KEY")
         .or_else(|_| std::env::var("ARK_API_KEY"))
         .unwrap_or_default();
     let model = std::env::var("LLM_MODEL")
-        .or_else(|_| std::env::var("ARK_MODEL"))
-        .unwrap_or_else(|_| "doubao-pro-32k".to_string());
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .or_else(|| std::env::var("ARK_MODEL").ok().filter(|v| !v.trim().is_empty()))
+        .or_else(|| saved_ai.get("model").and_then(Value::as_str).filter(|v| !v.trim().is_empty()).map(String::from))
+        .unwrap_or_else(|| "doubao-pro-32k".to_string());
     json_ok(json!({
         "ok": true,
         "configured": !key.is_empty(),
         "model": model,
         "base": base,
+        "baseUrl": base,
     }))
 }
 

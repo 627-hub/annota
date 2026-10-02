@@ -588,6 +588,36 @@ button { color: inherit; }
 .va-src-tag { padding:2px 7px; border-radius:999px; background:rgba(245,166,35,.12); color:#ffd18a; font-size:9px; }
 .va-src-count { margin-left:auto; color:#89919b; font-size:10px; }
 .va-src-note { margin:10px 2px 0; padding:10px 12px; border:1px dashed rgba(255,255,255,.1); border-radius:10px; color:#7d8590; font-size:10px; line-height:1.55; }
+.va-assistant { display:none; flex:1; min-height:0; flex-direction:column; }
+.va-assistant-notice { flex:none; color:#e9c98f; font-size:10px; line-height:1.5; }
+.va-assistant-notice:empty { display:none; }
+.va-assistant-notice[data-state="error"] { margin:0 15px 8px; padding:9px 11px; border:1px solid rgba(240,113,120,.25); border-radius:10px; background:rgba(240,113,120,.07); color:#ffc6c9; }
+.va-chat-transcript { display:flex; flex:1; min-height:0; flex-direction:column; gap:9px; overflow:auto; padding:4px 14px 14px; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.16) transparent; }
+.va-chat-message { max-width:92%; padding:10px 12px; border:1px solid rgba(255,255,255,.075); border-radius:13px; background:rgba(255,255,255,.035); }
+.va-chat-user { align-self:flex-end; border-color:rgba(245,166,35,.2); background:rgba(245,166,35,.085); }
+.va-chat-assistant, .va-chat-notice { align-self:flex-start; }
+.va-chat-role { display:block; margin-bottom:4px; color:#b08b56; font-size:9px; font-weight:700; letter-spacing:.06em; }
+.va-chat-copy { margin:0; color:#e1e2e5; font-size:12px; line-height:1.6; overflow-wrap:anywhere; white-space:pre-wrap; }
+.va-chat-form { display:flex; flex:none; align-items:flex-end; gap:8px; padding:11px 13px 13px; border-top:1px solid rgba(255,255,255,.075); background:rgba(12,14,17,.45); }
+.va-chat-input { flex:1; min-width:0; min-height:42px; max-height:120px; resize:vertical; padding:10px 11px; border:1px solid rgba(255,255,255,.105); border-radius:11px; outline:none; background:rgba(255,255,255,.045); color:var(--va-text); font:12px/1.45 var(--va-font-ui); }
+.va-chat-input::placeholder { color:#69717b; }
+.va-chat-input:focus { border-color:rgba(245,166,35,.65); box-shadow:0 0 0 3px rgba(245,166,35,.1); }
+.va-chat-form .va-btn { min-height:38px; flex:none; }
+.va-chat-form .va-btn:disabled, .va-audit-actions .va-btn:disabled { opacity:.55; cursor:wait; }
+.va-audit-card { flex:none; padding:10px 11px; border:1px solid rgba(245,166,35,.2); border-radius:12px; background:rgba(245,166,35,.045); color:#d5d8dc; font-size:10px; }
+.va-audit-card summary { display:flex; align-items:center; justify-content:space-between; gap:8px; cursor:pointer; list-style:none; }
+.va-audit-card summary::-webkit-details-marker { display:none; }
+.va-audit-card summary strong { color:#f0d2a0; font-size:11px; }
+.va-audit-state { color:#8f98a3; font-size:9px; }
+.va-audit-label, .va-audit-card > span { display:block; margin:10px 0 4px; color:#8b929c; font-size:9px; font-weight:650; }
+.va-audit-data { max-height:150px; overflow:auto; margin:0; padding:8px; border:1px solid rgba(255,255,255,.06); border-radius:8px; background:rgba(0,0,0,.18); color:#b7c0ca; font:9px/1.5 var(--va-font-mono); white-space:pre-wrap; overflow-wrap:anywhere; }
+.va-audit-actions { display:flex; justify-content:flex-end; gap:6px; margin-top:9px; }
+.va-audit-actions .va-btn { min-height:29px; }
+.va-audit-actions .va-btn-danger { color:#f2a2a5; }
+.va-audit-card summary:focus-visible, .va-audit-actions .va-btn:focus-visible {
+  outline:2px solid var(--va-accent);
+  outline-offset:2px;
+}
 
 /* ---------- EditorCard / WordCard（C3/C6，根节点统一 .va-popover） ---------- */
 .va-popover {
@@ -664,6 +694,7 @@ button { color: inherit; }
   outline: 2px solid var(--va-accent);
   outline-offset: 2px;
 }
+.va-chat-input:focus-visible { outline:2px solid var(--va-accent); outline-offset:2px; }
 @media (max-width: 768px) {
   .va-dock { right:12px; bottom:12px; }
   .va-dock[data-side="left"] { left:12px; }
@@ -715,11 +746,54 @@ button { color: inherit; }
 
   // 词库已下线（决策 A3，product-spec §16）：词必填、释义/词性手填，查词走外链词典。
 
+  const APP_SETTINGS_KEY = 'annota:settings';
+  const DEFAULT_APP_SETTINGS = {
+    sync: { address: '', auto: false },
+    shortcuts: { annotate: 'alt+d', panel: 'alt+l', overlay: 'alt+s' },
+    dictUrlTemplate: '',
+    ai: { baseUrl: '', model: '' },
+  };
+  function mergeAppSettings(value) {
+    value = value && typeof value === 'object' ? value : {};
+    const sync = value.sync && typeof value.sync === 'object' ? value.sync : {};
+    const shortcuts = value.shortcuts && typeof value.shortcuts === 'object' ? value.shortcuts : {};
+    return {
+      sync: {
+        address: typeof sync.address === 'string' ? sync.address : DEFAULT_APP_SETTINGS.sync.address,
+        auto: typeof sync.auto === 'boolean' ? sync.auto : DEFAULT_APP_SETTINGS.sync.auto,
+      },
+      shortcuts: {
+        annotate: typeof shortcuts.annotate === 'string' ? shortcuts.annotate : DEFAULT_APP_SETTINGS.shortcuts.annotate,
+        panel: typeof shortcuts.panel === 'string' ? shortcuts.panel : DEFAULT_APP_SETTINGS.shortcuts.panel,
+        overlay: typeof shortcuts.overlay === 'string' ? shortcuts.overlay : DEFAULT_APP_SETTINGS.shortcuts.overlay,
+      },
+      dictUrlTemplate: typeof value.dictUrlTemplate === 'string' ? value.dictUrlTemplate : '',
+      ai: {
+        baseUrl: value.ai && typeof value.ai.baseUrl === 'string' ? value.ai.baseUrl : '',
+        model: value.ai && typeof value.ai.model === 'string' ? value.ai.model : '',
+      },
+    };
+  }
+  let appSettings = (function () {
+    try { return mergeAppSettings(JSON.parse(localStorage.getItem(APP_SETTINGS_KEY) || '{}')); }
+    catch (e) { return mergeAppSettings(null); }
+  })();
+
   // 观看端：只读（隐藏标注/编辑），可自动同步。构建时烧入或 ⚙ 里切换。
   const VIEW_ONLY = !!window.VA_VIEW_ONLY ||
     (function () { try { return localStorage.getItem('va:viewOnly') === '1'; } catch (e) { return false; } })();
-  const AUTO_SYNC = !!window.VA_AUTO_SYNC || VIEW_ONLY;
+  let AUTO_SYNC = !!window.VA_AUTO_SYNC || VIEW_ONLY || appSettings.sync.auto;
+  let shortcuts = appSettings.shortcuts;
   function isView() { try { return window.VA_VIEW_ONLY || localStorage.getItem('va:viewOnly') === '1'; } catch (e) { return !!window.VA_VIEW_ONLY; } }
+  function shortcutMatches(ev, spec) {
+    const parts = String(spec || '').toLowerCase().split('+').map((x) => x.trim()).filter(Boolean);
+    if (parts.length < 2) return false;
+    const key = parts.pop();
+    const mods = new Set(parts);
+    return String(ev.key || '').toLowerCase() === key &&
+      !!ev.altKey === mods.has('alt') && !!ev.ctrlKey === mods.has('ctrl') &&
+      !!ev.metaKey === mods.has('meta') && !!ev.shiftKey === mods.has('shift');
+  }
 
   // 某标注在当前时刻是否可见：t 落在 [e.t-LEAD, e.t+dur]
   function visibleNow(e, t) {
@@ -820,19 +894,66 @@ button { color: inherit; }
   const tabTimeline = mkTab('时间轴', true);
   const tabWords = mkTab('词汇', false);
   const tabSources = mkTab('来源', false);
-  panelTabs.append(tabTimeline, tabWords, tabSources);
+  const tabAssistant = mkTab('助手', false);
+  panelTabs.setAttribute('role', 'tablist');
+  panelTabs.setAttribute('aria-label', '侧栏视图');
+  const panelTabItems = [[tabTimeline, 'timeline'], [tabWords, 'words'], [tabSources, 'sources'], [tabAssistant, 'assistant']];
+  panelTabItems.forEach(([tab, name]) => {
+    tab.id = 'va-tab-' + name;
+    tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-controls', name === 'assistant' ? 'va-assistant-panel' : 'va-entry-panel');
+    tab.setAttribute('aria-selected', String(name === 'timeline'));
+    tab.tabIndex = name === 'timeline' ? 0 : -1;
+  });
+  panelTabs.append(tabTimeline, tabWords, tabSources, tabAssistant);
   const panelSearchWrap = el('div'); panelSearchWrap.className = 'va-panel-search';
   const panelSearch = el('input'); panelSearch.className = 'va-input';
   panelSearch.type = 'search'; panelSearch.placeholder = '筛选标注…'; panelSearch.setAttribute('aria-label', '筛选标注');
   panelSearchWrap.appendChild(panelSearch);
   const entryList = el('div'); entryList.className = 'va-entry-list';
+  entryList.id = 'va-entry-panel';
+  entryList.setAttribute('role', 'tabpanel');
+  entryList.setAttribute('aria-labelledby', 'va-tab-timeline');
   const panelFoot = el('div'); panelFoot.className = 'va-panel-foot'; panelFoot.textContent = '点击词条跳转到对应画面';
-  sidePanel.append(panelHead, panelTabs, panelSearchWrap, entryList, panelFoot);
+  const assistantPane = el('section'); assistantPane.className = 'va-assistant';
+  assistantPane.id = 'va-assistant-panel';
+  assistantPane.setAttribute('role', 'tabpanel');
+  assistantPane.setAttribute('aria-labelledby', 'va-tab-assistant');
+  assistantPane.setAttribute('aria-label', 'Annota 助手');
+  const assistantNotice = el('div'); assistantNotice.className = 'va-assistant-notice';
+  assistantNotice.setAttribute('role', 'status'); assistantNotice.setAttribute('aria-live', 'polite');
+  const assistantTranscript = el('div'); assistantTranscript.className = 'va-chat-transcript';
+  assistantTranscript.setAttribute('role', 'log'); assistantTranscript.setAttribute('aria-label', '对话记录');
+  const assistantForm = el('form'); assistantForm.className = 'va-chat-form';
+  const assistantInput = el('textarea'); assistantInput.className = 'va-chat-input';
+  assistantInput.rows = 2; assistantInput.maxLength = 4000;
+  assistantInput.placeholder = '问问当前画面或标注…';
+  assistantInput.setAttribute('aria-label', '发送给助手');
+  const assistantSend = el('button', null, '发送'); assistantSend.type = 'submit';
+  assistantSend.className = 'va-btn va-btn-primary';
+  assistantForm.append(assistantInput, assistantSend);
+  assistantPane.append(assistantNotice, assistantTranscript, assistantForm);
+  sidePanel.append(panelHead, panelTabs, panelSearchWrap, entryList, panelFoot, assistantPane);
   let panelOpen = false, panelTab = 'timeline';
 
   tabTimeline.onclick = () => { panelTab = 'timeline'; updatePanelTabs(); renderPanel(); };
   tabWords.onclick = () => { panelTab = 'words'; updatePanelTabs(); renderPanel(); };
   tabSources.onclick = () => { panelTab = 'sources'; updatePanelTabs(); renderPanel(); };
+  tabAssistant.onclick = () => { panelTab = 'assistant'; updatePanelTabs(); renderPanel(); assistantInput.focus({ preventScroll: true }); };
+  panelTabs.addEventListener('keydown', (event) => {
+    const currentIndex = panelTabItems.findIndex(([tab]) => tab === event.target);
+    if (currentIndex < 0) return;
+    let nextIndex = currentIndex;
+    if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % panelTabItems.length;
+    else if (event.key === 'ArrowLeft') nextIndex = (currentIndex + panelTabItems.length - 1) % panelTabItems.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = panelTabItems.length - 1;
+    else return;
+    event.preventDefault();
+    const nextTab = panelTabItems[nextIndex][0];
+    nextTab.focus();
+    nextTab.click();
+  });
   panelSearch.addEventListener('input', renderPanel);
   panelSearch.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') panelSearch.value = ''; renderPanel(); });
 
@@ -931,23 +1052,187 @@ button { color: inherit; }
     tabTimeline.classList.toggle('is-active', panelTab === 'timeline');
     tabWords.classList.toggle('is-active', panelTab === 'words');
     tabSources.classList.toggle('is-active', panelTab === 'sources');
+    tabAssistant.classList.toggle('is-active', panelTab === 'assistant');
+    for (const [tab, name] of [[tabTimeline, 'timeline'], [tabWords, 'words'], [tabSources, 'sources'], [tabAssistant, 'assistant']]) {
+      tab.setAttribute('aria-selected', String(panelTab === name));
+      tab.tabIndex = panelTab === name ? 0 : -1;
+    }
+    const isAssistant = panelTab === 'assistant';
+    if (!isAssistant) entryList.setAttribute('aria-labelledby', 'va-tab-' + panelTab);
+    panelSearchWrap.style.display = isAssistant ? 'none' : '';
+    entryList.style.display = isAssistant ? 'none' : '';
+    panelFoot.style.display = isAssistant ? 'none' : '';
+    assistantPane.style.display = isAssistant ? 'flex' : 'none';
     panelSearch.placeholder = panelTab === 'words' ? '筛选词汇…' : panelTab === 'sources' ? '筛选来源…' : '筛选标注…';
   }
+  let agentMessages = [];
+  let agentAudits = [];
+  function cleanAgentValue(value) {
+    if (typeof value === 'string') {
+      return value
+        .replace(/data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+/gi, '[截图已省略]')
+        .replace(/(["']?image_url["']?\s*:\s*)\{[^}]*\}/gi, '$1[截图已省略]')
+        .replace(/[A-Za-z0-9+/]{512,}={0,2}/g, '[图像数据已省略]');
+    }
+    if (Array.isArray(value)) return value.map(cleanAgentValue);
+    if (value && typeof value === 'object') {
+      const clean = Object.create(null);
+      for (const key of Object.keys(value)) {
+        if (/image|screenshot|base64|data_url|dataurl/i.test(key)) {
+          clean[key] = '[截图已省略]';
+        } else clean[key] = cleanAgentValue(value[key]);
+      }
+      return clean;
+    }
+    return value;
+  }
+  function agentText(value) {
+    if (typeof value === 'string') return cleanAgentValue(value);
+    if (Array.isArray(value)) return value.map((part) => {
+      if (typeof part === 'string') return cleanAgentValue(part);
+      return part && typeof part.text === 'string' ? cleanAgentValue(part.text) : '';
+    }).filter(Boolean).join('\n');
+    return value == null ? '' : cleanAgentValue(String(value));
+  }
+  function appendChatMessage(role, text) {
+    const item = el('article'); item.className = 'va-chat-message va-chat-' + role;
+    const label = el('span', null, role === 'user' ? '你' : role === 'assistant' ? '助手' : '提示');
+    label.className = 'va-chat-role';
+    const body = el('p'); body.className = 'va-chat-copy'; body.textContent = cleanAgentValue(String(text || ''));
+    item.append(label, body); assistantTranscript.appendChild(item);
+    assistantTranscript.scrollTop = assistantTranscript.scrollHeight;
+    return item;
+  }
+  function renderAssistantTranscript() {
+    assistantTranscript.textContent = '';
+    for (const message of agentMessages) {
+      if (!message || !['user', 'assistant'].includes(message.role)) continue;
+      const text = agentText(message.content);
+      if (text) appendChatMessage(message.role, text);
+    }
+    renderAgentAudit(agentAudits);
+  }
+  function prettyAgentValue(value) {
+    try { return JSON.stringify(cleanAgentValue(value), null, 2); }
+    catch (e) { return String(cleanAgentValue(value)); }
+  }
+  function renderAgentAudit(audit) {
+    for (const entry of Array.isArray(audit) ? audit : []) {
+      // Entries are sanitized before being stored in agentAudits; keep the
+      // reference so confirmation results survive transcript re-renders.
+      const safe = entry && typeof entry === 'object' ? entry : {};
+      const card = el('details'); card.className = 'va-audit-card';
+      const needsConfirmation = !!(safe.result && safe.result.needs_confirmation && safe.result.confirm_id);
+      card.open = needsConfirmation;
+      const summary = el('summary');
+      const toolName = el('strong', null, String(safe.name || '工具调用'));
+      const statusText = el('span', null, needsConfirmation ? '等待确认' : safe.result && safe.result.error ? '执行失败' : '已执行');
+      statusText.className = 'va-audit-state'; summary.append(toolName, statusText);
+      const args = el('pre'); args.className = 'va-audit-data'; args.textContent = prettyAgentValue(safe.arguments || {});
+      const result = el('pre'); result.className = 'va-audit-data'; result.textContent = prettyAgentValue(safe.result == null ? {} : safe.result);
+      const resultLabel = el('span', null, '结果'); resultLabel.className = 'va-audit-label';
+      card.append(summary, el('span', null, '参数'), args, resultLabel, result);
+      if (needsConfirmation) {
+        const actions = el('div'); actions.className = 'va-audit-actions';
+        const confirm = el('button', null, '确认'); confirm.type = 'button'; confirm.className = 'va-btn va-btn-primary';
+        const cancel = el('button', null, '取消'); cancel.type = 'button'; cancel.className = 'va-btn va-btn-danger';
+        async function resolveConfirmation(accept) {
+          confirm.disabled = true; cancel.disabled = true; statusText.textContent = accept ? '正在确认…' : '正在取消…';
+          try {
+            const bridge = window.__ANNOTA__;
+            if (!bridge) throw new Error('Annota 助手接口不可用');
+            const outcome = accept ? await bridge.agentConfirm(safe.result.confirm_id) : await bridge.agentCancel(safe.result.confirm_id);
+            safe.result = cleanAgentValue(outcome == null ? (accept ? { confirmed: true } : { cancelled: true }) : outcome);
+            result.textContent = prettyAgentValue(safe.result);
+            statusText.textContent = accept ? '已确认' : '已取消';
+          } catch (error) {
+            const failure = { error: cleanAgentValue(error && error.message || '操作失败') };
+            result.textContent = prettyAgentValue(failure);
+            statusText.textContent = '操作失败 · 可重试';
+            confirm.disabled = false;
+            cancel.disabled = false;
+          }
+        }
+        confirm.onclick = () => resolveConfirmation(true);
+        cancel.onclick = () => resolveConfirmation(false);
+        actions.append(confirm, cancel); card.appendChild(actions);
+      }
+      assistantTranscript.appendChild(card);
+    }
+    assistantTranscript.scrollTop = assistantTranscript.scrollHeight;
+  }
+  assistantForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const text = assistantInput.value.trim();
+    if (!text || assistantSend.disabled) return;
+    const bridge = window.__ANNOTA__;
+    if (!bridge || typeof bridge.agentRun !== 'function') {
+      assistantNotice.textContent = '当前环境暂未配置 Annota 助手。请在 Annota 桌面端配置模型后再试。';
+      assistantNotice.dataset.state = 'error';
+      return;
+    }
+    assistantNotice.textContent = '';
+    assistantNotice.dataset.state = '';
+    agentMessages.push({ role: 'user', content: cleanAgentValue(text) });
+    assistantInput.value = '';
+    renderAssistantTranscript();
+    assistantSend.disabled = true;
+    assistantSend.textContent = '思考中…';
+    try {
+      const result = await bridge.agentRun(cleanAgentValue(agentMessages));
+      const finalContent = result && result.message && typeof result.message === 'object' && 'content' in result.message
+        ? result.message.content : result && result.message;
+      if (result && Array.isArray(result.messages)) {
+        agentMessages = cleanAgentValue(result.messages).filter((message) => message && message.role !== 'system');
+      } else if (finalContent != null) {
+        agentMessages.push({ role: 'assistant', content: cleanAgentValue(finalContent) });
+      }
+      const lastMessage = agentMessages[agentMessages.length - 1];
+      if (finalContent != null && !(lastMessage && lastMessage.role === 'assistant' && agentText(lastMessage.content) === agentText(finalContent))) {
+        agentMessages.push({ role: 'assistant', content: cleanAgentValue(finalContent) });
+      }
+      if (result && Array.isArray(result.audit)) agentAudits = agentAudits.concat(cleanAgentValue(result.audit));
+      renderAssistantTranscript();
+      if (finalContent == null && !(result && Array.isArray(result.audit) && result.audit.length)) {
+        assistantNotice.textContent = '助手暂时没有返回可显示的内容，请重试。';
+        assistantNotice.dataset.state = 'error';
+      }
+      if (panelTab === 'assistant') assistantTranscript.scrollTop = assistantTranscript.scrollHeight;
+    } catch (error) {
+      const message = String(error && error.message || error || '请求失败');
+      if (/未配置模型|LLM_API_KEY|ARK_API_KEY|LLM_MODEL/i.test(message)) {
+        assistantNotice.textContent = '尚未配置 AI 模型。请设置 LLM_API_KEY（或 ARK_API_KEY）与 LLM_MODEL。';
+      } else assistantNotice.textContent = '助手暂时无法响应，请检查 AI 配置或本地服务后重试。';
+      assistantNotice.dataset.state = 'error';
+      appendChatMessage('notice', assistantNotice.textContent);
+    } finally {
+      assistantSend.disabled = false;
+      assistantSend.textContent = '发送';
+      assistantInput.focus({ preventScroll: true });
+    }
+  });
+  assistantInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); assistantForm.requestSubmit(); }
+  });
   function togglePanel(force) {
     panelOpen = force == null ? !panelOpen : !!force;
     sidePanel.classList.toggle('is-open', panelOpen);
     btnPanel.classList.toggle('is-active', panelOpen);
-    if (panelOpen) { renderPanel(); panelSearch.focus({ preventScroll: true }); }
+    if (panelOpen) {
+      renderPanel();
+      (panelTab === 'assistant' ? assistantInput : panelSearch).focus({ preventScroll: true });
+    }
   }
   document.addEventListener('keydown', (ev) => {
     const target = ev.composedPath ? ev.composedPath()[0] : ev.target;
     const tag = target && target.tagName ? target.tagName.toLowerCase() : '';
     if (tag === 'input' || tag === 'textarea' || tag === 'select' || (target && target.isContentEditable)) return;
-    if (ev.altKey && !ev.metaKey && !ev.ctrlKey) {
-      const key = String(ev.key || '').toLowerCase();
-      if (key === 'd') { ev.preventDefault(); toggleAnnotate(); }
-      else if (key === 'l') { ev.preventDefault(); togglePanel(); }
-      else if (key === 's') { ev.preventDefault(); state.showAll = !state.showAll; btnAll.classList.toggle('is-active', state.showAll); render(); }
+    if (!isView() && shortcutMatches(ev, shortcuts.annotate)) {
+      ev.preventDefault(); toggleAnnotate();
+    } else if (shortcutMatches(ev, shortcuts.panel)) {
+      ev.preventDefault(); togglePanel();
+    } else if (shortcutMatches(ev, shortcuts.overlay)) {
+      ev.preventDefault(); state.showAll = !state.showAll; btnAll.classList.toggle('is-active', state.showAll); render();
     } else if (ev.key === 'Escape') {
       if (panelOpen) togglePanel(false);
       if (menuPanel.style.display !== 'none') toggleMenu();
@@ -956,7 +1241,11 @@ button { color: inherit; }
   }, true);
   function renderPanel() {
     if (!panelOpen) return;
-    panelTitleSub.textContent = (state.video ? document.title : '当前页面') + ' · ' + state.entries.length + ' 条';
+    panelTitleMain.textContent = panelTab === 'assistant' ? 'Annota 助手' : '当前标注';
+    panelTitleSub.textContent = panelTab === 'assistant'
+      ? '可询问当前画面与标注'
+      : (state.video ? document.title : '当前页面') + ' · ' + state.entries.length + ' 条';
+    if (panelTab === 'assistant') { renderAssistantTranscript(); return; }
     entryList.textContent = '';
     const query = (panelSearch.value || '').trim().toLocaleLowerCase();
     if (panelTab === 'sources') {
@@ -1185,13 +1474,21 @@ button { color: inherit; }
   const dictBox = el('input'); dictBox.className = 'va-input';
   dictBox.setAttribute('aria-label', '默认词典链接模板');
   dictBox.placeholder = 'https://dictionary.cambridge.org/dictionary/english/{word}';
-  function saveDictTemplate() {
+  async function saveDictTemplate() {
     const v = dictBox.value.trim();
+    if (!v) {
+      appSettings.dictUrlTemplate = '';
+      try { localStorage.removeItem('annota:dictUrlTemplate'); } catch (e) {}
+      await persistAppSettings();
+      setSyncStatus('词典已恢复默认');
+      return;
+    }
     try {
-      if (!v) { localStorage.removeItem('annota:dictUrlTemplate'); setSyncStatus('词典已恢复默认'); return; }
       if (v.indexOf('{word}') < 0 || !isHttp(v)) { setSyncStatus('词典模板需含 {word} 且为 http(s)'); return; }
       localStorage.setItem('annota:dictUrlTemplate', v);
     } catch (e) {}
+    appSettings.dictUrlTemplate = v;
+    await persistAppSettings();
     setSyncStatus('词典模板已保存');
   }
   function toggleMenu() {
@@ -1199,7 +1496,7 @@ button { color: inherit; }
     if (!on) { menuPanel.style.display = 'none'; btnCfg.classList.remove('is-active'); menuPanel.remove(); return; }
     btnCfg.classList.add('is-active');
     syncBox.value = syncUrl();
-    try { dictBox.value = localStorage.getItem('annota:dictUrlTemplate') || ''; } catch (e) {}
+    try { dictBox.value = appSettings.dictUrlTemplate || localStorage.getItem('annota:dictUrlTemplate') || ''; } catch (e) {}
     const viewBtn = mkbtn(isView() ? '只读模式 · 已开启' : '只读模式', () => {
       try { localStorage.setItem('va:viewOnly', isView() ? '0' : '1'); } catch (e) {}
       applyMode();
@@ -1223,8 +1520,19 @@ button { color: inherit; }
       el('div', { color: '#89919b', fontSize: '10px', padding: '0 9px' }, '同步地址（留空=自动探测）'),
       syncBox,
       el('div', { display: 'flex', gap: '6px', marginTop: '6px' },
-        mkbtn('保存地址', () => { const v = syncBox.value.trim(); if (v) { setSyncBase(v); } else { syncBase = null; try { localStorage.removeItem(SYNC_URL_KEY); } catch (e) {} setSyncStatus('已恢复自动'); } }),
-        mkbtn('清空地址', () => { localStorage.removeItem(SYNC_URL_KEY); syncBase = null; syncBox.value = ''; setSyncStatus('已恢复自动'); }),
+        mkbtn('保存地址', async () => {
+          const v = syncBox.value.trim();
+          if (v && !isHttp(v)) { setSyncStatus('同步地址必须是 http(s)://'); return; }
+          appSettings.sync.address = v;
+          if (v) setSyncBase(v); else { syncBase = null; try { localStorage.removeItem(SYNC_URL_KEY); } catch (e) {} }
+          await persistAppSettings();
+          setSyncStatus(v ? '同步地址已保存' : '已恢复自动');
+        }),
+        mkbtn('清空地址', async () => {
+          appSettings.sync.address = '';
+          localStorage.removeItem(SYNC_URL_KEY); syncBase = null; syncBox.value = '';
+          await persistAppSettings(); setSyncStatus('已恢复自动');
+        }),
         mkbtn('测试', testSync)),
       rowDir,
       row,
@@ -1280,11 +1588,17 @@ button { color: inherit; }
     lastSig = null;
     applyMode();
     startProbe();
-    if (AUTO_SYNC) autoSyncTimer = setTimeout(() => { try { syncNow(); } catch (e) {} }, 900);
+    scheduleAutoSync();
     if (!raf) raf = requestAnimationFrame(loop);
   }
 
-  let raf = null, lastSig = null, autoSyncTimer = null;
+  let raf = null, lastSig = null, autoSyncTimer = null, autoSyncedMedia = null;
+  function scheduleAutoSync() {
+    if (!AUTO_SYNC || !state.mediaId || autoSyncedMedia === state.mediaId) return;
+    autoSyncedMedia = state.mediaId;
+    if (autoSyncTimer) clearTimeout(autoSyncTimer);
+    autoSyncTimer = setTimeout(() => { autoSyncTimer = null; try { syncNow(); } catch (e) {} }, 900);
+  }
   function loop() {
     raf = requestAnimationFrame(loop);
     const v = state.video;
@@ -1292,7 +1606,7 @@ button { color: inherit; }
 
     // SPA 切集：URL 变了就换一份标注
     const mid = A.mediaId();
-    if (mid !== state.mediaId) { state.mediaId = mid; load(); render(); renderPanel(); }
+    if (mid !== state.mediaId) { state.mediaId = mid; load(); render(); renderPanel(); autoSyncedMedia = null; scheduleAutoSync(); }
 
     // 全屏宿主处理：只有 fullscreen 元素的后代可见
     const fs = document.fullscreenElement;
@@ -1337,7 +1651,7 @@ button { color: inherit; }
     overlay.remove(); bar.remove(); sidePanel.remove(); diagPanel.remove(); toast.remove(); menuPanel.remove(); probe.remove();
     uiRoot.querySelectorAll('.va-popover').forEach((n) => n.remove());
     panelOpen = false;
-    state.video = null; state.meta = null; lastSig = null;
+    state.video = null; state.meta = null; lastSig = null; autoSyncedMedia = null;
   }
 
   /* ---------- 渲染 ---------- */
@@ -1468,7 +1782,7 @@ button { color: inherit; }
     // 默认词典链接模板：localStorage `annota:dictUrlTemplate`（含 {word} 占位，须 http(s)）；隐私模式读取可能抛，回退剑桥
     const dictTemplate = (function () {
       try {
-        const v = localStorage.getItem('annota:dictUrlTemplate');
+        const v = appSettings.dictUrlTemplate || localStorage.getItem('annota:dictUrlTemplate');
         if (v && v.indexOf('{word}') >= 0 && isHttp(v)) return v;
       } catch (e) {}
       return 'https://dictionary.cambridge.org/dictionary/english/{word}';
@@ -1730,6 +2044,57 @@ button { color: inherit; }
     return fetchJson(method, url, body);
   }
 
+  function cacheAppSettings() {
+    try { localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings)); } catch (e) {}
+  }
+  function applyAppSettings(value, fromService) {
+    const wasAuto = AUTO_SYNC;
+    appSettings = mergeAppSettings(value);
+    shortcuts = appSettings.shortcuts;
+    AUTO_SYNC = !!window.VA_AUTO_SYNC || VIEW_ONLY || appSettings.sync.auto;
+    cacheAppSettings();
+    if (fromService) {
+      if (appSettings.sync.address) {
+        syncBase = appSettings.sync.address;
+        try { localStorage.setItem(SYNC_URL_KEY, syncBase); } catch (e) {}
+      } else {
+        syncBase = null;
+        try { localStorage.removeItem(SYNC_URL_KEY); } catch (e) {}
+      }
+    }
+    if (!wasAuto && AUTO_SYNC) scheduleAutoSync();
+  }
+  function settingsBases() {
+    const bases = [];
+    // Tauri's local Rust service owns global settings; don't let a previously
+    // selected remote sync server shadow this endpoint.
+    if (typeof window.vaFetch === 'function') bases.push(DEFAULT_SYNC);
+    if (syncBase) bases.push(syncBase);
+    bases.push(...syncCandidates());
+    return [...new Set(bases.map((base) => String(base).replace(/\/+$/, '')))];
+  }
+  async function loadAppSettings() {
+    for (const base of settingsBases()) {
+      try {
+        const response = await httpJson('GET', base + '/api/settings');
+        if (response.ok && response.json && response.json.settings) {
+          applyAppSettings(response.json.settings, true);
+          return;
+        }
+      } catch (e) { /* standalone Python/third-party sync servers may not expose settings */ }
+    }
+  }
+  async function persistAppSettings() {
+    cacheAppSettings();
+    for (const base of settingsBases()) {
+      try {
+        const response = await httpJson('PUT', base + '/api/settings', appSettings);
+        if (response.ok) return true;
+      } catch (e) { /* try the next configured server */ }
+    }
+    return false; // per-page cache remains available offline
+  }
+
   const SYNC_HINT = '\n· 电脑上是否在跑「同步服务」？python3 dev/hub.py 会一并启动' +
     '\n· 手机在 https 页面访问 http 局域网地址会被浏览器按混合内容拦截 → 用 GM 变体脚本（一键安装页可选）';
 
@@ -1833,5 +2198,6 @@ button { color: inherit; }
   }
 
   /* ---------- 启动 ---------- */
+  loadAppSettings();
   A.watch((v) => { if (v) attach(v); else detach(); });
 })();

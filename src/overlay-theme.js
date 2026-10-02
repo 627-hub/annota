@@ -240,6 +240,36 @@ button { color: inherit; }
 .va-src-tag { padding:2px 7px; border-radius:999px; background:rgba(245,166,35,.12); color:#ffd18a; font-size:9px; }
 .va-src-count { margin-left:auto; color:#89919b; font-size:10px; }
 .va-src-note { margin:10px 2px 0; padding:10px 12px; border:1px dashed rgba(255,255,255,.1); border-radius:10px; color:#7d8590; font-size:10px; line-height:1.55; }
+.va-assistant { display:none; flex:1; min-height:0; flex-direction:column; }
+.va-assistant-notice { flex:none; color:#e9c98f; font-size:10px; line-height:1.5; }
+.va-assistant-notice:empty { display:none; }
+.va-assistant-notice[data-state="error"] { margin:0 15px 8px; padding:9px 11px; border:1px solid rgba(240,113,120,.25); border-radius:10px; background:rgba(240,113,120,.07); color:#ffc6c9; }
+.va-chat-transcript { display:flex; flex:1; min-height:0; flex-direction:column; gap:9px; overflow:auto; padding:4px 14px 14px; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.16) transparent; }
+.va-chat-message { max-width:92%; padding:10px 12px; border:1px solid rgba(255,255,255,.075); border-radius:13px; background:rgba(255,255,255,.035); }
+.va-chat-user { align-self:flex-end; border-color:rgba(245,166,35,.2); background:rgba(245,166,35,.085); }
+.va-chat-assistant, .va-chat-notice { align-self:flex-start; }
+.va-chat-role { display:block; margin-bottom:4px; color:#b08b56; font-size:9px; font-weight:700; letter-spacing:.06em; }
+.va-chat-copy { margin:0; color:#e1e2e5; font-size:12px; line-height:1.6; overflow-wrap:anywhere; white-space:pre-wrap; }
+.va-chat-form { display:flex; flex:none; align-items:flex-end; gap:8px; padding:11px 13px 13px; border-top:1px solid rgba(255,255,255,.075); background:rgba(12,14,17,.45); }
+.va-chat-input { flex:1; min-width:0; min-height:42px; max-height:120px; resize:vertical; padding:10px 11px; border:1px solid rgba(255,255,255,.105); border-radius:11px; outline:none; background:rgba(255,255,255,.045); color:var(--va-text); font:12px/1.45 var(--va-font-ui); }
+.va-chat-input::placeholder { color:#69717b; }
+.va-chat-input:focus { border-color:rgba(245,166,35,.65); box-shadow:0 0 0 3px rgba(245,166,35,.1); }
+.va-chat-form .va-btn { min-height:38px; flex:none; }
+.va-chat-form .va-btn:disabled, .va-audit-actions .va-btn:disabled { opacity:.55; cursor:wait; }
+.va-audit-card { flex:none; padding:10px 11px; border:1px solid rgba(245,166,35,.2); border-radius:12px; background:rgba(245,166,35,.045); color:#d5d8dc; font-size:10px; }
+.va-audit-card summary { display:flex; align-items:center; justify-content:space-between; gap:8px; cursor:pointer; list-style:none; }
+.va-audit-card summary::-webkit-details-marker { display:none; }
+.va-audit-card summary strong { color:#f0d2a0; font-size:11px; }
+.va-audit-state { color:#8f98a3; font-size:9px; }
+.va-audit-label, .va-audit-card > span { display:block; margin:10px 0 4px; color:#8b929c; font-size:9px; font-weight:650; }
+.va-audit-data { max-height:150px; overflow:auto; margin:0; padding:8px; border:1px solid rgba(255,255,255,.06); border-radius:8px; background:rgba(0,0,0,.18); color:#b7c0ca; font:9px/1.5 var(--va-font-mono); white-space:pre-wrap; overflow-wrap:anywhere; }
+.va-audit-actions { display:flex; justify-content:flex-end; gap:6px; margin-top:9px; }
+.va-audit-actions .va-btn { min-height:29px; }
+.va-audit-actions .va-btn-danger { color:#f2a2a5; }
+.va-audit-card summary:focus-visible, .va-audit-actions .va-btn:focus-visible {
+  outline:2px solid var(--va-accent);
+  outline-offset:2px;
+}
 
 /* ---------- EditorCard / WordCard（C3/C6，根节点统一 .va-popover） ---------- */
 .va-popover {
@@ -316,6 +346,7 @@ button { color: inherit; }
   outline: 2px solid var(--va-accent);
   outline-offset: 2px;
 }
+.va-chat-input:focus-visible { outline:2px solid var(--va-accent); outline-offset:2px; }
 @media (max-width: 768px) {
   .va-dock { right:12px; bottom:12px; }
   .va-dock[data-side="left"] { left:12px; }

@@ -109,13 +109,15 @@
 | 项 | 状态 |
 |---|---|
 | 1.1 / 1.2 / 1.3 / 1.4 / 1.5 / 1.7 | ✅ 完成（1.3 时间轴/词汇/来源三 tab；1.5 支持条目编辑/删除） |
-| 1.6 设置 | ◐ 外观三档 + MCP 地址复制 + 默认词典链接模板（视频页 ⚙ 菜单）已做；同步/快捷键项待补 |
-| 1.8 内置 agent 面板 | ⏸️ 搁置（MCP server 已就绪；聊天 UI + 调用审计尚未做） |
+| 1.6 设置 | ✅ 完成（外观三档 / MCP 地址 / 词典模板 / 同步地址与自动同步开关 / 三个快捷键改键 / AI endpoint 与模型名）；设置 API `GET·PUT /api/settings` |
+| 1.8 内置 agent 面板 | ✅ 完成（后端 `agent_run`/`agent_chat`/`agent_cancel` + `annota-agent-tool` 审计 + 写操作确认闸门；SidePanel「助手」tab UI）；契约见 [`agent-panel-ui-handoff.md`](agent-panel-ui-handoff.md) |
 | 1.9 词库下线 | ✅ 完成（构建不再注入词库；词典外链替代） |
 | 1.10 分发 | ✅ 完成（v0.1.0 已发布：dmg / exe / 扩展 zip / userscript + Pages 官网） |
 | 1.11 测试 | ✅ 完成（geometry 单测 + smoke + MCP 工具冒烟，含新增 `words_at`） |
 
 **移动端 M0（2026-10-02）**：✅ 同 Wi‑Fi 下观看端（只读 + 自动同步）真机验证通过；验证清单见 [`mobile.md`](mobile.md)。
+
+**已知待修（UI 排版）**：设置页 AI 状态文字较长时会在窄列内换行破词（如 `https://ark.cn-` 被截断）。需要给 `.ai-status span` 加 `overflow-wrap:anywhere` / `word-break:break-word`，或改为单行省略（`text-overflow:ellipsis; white-space:nowrap; overflow:hidden`）。截图见 `docs/assets/settings.png` 底部。
 
 ### R2 多媒态（预计 3–4 周）
 

@@ -20,11 +20,15 @@
 - 从时间轴、词汇表或来源面板回看，点击跳回对应的一帧。
 
 <details>
-<summary>更多界面截图（首页 / 我的库）</summary>
+<summary>更多界面截图（首页 / 我的库 / 助手面板 / 设置）</summary>
 
 ![Annota 首页](docs/assets/demo-home.png)
 
 ![Annota 我的库](docs/assets/demo-library.png)
+
+![Annota 内置助手面板](docs/assets/agent-panel.png)
+
+![Annota 设置](docs/assets/settings.png)
 
 </details>
 
@@ -42,7 +46,7 @@
 
 **多种用法**：独立桌面浏览器、Chrome / Edge 扩展、userscript，三端共用同一份标注数据。
 
-**开放接口**：桌面端内置 MCP server，可被外部 AI 客户端调用截图、剪贴板、导航、标注操作，以及按时间点查询词条（`words_at`）。
+**开放接口**：桌面端内置 MCP server，可被外部 AI 客户端调用截图、剪贴板、导航、标注操作，以及按时间点查询词条（`words_at`）。桌面端还带一个内置助手后端：设置 `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODEL` 后可用，写操作一律先请用户确认。
 
 ## 安装
 
