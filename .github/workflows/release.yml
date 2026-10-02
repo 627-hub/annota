@@ -41,7 +41,7 @@ jobs:
         run: |
           mkdir -p release-assets
           cp dist/*.user.js release-assets/
-          (cd app/extension && zip -q -r "../../release-assets/annota-extension-${GITHUB_REF_NAME}.zip" manifest.json background.js core.js)
+          (cd app/extension && zip -q -r "../../release-assets/annota-extension-${RELEASE_TAG}.zip" manifest.json background.js core.js)
       - uses: actions/upload-artifact@v4
         with:
           name: portable-downloads
