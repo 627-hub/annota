@@ -26,6 +26,12 @@
     return true;                      // 通用：有足够大的可见视频即可
   };
 
+  // 页面是否值得启用（视频优先；无视频时有足够大主图则图片，否则有正文则文章）
+  A.pageSupported = function () {
+    if (A.supported() && A.findVideo()) return true;
+    return A.imageSupported();
+  };
+
   // 稳定标识：优先平台内容 id，退化到 origin+pathname
   A.mediaId = function () {
     const p = A.platform();
@@ -48,8 +54,20 @@
       const v = new URLSearchParams(location.search).get('v');
       if (v) return 'youtube:' + v;
     }
+    // 图片页：主图占页面主体时用主图 src 稳定 hash（画廊换图 → 换 key）
+    if (A.imageSupported()) {
+      const img = A.findImage();
+      if (img && img.currentSrc) return hashId('image:' + img.currentSrc);
+    }
     return p + ':' + location.origin + path;
   };
+
+  // 轻量 32 位 hash → 36 进制短串（同图稳定、跨图区分；非加密用途）
+  function hashId(s) {
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return 'img-' + (h >>> 0).toString(36) + '-' + s.length.toString(36);
+  }
 
   // 主播放器候选容器（B站多套播放器版本）
   const MAIN_SELECTORS = [
@@ -90,7 +108,19 @@
   A.allVideos = function () { return deepQueryAll('video'); };
   A.countVideos = function () { return A.allVideos().length; };
 
+  // findVideo 结果短时缓存（同一次判定内多次调用只扫一遍 DOM）
+  let _vidCache = { t: 0, v: undefined };
+  A.invalidateVideoCache = function () { _vidCache = { t: 0, v: undefined }; };
+
   A.findVideo = function () {
+    const now = Date.now();
+    if (_vidCache.v !== undefined && now - _vidCache.t < 250) return _vidCache.v;
+    const v = _findVideoUncached();
+    _vidCache = { t: now, v };
+    return v;
+  };
+
+  function _findVideoUncached() {
     const p = A.platform();
     // 平台主播放器选择器优先（B站多套播放器版本）
     if (p === 'bilibili') {
@@ -111,14 +141,121 @@
       if (score > bestScore) { bestScore = score; best = v; }
     }
     return best;
+  }
+
+  // 图片可见性打分：自然尺寸 + 可见面积。小图标/头像/缩略图被尺寸门槛挡掉。
+  const IMG_MIN = 200;   // 最小边（px）：低于此不视为主图
+  function imgScore(img) {
+    if (img.naturalWidth < IMG_MIN || img.naturalHeight < IMG_MIN) return 0;
+    if (img === A.findVideo()) return 0;   // 视频封面 poster 等不抢
+    const r = img.getBoundingClientRect();
+    if (r.width < IMG_MIN || r.height < IMG_MIN) return 0;
+    const cs = getComputedStyle(img);
+    if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) return 0;
+    return r.width * r.height;
+  }
+
+  A.allImages = function () { return deepQueryAll('img'); };
+
+  // 主图：可见面积最大的「大图」（普通图片页）
+  A.findImage = function () {
+    let best = null, bestScore = 0;
+    for (const img of A.allImages()) {
+      const s = imgScore(img);
+      if (s > bestScore) { bestScore = s; best = img; }
+    }
+    return best;
   };
 
-  // 视频元素被替换 / 页面类型变化时回调（轮询，简单可靠）
+  // 可见大图列表（按面积降序）。用于「单图详情页」判定与 picker。
+  A.visibleImages = function () {
+    const out = [];
+    for (const img of A.allImages()) {
+      const s = imgScore(img);
+      if (s > 0) out.push({ el: img, area: s });
+    }
+    return out.sort((a, b) => b.area - a.area);
+  };
+
+  // 已绑为当前媒体的视频（供 imgScore 排除封面）
+  A.imageIsMain = false;   // 由 core 在 attach/detach 时维护（非必须）
+
+  const ARTICLE_SELECTORS = ['article', 'main', '[role="main"]', '.post', '.article', '.content', '#content'];
+  // 自动判定图片页：**整页只有一张可见大图**（无视频、无成规模正文）。
+  // 简单、可预测；多图（瀑布流/详情页带相关图）一律交给「选对象」，不做脆弱启发式猜测。
+  A.imageSupported = function () {
+    if (A.platform() !== 'generic') return false;
+    if (A.findVideo()) return false;
+    if (A.articleText()) return false;   // 有成规模正文 → 优先文章
+    return A.visibleImages().length === 1;
+  };
+
+  // 页面是否存在成规模的正文块（语义容器内文本 > 600 字）
+  A.articleText = function () {
+    for (const sel of ARTICLE_SELECTORS) {
+      let nodes = [];
+      try { nodes = document.querySelectorAll(sel); } catch (e) { continue; }
+      for (const n of nodes) {
+        if ((n.textContent || '').trim().length > 600) return n;
+      }
+    }
+    return null;
+  };
+
+  // 正文容器候选：语义标签优先，退化到文本量最大的块
+  A.findArticle = function () {
+    if (A.platform() !== 'generic') return null;
+    if (A.findVideo() || A.imageSupported()) return null;   // 视频/单图详情页优先
+    return A.articleText();
+  };
+
+  A.articleSupported = function () { return !!A.findArticle(); };
+
+  // ---------- 手动选择对象（picker） ----------
+  // 从任意元素向上归类为标注对象：video / img / 正文容器 / null
+  const ARTICLE_TAGS = new Set(['ARTICLE', 'MAIN']);
+  A.classify = function (el) {
+    let node = el;
+    let depth = 0;
+    while (node && node !== document.body && depth < 12) {
+      const tag = node.tagName;
+      if (tag === 'VIDEO') return { kind: 'video', el: node };
+      if (tag === 'IMG') {
+        // 太小/还没加载的图不当对象
+        if ((node.naturalWidth >= IMG_MIN || node.naturalHeight >= IMG_MIN) && node.complete) return { kind: 'image', el: node };
+        return null;
+      }
+      if (ARTICLE_TAGS.has(tag) || (node.getAttribute && node.getAttribute('role') === 'main')) {
+        if ((node.textContent || '').trim().length > 200) return { kind: 'article', el: node };
+      }
+      node = node.parentElement; depth++;
+    }
+    return null;
+  };
+
+  // 主媒态变化时回调（视频优先，退化图片）；回调 {kind, el} | null。
+  // kind 变化、元素被替换、页面类型变化都会触发（轮询，简单可靠）。
   A.watch = function (cb, intervalMs) {
-    let cur = null;
+    let cur = null, curKind = null;
     const tick = () => {
-      const v = A.supported() ? A.findVideo() : null;
-      if (v !== cur) { cur = v; cb(v); }
+      A.invalidateVideoCache();   // 每轮重新扫一遍
+      let next = null, kind = null;
+      if (A.supported()) {
+        const v = A.findVideo();
+        if (v) { next = v; kind = 'video'; }
+      }
+      if (!next && A.imageSupported()) {
+        const img = A.findImage();
+        if (img) { next = img; kind = 'image'; }
+      }
+      if (!next) {
+        const art = A.findArticle();
+        if (art) { next = art; kind = 'article'; }
+      }
+      if (next !== cur || kind !== curKind) {
+        cur = next; curKind = kind;
+        cb(next ? { kind, el: next } : null);
+      }
     };
     tick();
     const t = setInterval(tick, intervalMs || 800);

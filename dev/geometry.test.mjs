@@ -67,3 +67,23 @@ test('iou: 相同=1，不相交=0', () => {
   near(G.iou(a, a), 1);
   near(G.iou(a, { x: 0.5, y: 0.5, w: 0.2, h: 0.2 }), 0);
 });
+
+test('intersects: 相交/相离判定', () => {
+  const vp = { x: 0, y: 0, w: 800, h: 600 };
+  assert.ok(G.intersects({ x: 100, y: 100, w: 50, h: 50 }, vp));
+  assert.ok(!G.intersects({ x: 100, y: 700, w: 50, h: 50 }, vp), '视口下方应判离');
+  assert.ok(!G.intersects({ x: 900, y: 100, w: 50, h: 50 }, vp), '视口右侧应判离');
+});
+
+test('scrollMap: 长图滚动窗口内外的映射/剔除', () => {
+  // 2000×6000 长图，显示宽 1000、高 3000；视口高 600
+  const imgRect = { x: 0, y: -1200, w: 1000, h: 3000 };   // 已向上滚 1200px
+  const vp = { x: 0, y: 0, w: 1000, h: 600 };
+  // box 在图片顶部 → 实际像素 y=-1200，已滚出视口上方 → 剔除
+  assert.equal(G.scrollMap({ x: 0.1, y: 0.01, w: 0.2, h: 0.05 }, imgRect, vp), null);
+  // box 在图片中部附近 → 落在视口内
+  const p = G.scrollMap({ x: 0.1, y: 0.45, w: 0.2, h: 0.05 }, imgRect, vp);
+  assert.ok(p, '窗口内的框应返回像素矩形');
+  near(p.left, 100); near(p.top, -1200 + 0.45 * 3000);
+  near(p.width, 200); near(p.height, 150);
+});

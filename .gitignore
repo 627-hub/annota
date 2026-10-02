@@ -35,3 +35,6 @@ models/
 # 密钥（统一走 sec / 环境变量）
 .env
 *.key
+
+# 本地运行产物
+nohup.out

@@ -1,19 +1,20 @@
 /* video-annotate · core (P0)
- * 叠层 + 拖框 + 绑词 + 本地存储 + 导入导出。平台无关，依赖 VAGeo / VAAdapter。
+ * 叠层 + 拖框 + 绑词 + 本地存储 + 导入导出。平台无关，依赖 VAGeo / VAAdapter / VAMedia。
+ * 媒态差异（视频/图片/文章）由 VAMedia binding 承担，core 只面向 binding 接口。
  */
 (function () {
   'use strict';
   if (window.__VA_LOADED__) return;
   window.__VA_LOADED__ = true;
 
-  const G = window.VAGeo, A = window.VAAdapter;
+  const G = window.VAGeo, A = window.VAAdapter, VAMedia = window.VAMedia;
   const ADAPTER_ERRORS = [];
   if (A) A._err = (e) => { ADAPTER_ERRORS.push(String((e && e.message) || e).slice(0, 80)); if (ADAPTER_ERRORS.length > 20) ADAPTER_ERRORS.shift(); };
   const DEFAULT_DUR = 1.0;                // 每个标注框默认时长(秒)
-  const LEAD = 0.15;                      // 提前浮现(秒)
   const ICON_PATHS = {
     brand: '<path d="M4.5 19 12 5l7.5 14M8.2 13.2h7.6"/>',
     crosshair: '<circle cx="12" cy="12" r="7.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/>',
+    pick: '<path d="M5 3l14 8-6 1.5L11 19 5 3Z"/>',
     eye: '<path d="M2.5 12s3.2-6 9.5-6 9.5 6 9.5 6-3.2 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.6"/>',
     list: '<path d="M8 6h12M8 12h12M8 18h12"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>',
     sync: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.7-2L20 12M4 12l2.7 5a7 7 0 0 0 11.7-2"/>',
@@ -79,16 +80,12 @@
       !!ev.metaKey === mods.has('meta') && !!ev.shiftKey === mods.has('shift');
   }
 
-  // 某标注在当前时刻是否可见：t 落在 [e.t-LEAD, e.t+dur]
-  function visibleNow(e, t) {
-    const d = e.dur || DEFAULT_DUR;
-    return t >= e.t - LEAD && t <= e.t + d;
-  }
   const LS_PREFIX = 'va:entries:';
+  const FORMAT = 'video-annotate/0.1';   // 服务端回显为准；此处是本地/新建默认
 
   const state = {
-    video: null, mediaId: null, platform: null,
-    entries: [], showAll: false, annotate: false,
+    binding: null, mediaId: null, platform: null,
+    entries: [], showAll: false, annotate: false, picking: false,
     rect: null, cr: null, draft: null, dragging: false,
   };
   window.__VA = { get state() { return state; } };   // 调试：控制台可 __VA.state 查看
@@ -102,11 +99,8 @@
     } catch (e) { state.entries = []; }
   }
   function save() {
-    const media = {
-      platform: state.platform, videoId: state.mediaId, url: location.href, title: document.title,
-      intrinsic: { w: state.video ? state.video.videoWidth : 0, h: state.video ? state.video.videoHeight : 0 },
-    };
-    const obj = { format: 'video-annotate/0.1', media, entries: state.entries };
+    const media = mediaMeta();
+    const obj = { format: FORMAT, media, entries: state.entries };
     try { localStorage.setItem(LS_PREFIX + state.mediaId, JSON.stringify(obj)); }
     catch (e) { setSyncStatus('本地保存失败（隐私模式/空间不足？）'); }
     updateStatus();
@@ -155,6 +149,7 @@
     render();
   });
   const btnPanel = mkAction('列表', 'list', () => togglePanel());
+  const btnPick = mkAction('选对象', 'pick', () => togglePicker());
   const btnSync = mkAction('同步', 'sync', syncNow);
   const btnCfg = mkAction('更多', 'more', toggleMenu);
   const btnBridge = mkbtn('发给 AI 助手', copyContext);
@@ -163,7 +158,7 @@
   const statusDot = el('i'); statusDot.className = 'va-sync-dot';
   const statusText = el('span', null, '就绪');
   status.append(statusDot, statusText);
-  bar.append(brand, separator, btnAnno, btnAll, btnPanel, btnSync, status, btnCfg);
+  bar.append(brand, separator, btnAnno, btnAll, btnPanel, btnPick, btnSync, status, btnCfg);
 
   const sidePanel = el('aside'); sidePanel.className = 'va-panel';
   const panelHead = el('div'); panelHead.className = 'va-panel-head';
@@ -309,13 +304,14 @@
   }
   function renderDiag() {
     const d = A.diag ? A.diag() : {};
-    const v = state.video, r = state.rect, cr = state.cr, m = state.meta || {};
+    const v = state.binding && state.binding.el, r = state.rect, cr = state.cr, m = state.meta || {};
     const lines = [
       'platform : ' + d.platform + '   supported=' + d.supported,
+      'kind     : ' + (state.binding ? state.binding.kind : '-') + '   timed=' + (state.binding ? state.binding.timed : '-'),
       'mediaId  : ' + d.mediaId,
       'href     : ' + d.href,
       'fullscreen: ' + (d.fullscreen || '-') + (m.unsupported ? '  ⚠ 视频自身全屏' : ''),
-      'video    : ' + (v ? (v.videoWidth + 'x' + v.videoHeight + ' ready=' + v.readyState) : 'null'),
+      'media    : ' + (v ? ((v.videoWidth || v.naturalWidth || 0) + 'x' + (v.videoHeight || v.naturalHeight || 0) + ' ready=' + (v.readyState == null ? 'n/a' : v.readyState)) : 'null'),
       'videos   : ' + (A.countVideos ? A.countVideos() : '?') + '（含 shadow DOM）',
       'objectFit: ' + (m.fit || '-'),
       'rect     : ' + (r ? [r.x, r.y, r.width, r.height].map(n1).join(', ') : '-'),
@@ -518,6 +514,7 @@
     } else if (shortcutMatches(ev, shortcuts.overlay)) {
       ev.preventDefault(); state.showAll = !state.showAll; btnAll.classList.toggle('is-active', state.showAll); render();
     } else if (ev.key === 'Escape') {
+      if (state.picking) togglePicker(false);
       if (panelOpen) togglePanel(false);
       if (menuPanel.style.display !== 'none') toggleMenu();
       if (state.annotate) toggleAnnotate(false);
@@ -528,12 +525,13 @@
     panelTitleMain.textContent = panelTab === 'assistant' ? 'Annota 助手' : '当前标注';
     panelTitleSub.textContent = panelTab === 'assistant'
       ? '可询问当前画面与标注'
-      : (state.video ? document.title : '当前页面') + ' · ' + state.entries.length + ' 条';
+      : (state.binding ? document.title : '当前页面') + ' · ' + state.entries.length + ' 条';
     if (panelTab === 'assistant') { renderAssistantTranscript(); return; }
     entryList.textContent = '';
     const query = (panelSearch.value || '').trim().toLocaleLowerCase();
     if (panelTab === 'sources') {
-      const mine = state.entries.slice().sort((a, b) => a.t - b.t);
+      const timedNow = !state.binding || state.binding.timed;
+      const mine = state.entries.slice().sort((a, b) => timedNow ? (a.t - b.t) : (String(a.word || '').localeCompare(String(b.word || ''))));
       const matched = query ? mine.filter((e) => (e.word + ' ' + (e.label || '') + ' ' + (e.pos || '')).toLocaleLowerCase().includes(query)) : mine;
       const words = new Set(matched.map((e) => (e.word || '').toLocaleLowerCase()).filter(Boolean)).size;
       const seg = (title) => { const g = el('div', null, title); g.className = 'va-entry-group'; return g; };
@@ -569,7 +567,7 @@
       items = Array.from(byWord.values()).sort((a, b) => a.entry.word.localeCompare(b.entry.word));
       items = items.filter((item) => !query || (item.entry.word + ' ' + (item.entry.label || '')).toLocaleLowerCase().includes(query));
     } else {
-      items = state.entries.slice().sort((a, b) => a.t - b.t)
+      items = state.entries.slice().sort((a, b) => (Number(a.t) || 0) - (Number(b.t) || 0))
         .filter((e) => !query || (e.word + ' ' + (e.label || '') + ' ' + (e.pos || '')).toLocaleLowerCase().includes(query))
         .map((entry) => ({ entry, count: 1 }));
     }
@@ -586,9 +584,10 @@
     }
 
     let lastMinute = -1;
+    const timed = !state.binding || state.binding.timed;
     for (const item of items) {
       const e = item.entry;
-      if (panelTab === 'timeline') {
+      if (panelTab === 'timeline' && timed) {
         const minute = Math.floor((Number(e.t) || 0) / 60);
         if (minute !== lastMinute) {
           lastMinute = minute;
@@ -597,7 +596,8 @@
         }
       }
       const row = el('button'); row.type = 'button'; row.className = 'va-entry-row';
-      const time = el('span', null, formatTime(e.t)); time.className = 'va-entry-time';
+      const time = el('span', null, timed ? formatTime(e.t) : '🖼');
+      time.className = 'va-entry-time' + (timed ? '' : ' va-entry-time--none');
       const copy = el('span'); copy.className = 'va-entry-copy';
       const title = el('strong', null, e.word || '未命名');
       const subtitle = el('span', null, panelTab === 'words' ? ((e.label || '未添加释义') + (item.count > 1 ? ' · 出现 ' + item.count + ' 次' : '')) : (e.label || e.pos || '点击定位画面'));
@@ -609,9 +609,9 @@
       row.append(time, copy, more);
       row.onclick = (ev) => {
         if (ev.target === more || more.contains(ev.target)) return;
-        if (state.video) { state.video.currentTime = Math.max(0, Number(e.t) || 0); state.video.pause(); }
+        if (state.binding) state.binding.locate(e);
         render();
-        showToast('已定位到 ' + formatTime(e.t) + ' · ' + (e.word || '标注'));
+        showToast('已定位到 ' + (timed ? formatTime(e.t) + ' · ' : '') + (e.word || '标注'));
       };
       entryList.appendChild(row);
     }
@@ -621,13 +621,18 @@
   /* ---------- 上下文桥（发给桌面豆包/系统助手）+ 截图 + 笔记 ---------- */
   // 不做第二个豆包：只把「别人拿不到的上下文」整理好，交给桌面豆包
   function videoContext() {
-    const t = state.video ? Math.floor(state.video.currentTime) : 0;
+    const timed = !state.binding || state.binding.timed;
+    const t = timed && state.binding ? Math.floor(state.binding.time()) : 0;
     const words = state.entries.slice(-12).map((e) => e.word).filter(Boolean).join(', ');
+    const ctx = state.binding && state.binding.contextText ? state.binding.contextText() : {};
     return ['平台: ' + (state.platform || location.hostname), '链接: ' + location.href,
-      '标题: ' + document.title, '当前进度: ' + t + 's', words ? '画面已标注的词: ' + words : ''].filter(Boolean).join('\n');
+      '标题: ' + document.title,
+      timed ? '当前进度: ' + t + 's' : (ctx.intrinsic ? '图片尺寸: ' + ctx.intrinsic : ''),
+      words ? '画面已标注的词: ' + words : ''].filter(Boolean).join('\n');
   }
   function videoRect() {
-    const r = state.rect; if (!r) return null;
+    const r = state.binding ? state.binding.captureRect() : state.rect;
+    if (!r) return null;
     return { x: Math.max(0, Math.round(r.x)), y: Math.max(0, Math.round(r.y)), width: Math.round(r.width), height: Math.round(r.height) };
   }
   function cropDataUrl(dataUrl, rect) {
@@ -661,10 +666,12 @@
         return null;
       }
     } catch (e) {}
-    try {   // 兜底：同源视频可 drawImage（跨域会被 taint → 抛错返回 null）
-      const v = state.video; if (!v || !v.videoWidth) return null;
-      const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
-      c.getContext('2d').drawImage(v, 0, 0); return c.toDataURL('image/png');
+    try {   // 兜底：同源媒态可 drawImage（跨域会被 taint → 抛错返回 null）
+      const m = state.binding && state.binding.el; if (!m) return null;
+      const w = m.videoWidth || m.naturalWidth || 0, h = m.videoHeight || m.naturalHeight || 0;
+      if (!w || !h) return null;
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      c.getContext('2d').drawImage(m, 0, 0); return c.toDataURL('image/png');
     } catch (e) { return null; }
   }
   function contextText() {
@@ -739,7 +746,7 @@
     probeTimer = setInterval(() => {
       const plat = A.platform ? A.platform() : 'generic';
       const watchable = plat === 'bilibili' || plat === 'douyin' || plat === 'youtube';
-      if (!watchable || state.video || A.findVideo()) { noVideoSince = 0; probe.style.display = 'none'; return; }
+      if (!watchable || state.binding || A.findVideo()) { noVideoSince = 0; probe.style.display = 'none'; return; }
       if (!noVideoSince) noVideoSince = Date.now();
       else if (Date.now() - noVideoSince > 3000) {
         if (probe.parentElement !== uiRoot) uiRoot.appendChild(probe);
@@ -860,13 +867,27 @@
   }
 
   /* ---------- 生命周期 ---------- */
-  function attach(video) {
-    if (state.video === video) return;
-    if (state.video) detach();
-    state.video = video;
-    state.mediaId = A.mediaId(); state.platform = A.platform();
-    load(); save(); render();
+  // 常驻 UI 外壳：即使页面没有可自动绑定的媒态，也保留 dock（含「选对象」入口）
+  let shellMounted = false;
+  function mountShell() {
+    if (shellMounted) return;
+    shellMounted = true;
     uiRoot.append(overlay, bar, sidePanel, toast);
+  }
+
+  function attach(target) {
+    // 兼容：adapter 回调 {kind, el}；也接受裸 <video>
+    const normalized = target && target.el !== undefined ? target : { kind: 'video', el: target };
+    const binding = VAMedia.create(normalized);
+    if (!binding) return;
+    // 同一 binding 不重复挂（article 的 el 为 null，改用 kind+rootEl 判等）
+    if (state.binding && state.binding.kind === binding.kind && state.binding.el === binding.el && state.binding.rootEl === binding.rootEl) return;
+    if (state.binding) detach();
+    state.binding = binding;
+    state.mediaId = binding.mediaId();
+    state.platform = binding.mediaMeta().platform;
+    load(); save(); render();
+    mountShell();
     toast.classList.remove('is-visible', 'is-error');
     renderPanel();
     lastSig = null;
@@ -874,6 +895,16 @@
     startProbe();
     scheduleAutoSync();
     if (!raf) raf = requestAnimationFrame(loop);
+  }
+
+  // 无绑定媒态：只保留 dock 与「选对象」，隐藏画面标注层
+  function detachBinding() {
+    if (state.binding) state.binding.destroy();
+    state.binding = null; state.meta = null; lastSig = null; autoSyncedMedia = null;
+    raf = null;   // 停帧；下次 attach 会重新启动 loop
+    overlay.style.display = 'none';
+    if (state.picking) togglePicker(false);
+    renderPanel();
   }
 
   let raf = null, lastSig = null, autoSyncTimer = null, autoSyncedMedia = null;
@@ -884,18 +915,18 @@
     autoSyncTimer = setTimeout(() => { autoSyncTimer = null; try { syncNow(); } catch (e) {} }, 900);
   }
   function loop() {
+    const binding = state.binding;
+    if (!binding || !binding.tick()) { detachBinding(); return; }   // 无媒态：停帧，等 A.watch 再 attach
     raf = requestAnimationFrame(loop);
-    const v = state.video;
-    if (!v || !v.isConnected) { detach(); return; }
 
-    // SPA 切集：URL 变了就换一份标注
-    const mid = A.mediaId();
+    // SPA 切换（视频换集 / 画廊换图）：mediaId 变了就换一份标注
+    const mid = binding.mediaId();
     if (mid !== state.mediaId) { state.mediaId = mid; load(); render(); renderPanel(); autoSyncedMedia = null; scheduleAutoSync(); }
 
     // 全屏宿主处理：只有 fullscreen 元素的后代可见
     const fs = document.fullscreenElement;
     let host = document.body, unsupported = false;
-    if (fs) { if (fs.tagName === 'VIDEO') unsupported = true; else host = fs; }
+    if (fs) { if (fs.tagName === 'VIDEO' || fs.tagName === 'IMG') unsupported = true; else host = fs; }
     if (uiHost.parentElement !== host) host.appendChild(uiHost);
 
     if (unsupported) {
@@ -905,26 +936,28 @@
       state.meta = { unsupported: true };
       return;
     }
+
+    const layout = binding.layout();
+    if (!layout) { detachBinding(); return; }
     toast.classList.remove('is-visible', 'is-error');
     bar.style.display = 'flex';
 
-    const r = v.getBoundingClientRect();
+    const r = layout.rect;
     state.rect = r;
-    const fit = getComputedStyle(v).objectFit || 'contain';
-    state.cr = G.contentRect({ w: v.videoWidth, h: v.videoHeight }, r, fit);
-    state.meta = { vw: v.videoWidth, vh: v.videoHeight, ready: v.readyState, fit, host: host.tagName, unsupported: false };
+    state.cr = layout.cr;
+    state.meta = { fit: layout.fit, host: host.tagName, unsupported: false };
 
     overlay.style.display = 'block';
-    overlay.style.left = r.left + 'px'; overlay.style.top = r.top + 'px';
-    overlay.style.width = r.width + 'px'; overlay.style.height = r.height + 'px';
+    // overlay 始终覆盖视口；标记用视口坐标（对长图/滚动图也正确）
+    overlay.style.left = '0px'; overlay.style.top = '0px';
+    overlay.style.width = '100vw'; overlay.style.height = '100vh';
 
     if (state.dragging && state.draft) drawDraft();
-    // 时间窗口驱动的可见性：仅在「可见集合」变化时重绘，避免每帧重建 DOM
-    if (!state.showAll) {
-      const t = v.currentTime;
-      const sig = state.entries.filter((e) => visibleNow(e, t)).map((e) => e.id).join(',');
-      if (sig !== lastSig) { lastSig = sig; render(); }
-    } else { lastSig = null; }
+    // 重绘触发：按「当前应显示的条目集合」签名；showAll 时是全集，否则是按可见性过滤的子集。
+    // 无轴媒态（图片/文章）可见性恒真 → 签名稳定，天然只渲染一次；滚动进出视口时会变化并重绘。
+    const sig = (state.showAll ? state.entries : state.entries.filter((e) => binding.isVisible(e)))
+      .map((e) => e.id).join(',');
+    if (sig !== lastSig) { lastSig = sig; render(); }
   }
 
   function detach() {
@@ -934,41 +967,55 @@
     if (probeTimer) { clearInterval(probeTimer); probeTimer = null; }
     overlay.remove(); bar.remove(); sidePanel.remove(); diagPanel.remove(); toast.remove(); menuPanel.remove(); probe.remove();
     uiRoot.querySelectorAll('.va-popover').forEach((n) => n.remove());
+    shellMounted = false;   // 关键：壳被移除，允许 mountShell 重新挂载（否则重绑时 overlay/dock 再也不出现）
     panelOpen = false;
-    state.video = null; state.meta = null; lastSig = null; autoSyncedMedia = null;
+    if (state.binding) state.binding.destroy();
+    state.binding = null; state.meta = null; lastSig = null; autoSyncedMedia = null;
   }
 
   /* ---------- 渲染 ---------- */
+  // 图片版本校验：anchored 时的图 URL / 原始尺寸与当前不符 → 标记 stale（不静默错位）
+  function imgStale(e) {
+    const b = state.binding;
+    if (!b || b.kind !== 'image' || !b.el || !e.img) return false;
+    const cur = b.el.currentSrc || b.el.src || '';
+    if (e.img.key && cur && e.img.key !== cur) return true;
+    const n = e.img.natural;
+    return !!(n && (n.w && n.w !== b.el.naturalWidth || n.h && n.h !== b.el.naturalHeight));
+  }
+
   function render() {
     layer.textContent = '';
-    const t = state.video ? state.video.currentTime : 0;
+    const binding = state.binding; if (!binding) return;
     const cr = state.cr; if (!cr) return;
-    const r = state.rect;
     for (const e of state.entries) {
-      if (!state.showAll && !visibleNow(e, t)) continue;
-      const p = G.boxToPixels(e.box, cr);
-      const left = p.left - r.left, top = p.top - r.top;
-      const box = el('div', {
-        position: 'absolute', left: left + 'px', top: top + 'px',
-        width: p.width + 'px', height: p.height + 'px',
-      });
-      box.className = 'va-mark';
-      const lab = el('span', {
-      }, e.word + (e.label ? ' ' + e.label : ''));
-      lab.className = 'va-mark-label';
-      box.appendChild(lab);
-      box.onclick = (ev) => { ev.stopPropagation(); openEntryPop(e, ev.clientX, ev.clientY); };
-      layer.appendChild(box);
+      if (!state.showAll && !binding.isVisible(e)) continue;
+      const rects = binding.entryRects(e, cr);
+      for (const p of rects) {
+        // 视口坐标（overlay 覆盖整视口）
+        const left = p.left, top = p.top;
+        const box = el('div', {
+          position: 'absolute', left: left + 'px', top: top + 'px',
+          width: (p.width != null ? p.width : p.w) + 'px', height: (p.height != null ? p.height : p.h) + 'px',
+        });
+        box.className = 'va-mark';
+        if (imgStale(e)) { box.classList.add('is-stale'); box.title = '图片版本已变，锚点可能需复核'; }
+        const lab = el('span', {}, e.word + (e.label ? ' ' + e.label : ''));
+        lab.className = 'va-mark-label';
+        box.appendChild(lab);
+        box.onclick = (ev) => { ev.stopPropagation(); openEntryPop(e, ev.clientX, ev.clientY); };
+        layer.appendChild(box);
+      }
     }
   }
 
   function drawDraft() {
     layer.textContent = '';
-    const cr = state.cr, r = state.rect, d = state.draft;
+    const cr = state.cr, d = state.draft;
     const b = G.dragToBox(d.x0, d.y0, d.x1, d.y1, cr);
     const p = G.boxToPixels(b, cr);
     const box = el('div', {
-      position: 'absolute', left: (p.left - r.left) + 'px', top: (p.top - r.top) + 'px',
+      position: 'absolute', left: p.left + 'px', top: p.top + 'px',
       width: p.width + 'px', height: p.height + 'px',
     });
     box.className = 'va-draft-mark';
@@ -976,17 +1023,114 @@
   }
 
   /* ---------- 标注交互 ---------- */
+  const isQuoteMode = () => !!(state.binding && state.binding.capture === 'quote');
+
+  /* ---------- 手动选择对象（picker） ---------- */
+  const pickBox = el('div'); pickBox.className = 'va-pick-box'; pickBox.style.display = 'none';
+  const pickHint = el('div', null, '移动鼠标选中图片 / 视频 / 正文，点击确定；Esc 取消');
+  pickHint.className = 'va-pick-hint'; pickHint.style.display = 'none';
+  uiRoot.append(pickBox, pickHint);
+
+  function pickerMove(ev) {
+    let target = null;
+    try { target = document.elementFromPoint(ev.clientX, ev.clientY); } catch (e) {}
+    const hit = target ? A.classify(target) : null;
+    if (!hit) { pickBox.style.display = 'none'; pickHint.dataset.valid = '0'; pickHint.textContent = '此处不可标注；移动到图片 / 视频 / 正文上'; pickHint.style.display = 'block'; return; }
+    const r = (hit.kind === 'article' ? hit.el : hit.el).getBoundingClientRect();
+    pickBox.style.display = 'block';
+    pickBox.style.left = r.left + 'px'; pickBox.style.top = r.top + 'px';
+    pickBox.style.width = r.width + 'px'; pickBox.style.height = r.height + 'px';
+    pickHint.dataset.valid = '1';
+    pickHint.textContent = ({ video: '视频', image: '图片', article: '正文' })[hit.kind] + ' · 点击选中';
+    pickHint.style.display = 'block';
+  }
+  function pickerClick(ev) {
+    let target = null;
+    try { target = document.elementFromPoint(ev.clientX, ev.clientY); } catch (e) {}
+    const hit = target ? A.classify(target) : null;
+    if (!hit) return;
+    ev.preventDefault(); ev.stopPropagation();
+    togglePicker(false);
+    attach({ kind: hit.kind, el: hit.el });
+    showToast('已选定' + ({ video: '视频', image: '图片', article: '正文' })[hit.kind]);
+    // 图片/视频：选完直接进入标注模式，用户可立即拖框
+    if (hit.kind !== 'article' && !isView()) toggleAnnotate(true);
+  }
+  function togglePicker(force) {
+    const on = force != null ? force : !state.picking;
+    state.picking = on;
+    btnPick.classList.toggle('is-active', on);
+    pickBox.style.display = 'none';
+    pickHint.style.display = on ? 'block' : 'none';
+    if (on) {
+      // picker 期间 UI 让出指针，便于点到页面元素；同时压过站点光标（如 pexels 的放大镜）
+      capture.style.pointerEvents = 'none';
+      overlay.style.pointerEvents = 'none';
+      setPageCursor('crosshair');
+      document.addEventListener('mousemove', pickerMove, true);
+      document.addEventListener('click', pickerClick, true);
+      showToast('选择一个要标注的对象');
+    } else {
+      document.removeEventListener('mousemove', pickerMove, true);
+      document.removeEventListener('click', pickerClick, true);
+      setPageCursor('');
+      overlay.style.pointerEvents = 'none';   // 恢复默认（overlay 本身不拦截）
+      applyMode();
+    }
+  }
+
+  // 用 !important 覆盖站点自身光标（否则 pexels 图片的 zoom-in 盖过我们的 crosshair）
+  let cursorStyleEl = null;
+  function setPageCursor(cursor) {
+    if (!cursor) { if (cursorStyleEl) { cursorStyleEl.remove(); cursorStyleEl = null; } return; }
+    if (!cursorStyleEl) {
+      const host = document.head || document.documentElement;
+      if (!host || !host.appendChild) return;   // 罕见环境无 head/documentElement 时跳过
+      cursorStyleEl = document.createElement('style');
+      cursorStyleEl.id = 'annota-cursor';
+      host.appendChild(cursorStyleEl);
+    }
+    cursorStyleEl.textContent = 'html,body,*{cursor:' + cursor + ' !important}';
+  }
+
   function toggleAnnotate(force) {
+    if (!state.binding) { showToast('先点「选对象」选定要标注的图片 / 视频 / 正文'); return; }
     state.annotate = force != null ? force : !state.annotate;
-    capture.style.pointerEvents = state.annotate ? 'auto' : 'none';
+    // 文章划词：不拦截指针（要能选字），改为听 mouseup 读选区
+    const quote = isQuoteMode();
+    capture.style.pointerEvents = (state.annotate && !quote) ? 'auto' : 'none';
     btnAnno.classList.toggle('is-active', state.annotate);
-    if (state.annotate && state.video) state.video.pause();
+    if (state.annotate && state.binding) state.binding.beginAnnotate();
+    if (quote) {
+      capture.style.display = 'none';
+      if (state.annotate) showToast('选中正文里的文字即可标注');
+    } else {
+      capture.style.display = 'block';
+      // 标注模式也用 crosshair，压过站点光标（如 pexels 的放大镜）
+      if (!state.picking) setPageCursor(state.annotate ? 'crosshair' : '');
+    }
     render();
   }
 
+  // 文章划词提交
+  function handleQuoteSelection() {
+    const b = state.binding;
+    if (!b || b.capture !== 'quote' || !b.serializeSelection) return;
+    const quote = b.serializeSelection();
+    if (!quote) return;
+    askWord(null, { quote, suggested: false });
+  }
+  document.addEventListener('mouseup', () => {
+    if (!state.annotate || !isQuoteMode()) return;
+    setTimeout(() => {
+      if (uiRoot.querySelector('.va-popover[aria-label="新建标注"]')) return;   // 已开着编辑卡
+      handleQuoteSelection();
+    }, 0);
+  });
+
   capture.addEventListener('pointerdown', (e) => {
     if (!state.annotate) return;
-    state.video.pause();
+    if (state.binding) state.binding.beginAnnotate();
     state.dragging = true;
     state.draft = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY };
     capture.setPointerCapture(e.pointerId);
@@ -1007,18 +1151,30 @@
 
   function askWord(box, initial) {
     initial = initial || {};
-    const p = G.boxToPixels(box, state.cr);   // 视口坐标
+    const quoteMode = !!initial.quote;
+    // 弹窗定位：框标注用框左上角；划词用选区矩形；都给不出来则居中
+    let p = null;
+    if (quoteMode) {
+      const gs = (typeof window !== "undefined" && window.getSelection) ? window.getSelection() : null; const sel = gs;
+      if (sel && sel.rangeCount) {
+        const r = sel.getRangeAt(0).getBoundingClientRect();
+        p = { left: r.left, top: r.bottom };
+      }
+    } else if (box && state.cr) {
+      p = G.boxToPixels(box, state.cr);
+    }
     const width = Math.min(360, innerWidth - 24);
     const pop = el('div');
     pop.className = 'va-popover' + (initial.suggested ? ' va-ai-proposal' : '');
     pop.dataset.vaPop = '1'; pop.setAttribute('role', 'dialog'); pop.setAttribute('aria-label', '新建标注');
-    pop.style.left = Math.max(12, Math.min(p.left, innerWidth - width - 12)) + 'px';
-    pop.style.top = Math.max(12, Math.min(p.top, innerHeight - 410)) + 'px';
+    pop.style.left = Math.max(12, Math.min((p ? p.left : innerWidth / 3), innerWidth - width - 12)) + 'px';
+    pop.style.top = Math.max(12, Math.min((p ? p.top + 8 : innerHeight / 3), innerHeight - 410)) + 'px';
 
     const head = el('div'); head.className = 'va-pop-head';
     const heading = el('div'); heading.className = 'va-pop-heading';
-    const eyebrow = el('div', null, initial.suggested ? 'AI SUGGESTION · REVIEW' : 'REGION CAPTURED'); eyebrow.className = 'va-eyebrow';
-    heading.append(eyebrow, el('strong', null, initial.suggested ? '确认 AI 标注' : '锚定一个词'), el('span', null, '词必填；释义和词性稍后也能补。'));
+    const eyebrow = el('div', null, initial.suggested ? 'AI SUGGESTION · REVIEW' : (quoteMode ? 'TEXT SELECTED' : 'REGION CAPTURED')); eyebrow.className = 'va-eyebrow';
+    heading.append(eyebrow, el('strong', null, initial.suggested ? '确认 AI 标注' : '锚定一个词'),
+      el('span', null, quoteMode ? '已选中正文文字；填一个要记住的词。' : '词必填；释义和词性稍后也能补。'));
     const close = mkIconButton('关闭编辑卡', 'close', () => pop.remove()); close.classList.add('va-close');
     head.append(heading, close);
 
@@ -1042,14 +1198,17 @@
     const timeLabel = el('label', null, '出现时间'); timeLabel.className = 'va-field-label';
     const timeRow = el('div'); timeRow.className = 'va-time-row';
     const tIn = el('input'); tIn.className = 'va-input'; tIn.type = 'number'; tIn.min = '0'; tIn.step = '0.1';
-    tIn.value = String(r2(initial.t == null ? state.video.currentTime : initial.t)); tIn.setAttribute('aria-label', '出现时间（秒）');
-    const nowButton = mkbtn('用当前时间', () => { tIn.value = String(r2(state.video.currentTime)); });
+    const timed = !state.binding || state.binding.timed;
+    const nowTime = () => (state.binding ? state.binding.time() : 0);
+    tIn.value = String(r2(initial.t == null ? nowTime() : initial.t)); tIn.setAttribute('aria-label', '出现时间（秒）');
+    const nowButton = mkbtn('用当前时间', () => { tIn.value = String(r2(nowTime())); });
     timeRow.append(tIn, nowButton);
     const durationLabel = el('label', null, '显示时长'); durationLabel.className = 'va-field-label';
     const dIn = el('input'); dIn.className = 'va-input'; dIn.type = 'number'; dIn.min = '0.2'; dIn.step = '0.1'; dIn.value = String(initial.dur || DEFAULT_DUR);
     dIn.setAttribute('aria-label', '显示时长（秒）');
     const durationWrap = el('label'); durationWrap.append(durationLabel, dIn);
-    detailRow.append(posWrap, durationWrap);
+    if (timed && !quoteMode) detailRow.append(posWrap, durationWrap);
+    else detailRow.append(posWrap);
     const durChips = el('div'); durChips.className = 'va-duration';
     for (const seconds of [0.5, 1, 2, 3]) {
       const chip = mkbtn(seconds + 's', () => {
@@ -1087,19 +1246,42 @@
     const cancel = mkbtn('取消', () => pop.remove());
     const saveButton = mkbtn(initial.suggested ? '确认并保存' : '保存并继续播放', commit); saveButton.classList.add('va-btn-primary');
     actions.append(cancel, saveButton);
-    pop.append(head, wordLabel, wIn, label, lIn, detailRow, timeLabel, timeRow, durChips, dictionary, actions);
+    pop.append(head, wordLabel, wIn, label, lIn);
+    if (quoteMode) {
+      const q = initial.quote || {};
+      const qLabel = el('label', null, '锚定文字'); qLabel.className = 'va-field-label';
+      const qBox = el('div', null, (q.exact || '').slice(0, 160) + ((q.exact || '').length > 160 ? '…' : ''));
+      qBox.className = 'va-quote-preview';
+      pop.append(qLabel, qBox);
+    }
+    pop.append(detailRow);
+    if (timed && !quoteMode) pop.append(timeLabel, timeRow, durChips);
+    pop.append(dictionary, actions);
     wIn.addEventListener('input', () => wIn.removeAttribute('aria-invalid'));
 
     function commit() {
       const word = wIn.value.trim();
       if (!word) { wIn.focus(); wIn.setAttribute('aria-invalid', 'true'); return; }
-      state.entries.push({
+      const entry = {
         id: 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-        t: Math.max(0, r2(parseFloat(tIn.value))), box, word, label: lIn.value.trim(), pos: sel.value,
-        dur: Math.max(0.2, r2(parseFloat(dIn.value) || DEFAULT_DUR)), created: new Date().toISOString(),
-      });
+        word, label: lIn.value.trim(), pos: sel.value,
+        created: new Date().toISOString(),
+      };
+      if (quoteMode && initial.quote) entry.quote = initial.quote;
+      else entry.box = box;
+      if (timed && !quoteMode) {
+        entry.t = Math.max(0, r2(parseFloat(tIn.value)));
+        entry.dur = Math.max(0.2, r2(parseFloat(dIn.value) || DEFAULT_DUR));
+      }
+      // 图片：记录锚定证据，供跨尺寸/换图时校验（Step 6.3）
+      if (state.binding && state.binding.kind === 'image' && state.binding.el) {
+        const el2 = state.binding.el;
+        entry.img = { key: el2.currentSrc || el2.src || '', natural: { w: el2.naturalWidth, h: el2.naturalHeight } };
+      }
+      state.entries.push(entry);
       save(); pop.remove(); render();
-      if (state.video) state.video.play().catch(() => {});
+      if (state.binding) state.binding.endAnnotate();
+      const s = (typeof window !== "undefined" && window.getSelection) ? window.getSelection() : null; if (s && s.removeAllRanges) s.removeAllRanges();
       showToast('已保存标注 · ' + word);
     }
     pop.addEventListener('keydown', (ev) => {
@@ -1120,18 +1302,32 @@
     closePanel: () => togglePanel(false),
     startAnnotating: () => toggleAnnotate(true),
     proposeAnnotation(payload) {
-      if (!state.video || !payload || !payload.box) return false;
+      if (!state.binding || !payload) return false;
+      // 文章：quote 锚点
+      if (payload.quote && payload.quote.exact) {
+        const quote = {
+          exact: String(payload.quote.exact),
+          prefix: payload.quote.prefix != null ? String(payload.quote.prefix) : '',
+          suffix: payload.quote.suffix != null ? String(payload.quote.suffix) : '',
+        };
+        state.binding.beginAnnotate(); toggleAnnotate(false);
+        askWord(null, { ...payload, quote, suggested: true });
+        return true;
+      }
+      // 视频/图片：box
+      if (!payload.box) return false;
       const values = ['x', 'y', 'w', 'h'].map((k) => Number(payload.box[k]));
       if (!values.every(Number.isFinite)) return false;
       const box = G.clampBox({ x: values[0], y: values[1], w: values[2], h: values[3] });
-      state.video.pause(); toggleAnnotate(false);
+      state.binding.beginAnnotate(); toggleAnnotate(false);
       askWord(box, { ...payload, suggested: true });
       return true;
     },
   };
 
   function openEntryPop(e, x, y) {
-    if (state.video) state.video.pause();
+    if (state.binding) state.binding.beginAnnotate();
+    const timed = !state.binding || state.binding.timed;
     const pop = el('div'); pop.className = 'va-popover'; pop.dataset.vaPop = '1';
     pop.setAttribute('role', 'dialog'); pop.setAttribute('aria-label', '标注详情');
     pop.style.left = Math.max(12, Math.min((Number(x) || 0) + 10, innerWidth - 372)) + 'px';
@@ -1149,8 +1345,14 @@
     const tIn = el('input'); tIn.className = 'va-input'; tIn.type = 'number'; tIn.min = '0'; tIn.step = '0.1'; tIn.value = String(e.t); tIn.setAttribute('aria-label', '开始时间（秒）');
     const dIn = el('input'); dIn.className = 'va-input'; dIn.type = 'number'; dIn.min = '0.2'; dIn.step = '0.1'; dIn.value = String(dur); dIn.setAttribute('aria-label', '显示时长（秒）');
     const updRange = () => {
-      const start = Math.max(0, parseFloat(tIn.value) || 0);
-      range.textContent = formatTime(start) + ' – ' + formatTime(start + (parseFloat(dIn.value) || dur));
+      if (timed) {
+        const start = Math.max(0, parseFloat(tIn.value) || 0);
+        range.textContent = formatTime(start) + ' – ' + formatTime(start + (parseFloat(dIn.value) || dur));
+      } else if (e.quote && e.quote.exact) {
+        range.textContent = '“' + e.quote.exact.slice(0, 80) + (e.quote.exact.length > 80 ? '…”' : '”');
+      } else {
+        range.textContent = state.binding && state.binding.kind === 'article' ? '整段文字' : '静态图片标注';
+      }
     };
     tIn.addEventListener('input', updRange); dIn.addEventListener('input', updRange);
     const dictionary = el('div'); dictionary.className = 'va-dictionary';
@@ -1166,8 +1368,9 @@
 
     if (isView()) {
       const actions = el('div'); actions.className = 'va-pop-actions';
-      actions.append(mkbtn('跳转到画面', () => { if (state.video) state.video.currentTime = e.t; pop.remove(); }), mkbtn('关闭', () => pop.remove()));
-      pop.append(el('div', null, formatTime(e.t) + ' · 显示 ' + dur + ' 秒'), actions);
+      actions.append(mkbtn('跳转到画面', () => { if (state.binding) state.binding.locate(e); pop.remove(); }), mkbtn('关闭', () => pop.remove()));
+      if (timed) pop.append(el('div', null, formatTime(e.t) + ' · 显示 ' + dur + ' 秒'), actions);
+      else pop.append(actions);
       uiRoot.appendChild(pop);
       return;
     }
@@ -1176,24 +1379,29 @@
     const labelInput = el('input'); labelInput.className = 'va-input'; labelInput.value = e.label || ''; labelInput.placeholder = '释义（选填）'; labelInput.setAttribute('aria-label', '释义');
     const timeLabel = el('label', null, '出现时间'); timeLabel.className = 'va-field-label';
     const timeRow = el('div'); timeRow.className = 'va-time-row';
-    const now = mkbtn('用当前时间', () => { tIn.value = state.video ? String(r2(state.video.currentTime)) : String(e.t); updRange(); });
+    const now = mkbtn('用当前时间', () => { tIn.value = state.binding ? String(r2(state.binding.time())) : String(e.t); updRange(); });
     timeRow.append(tIn, now);
     const durationLabel = el('label', null, '显示时长'); durationLabel.className = 'va-field-label';
     const actions = el('div'); actions.className = 'va-pop-actions';
-    const jump = mkbtn('跳转', () => { if (state.video) state.video.currentTime = Math.max(0, parseFloat(tIn.value) || e.t); pop.remove(); });
+    const jump = mkbtn('跳转', () => { if (state.binding) state.binding.seek(parseFloat(tIn.value) || e.t); pop.remove(); });
     const remove = mkbtn('删除', () => { state.entries = state.entries.filter((item) => item !== e); save(); pop.remove(); render(); showToast('已删除标注'); });
     remove.classList.add('va-btn-danger');
     const saveButton = mkbtn('保存修改', () => {
       const word = wordInput.value.trim();
       if (!word) { wordInput.focus(); return; }
       e.word = word; e.label = labelInput.value.trim();
-      e.t = Math.max(0, r2(parseFloat(tIn.value)));
-      e.dur = Math.max(0.2, r2(parseFloat(dIn.value) || DEFAULT_DUR));
+      if (timed) {
+        e.t = Math.max(0, r2(parseFloat(tIn.value)));
+        e.dur = Math.max(0.2, r2(parseFloat(dIn.value) || DEFAULT_DUR));
+      }
       save(); render(); pop.remove(); showToast('标注已更新');
     });
     saveButton.classList.add('va-btn-primary');
-    actions.append(jump, remove, saveButton);
-    pop.append(el('label', null, '词语'), wordInput, el('label', null, '释义（选填）'), labelInput, timeLabel, timeRow, durationLabel, dIn, actions);
+    if (timed) actions.append(jump);
+    actions.append(remove, saveButton);
+    pop.append(el('label', null, '词语'), wordInput, el('label', null, '释义（选填）'), labelInput);
+    if (timed) pop.append(timeLabel, timeRow, durationLabel, dIn);
+    pop.append(actions);
     pop.querySelectorAll('.va-popover > label').forEach((n) => { n.className = 'va-field-label'; });
     updRange();
     uiRoot.appendChild(pop);
@@ -1232,26 +1440,39 @@
   }
 
   function mediaMeta() {
+    if (state.binding) return state.binding.mediaMeta();
     return {
-      platform: state.platform, videoId: state.mediaId, url: location.href, title: document.title,
-      intrinsic: { w: state.video ? state.video.videoWidth : 0, h: state.video ? state.video.videoHeight : 0 },
+      platform: state.platform, type: 'video', mediaId: state.mediaId, videoId: state.mediaId,
+      url: location.href, title: document.title,
     };
   }
-  function pack() { return { format: 'video-annotate/0.1', media: mediaMeta(), entries: state.entries }; }
+  function pack() { return { format: FORMAT, media: mediaMeta(), entries: state.entries }; }
 
   function validBox(b) {
     return b && typeof b === 'object' &&
       ['x', 'y', 'w', 'h'].every((k) => Number.isFinite(b[k]));
   }
+  function validQuote(q) {
+    if (!q || typeof q !== 'object') return false;
+    const exact = typeof q.exact === 'string' ? q.exact.trim() : '';
+    return !!exact;   // quote 只需非空 exact；prefix/suffix 可选
+  }
+  // box 与 quote 二选一即可（文章 = quote，视频/图片 = box）
+  function validAnchor(e) { return validBox(e && e.box) || validQuote(e && e.quote); }
   function sameEntry(e, o) {
     if ((e.word || '') !== (o.word || '')) return false;
-    if (Math.abs((Number(e.t) || 0) - (Number(o.t) || 0)) >= 0.4) return false;
-    if (!validBox(e.box) || !validBox(o.box)) return false;
-    return G.iou(e.box, o.box) > 0.6;
+    const eb = validBox(e.box), ob = validBox(o.box);
+    const eq = validQuote(e.quote), oq = validQuote(o.quote);
+    if (eb && ob) {
+      if (Math.abs((Number(e.t) || 0) - (Number(o.t) || 0)) >= 0.4) return false;
+      return G.iou(e.box, o.box) > 0.6;
+    }
+    if (eq && oq) return e.quote.exact === o.quote.exact;   // 文本锚点：同一段文字即同一标注
+    return false;
   }
   function validEntries(list) {
     return (Array.isArray(list) ? list : []).filter((e) => {
-      if (!e || !e.word || !validBox(e.box)) return false;   // 形状守卫：脏数据不进、不抛
+      if (!e || !e.word || !validAnchor(e)) return false;  // 形状守卫：脏数据不进、不抛
       if (!e.id) e.id = 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
       return true;
     });
@@ -1483,5 +1704,6 @@
 
   /* ---------- 启动 ---------- */
   loadAppSettings();
-  A.watch((v) => { if (v) attach(v); else detach(); });
+  mountShell();   // 即使页面无可自动绑定的媒态，也保留 dock（含「选对象」）
+  A.watch((v) => { if (v) attach(v); else detachBinding(); });
 })();

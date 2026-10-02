@@ -119,7 +119,21 @@
 
 **已知待修（UI 排版）**：设置页 AI 状态文字较长时会在窄列内换行破词（如 `https://ark.cn-` 被截断）。需要给 `.ai-status span` 加 `overflow-wrap:anywhere` / `word-break:break-word`，或改为单行省略（`text-overflow:ellipsis; white-space:nowrap; overflow:hidden`）。截图见 `docs/assets/settings.png` 底部。
 
+**R2 进度（2026-10-02）**
+
+| 步 | 状态 |
+|---|---|
+| Step 0 接缝重构 | ✅ 完成（新增 `src/media.js`，`core.js` 全量 `state.video` → `state.binding`；行为零变化） |
+| Step 1 Schema 与合并规则 | ✅ 完成（`box\|quote` 二选一：`validAnchor`/`same`/`merge_entries` 三处同步放开；`format` 回显取代硬编码 `0.1`；`media.type`/`media.mediaId` 双写）。测试：Rust 6 例 + Python 7 例 + 端到端 quote 存活/去重/format 回显 |
+| Step 2 图片标注 MVP | ✅ 完成（`ImageBinding` + `A.findImage`/`imageSupported` + 无时间轴 UI；`dev/smoke-image.mjs` 通过；`dev/image.html` 调试页）。Tauri 内截图留档待补 |
+| Step 3 长图与画廊 SPA | ✅ 完成（`VAGeo.intersects`/`scrollMap` 长图视口剔除；图片 `mediaId` 用 `currentSrc` hash，换图换 key）。geometry 11 例 + smoke-image 画廊断言通过 |
+| Step 4 我的库/首页/MCP 混媒态 | ✅ 完成（库/首页媒态图标与标签、`renderEntries` 按 type 分流、`render_note` 三态分流、`words_at` 非视频忽略时间窗）；merge_rules 10 例通过 |
+| Step 5 文章划词 | ✅ 完成（`src/textquote.js` TextQuoteSelector 纯函数 + `ArticleBinding` + 划词 UI；`findArticle` 三级退化）。textquote 7 例 + smoke-article 通过 |
+| Step 6 选对象/去猜主图/图片校验 | ✅ 完成（dock「选对象」picker + 自动绑只做确定信号 + 图片版本校验 `imgStale`；顺修壳丢失/overlay 视口定位/showAll 不重绘）。smoke-picker 通过 |
+
 ### R2 多媒态（预计 3–4 周）
+
+> 详细实施方案（接缝重构、图片/长图/画廊/文章划词分步做法、测试规范）见 **[`r2-plan.md`](r2-plan.md)**。
 
 - 图片标注：`<img>` intrinsic 归一、长图滚动映射、画廊 SPA adapter
 - 文章划词：`TextQuoteSelector`、高亮底层、评论侧栏

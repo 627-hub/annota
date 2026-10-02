@@ -31,7 +31,7 @@ VARIANTS = {
     "annotate.view.user.js": {"name": "Annota（只读观看端）", "grant": "// @grant        GM_xmlhttpRequest\n// @connect      *\n", "config": "window.VA_VIEW_ONLY=true;window.VA_AUTO_SYNC=true;\n"},
 }
 
-PARTS = ["geometry.js", "adapter.js"]
+PARTS = ["geometry.js", "textquote.js", "adapter.js", "media.js"]
 TAIL = ["design-tokens.js", "overlay-theme.js", "core.js"]
 
 

@@ -539,9 +539,19 @@ pub fn run_tool(name: &str, params: &Value) -> Result<String, String> {
             })?;
 
             let entries = pack.get("entries").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+            // 图片/文章无时间维度：忽略 t 窗口，返回全部；视频按 [t-radius, t+dur+radius] 过滤
+            let timed = pack
+                .get("media")
+                .and_then(|m| m.get("type"))
+                .and_then(|v| v.as_str())
+                .map(|s| s == "video")
+                .unwrap_or(true);
             let words: Vec<Value> = entries
                 .into_iter()
                 .filter(|e| {
+                    if !timed {
+                        return true;
+                    }
                     let start = e.get("t").and_then(|v| v.as_f64()).unwrap_or(0.0);
                     let dur = e.get("dur").and_then(|v| v.as_f64()).unwrap_or(1.0);
                     t >= start - radius && t <= start + dur + radius

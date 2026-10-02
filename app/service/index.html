@@ -110,7 +110,7 @@
     .filter-button.is-active { border-color:rgba(245,166,35,.2); background:rgba(245,166,35,.08); color:#e9c68f; }
     .library-list { display:flex; flex-direction:column; gap:7px; }
     .library-row { display:block; min-height:67px; padding:12px 15px; border:1px solid rgba(255,255,255,.07); border-radius:12px; background:#151619; }
-    .library-main { display:grid; grid-template-columns:minmax(0,1fr) auto auto auto; align-items:center; gap:14px; }
+    .library-main { display:grid; grid-template-columns:auto minmax(0,1fr) auto auto auto; align-items:center; gap:14px; }
     .library-row a { color:#e1e2e3; font-size:12px; font-weight:600; text-decoration:none; }
     .library-row a:hover { color:#f3c47e; }
     .library-meta { margin-top:4px; color:#7e858e; font-size:10px; }
@@ -250,7 +250,7 @@
                 <h1>重要内容，<br><em>值得留下一层。</em></h1>
                 <p>在视频、图片和文章上标记关键一刻。内容仍在原处，标注由你保存、整理和带走。</p>
                 <form class="open-form" id="open-form">
-                  <input id="quick-url" type="text" placeholder="粘贴视频或网页链接" autocomplete="url" spellcheck="false" aria-label="视频或网页链接">
+                  <input id="quick-url" type="text" placeholder="粘贴视频、图片或文章链接" autocomplete="url" spellcheck="false" aria-label="视频、图片或文章链接">
                   <button class="primary-button" type="submit"><span>打开内容</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
                 </form>
                 <div class="platform-links"><span>常用平台</span><a class="platform-link" href="https://www.bilibili.com/">Bilibili</a><a class="platform-link" href="https://www.youtube.com/">YouTube</a><a class="platform-link" href="https://www.douyin.com/">抖音</a></div>
@@ -288,13 +288,13 @@
             <div class="settings-layout">
               <section class="setting-section setting-section-wide" aria-labelledby="runtime-settings-heading">
                 <h3 id="runtime-settings-heading">同步、快捷键与查词</h3>
-                <p>这些偏好由本地服务保存，并由视频页的运行时设置加载器读取。留空同步地址时会自动探测。</p>
+                <p>这些偏好由本地服务保存，并由内容页的运行时设置加载器读取。留空同步地址时会自动探测。</p>
                 <form class="settings-form" id="runtime-settings-form" novalidate>
                   <div class="settings-grid">
                     <label class="settings-field" for="sync-address"><span>同步服务地址</span><input class="settings-input" id="sync-address" type="url" inputmode="url" placeholder="留空以自动探测" autocomplete="url"><small>非空地址须为有效的 http(s) URL。</small></label>
                     <label class="settings-field" for="dict-url-template"><span>词典 URL 模板</span><input class="settings-input" id="dict-url-template" type="url" inputmode="url" placeholder="https://dictionary.cambridge.org/dictionary/english/{word}"><small>留空使用 Cambridge 默认；自定义模板必须包含 {word}。</small></label>
                   </div>
-                  <label class="settings-toggle"><input id="sync-auto" type="checkbox"><span>每次打开视频页后自动同步</span></label>
+                  <label class="settings-toggle"><input id="sync-auto" type="checkbox"><span>打开内容页后自动同步</span></label>
                   <div class="settings-grid">
                     <label class="settings-field" for="shortcut-annotate"><span>标注快捷键</span><input class="settings-input shortcut-input" id="shortcut-annotate" type="text" autocomplete="off" spellcheck="false" placeholder="alt+d"><small>修饰键 + 单个字母、数字或 F1–F12；留空禁用。</small></label>
                     <label class="settings-field" for="shortcut-panel"><span>侧栏快捷键</span><input class="settings-input shortcut-input" id="shortcut-panel" type="text" autocomplete="off" spellcheck="false" placeholder="alt+l"><small>Esc 保留为关闭键。</small></label>
@@ -307,7 +307,7 @@
                 <label class="settings-field" for="ai-base-url"><span>模型服务地址</span><input class="settings-input" id="ai-base-url" type="url" inputmode="url" placeholder="留空使用默认地址" autocomplete="url"><small>可选；非空时须为有效的 http(s) URL。</small></label>
                 <label class="settings-field" for="ai-model"><span>模型名称</span><input class="settings-input" id="ai-model" type="text" maxlength="160" autocomplete="off" placeholder="留空使用默认模型"><small>可选；最多 160 个字符。</small></label>
               </div><div class="ai-status" id="ai-status" role="status" aria-live="polite"><i aria-hidden="true"></i><span>正在读取模型状态…</span></div></section>
-              <section class="setting-section"><h3>外观</h3><p>页面工作区主题。视频上的标注工具保持深色高对比。</p><div class="setting-actions"><button class="secondary-button" data-theme-choice="dark">深色</button><button class="secondary-button" data-theme-choice="light">浅色</button><button class="secondary-button" data-theme-choice="system">跟随系统</button></div></section>
+              <section class="setting-section"><h3>外观</h3><p>页面工作区主题。内容页上的标注工具保持深色高对比。</p><div class="setting-actions"><button class="secondary-button" data-theme-choice="dark">深色</button><button class="secondary-button" data-theme-choice="light">浅色</button><button class="secondary-button" data-theme-choice="system">跟随系统</button></div></section>
               <section class="setting-section"><h3>数据与隐私</h3><p>标注默认保存在本地。你可以随时导出完整数据副本。</p><div class="setting-actions"><button class="secondary-button" id="export-settings">导出全部标注</button><button class="secondary-button" id="refresh-library">刷新本地数据</button></div></section>
               <section class="setting-section"><h3>查词网站</h3><p>编辑标注时使用外部词典；默认查词链接可在视频页右下 ⚙ 菜单的「DICTIONARY」里改。词典内容由其服务方维护。</p><div class="setting-actions"><a class="platform-link" href="https://dictionary.cambridge.org/" target="_blank" rel="noopener noreferrer">Cambridge ↗</a><a class="platform-link" href="https://www.youdao.com/" target="_blank" rel="noopener noreferrer">有道 ↗</a><a class="platform-link" href="https://dict.eudic.net/" target="_blank" rel="noopener noreferrer">欧路 ↗</a></div></section>
               <section class="setting-section"><h3>Agent 接入</h3><p>本地 MCP 服务地址，供兼容的 agent 调用 Annota 工具。</p><div class="setting-actions"><code class="mcp-address">http://127.0.0.1:8794/mcp</code><button id="copy-mcp" class="secondary-button">复制地址</button></div></section>
@@ -353,9 +353,22 @@
       const name = (media && media.platform) || '';
       return ({ bilibili: 'Bilibili', douyin: '抖音', youtube: 'YouTube' })[name] || name || '网页内容';
     }
+    function mediaType(media) {
+      const t = (media && media.type) || 'video';
+      return ['video', 'image', 'article'].includes(t) ? t : 'video';
+    }
+    function mediaTypeLabel(media) {
+      return ({ video: '视频', image: '图片', article: '文章' })[mediaType(media)];
+    }
+    // 各媒态图标（视频/图片/文章）
+    function typeIcon(type) {
+      if (type === 'image') return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.6"/><path d="m5 17 5-5 3 3 3-3 3 3"/></svg>';
+      if (type === 'article') return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h8l4 4v13H6z"/><path d="M14 3.5v4h4M9 12h6M9 16h6"/></svg>';
+      return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="m10 9 5 3-5 3V9Z"/></svg>';
+    }
     function recordTitle(pack, id) {
       const media = pack.media || {};
-      const reference = media.title || media.name || media.videoId || id.replaceAll('_', ' ');
+      const reference = media.title || media.name || media.mediaId || media.videoId || id.replaceAll('_', ' ');
       return String(reference).replace(/^(bilibili|douyin|youtube)[:_]/i, '');
     }
     function recordUpdated(pack) {
@@ -397,10 +410,10 @@
       card.className = 'recent-card';
       if (url) { card.href = url; card.title = '在原平台打开'; }
       const mark = document.createElement('span'); mark.className = 'media-mark';
-      mark.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="m10 9 5 3-5 3V9Z"/></svg>';
+      mark.innerHTML = typeIcon(mediaType(item.media));
       const copy = document.createElement('span'); copy.className = 'recent-copy';
       const title = document.createElement('strong'); title.textContent = recordTitle(item.pack, item.id);
-      const meta = document.createElement('span'); meta.textContent = platformName(item.media) + ' · ' + recordUpdated(item.pack);
+      const meta = document.createElement('span'); meta.textContent = platformName(item.media) + ' · ' + mediaTypeLabel(item.media) + ' · ' + recordUpdated(item.pack);
       copy.append(title, meta);
       const count = document.createElement('span'); count.className = 'recent-count'; count.textContent = item.entries.length + ' 条';
       card.append(mark, copy, count);
@@ -445,7 +458,8 @@
         const info = document.createElement('div');
         const link = document.createElement('a'); link.textContent = recordTitle(item.pack, item.id);
         const url = safeUrl(item.media.url || ''); if (url) { link.href = url; link.target = '_blank'; link.rel = 'noopener noreferrer'; }
-        const meta = document.createElement('div'); meta.className = 'library-meta'; meta.textContent = platformName(item.media) + ' · ' + recordUpdated(item.pack);
+        const mark = document.createElement('span'); mark.className = 'media-mark'; mark.innerHTML = typeIcon(mediaType(item.media));
+        const meta = document.createElement('div'); meta.className = 'library-meta'; meta.textContent = platformName(item.media) + ' · ' + mediaTypeLabel(item.media) + ' · ' + recordUpdated(item.pack);
         info.append(link, meta);
         const count = document.createElement('span'); count.className = 'library-count'; count.textContent = item.entries.length + ' 条';
         const manageButton = document.createElement('button'); manageButton.className = 'secondary-button'; manageButton.textContent = '管理';
@@ -457,7 +471,7 @@
           manageButton.textContent = panel.hidden ? '管理' : '收起';
           if (!panel.hidden) renderEntries(item, panel);
         };
-        main.append(info, count, manageButton, exportButton);
+        main.append(mark, info, count, manageButton, exportButton);
         row.append(main, panel);
         list.appendChild(row);
       }
@@ -465,7 +479,7 @@
     async function saveEntries(item, entries, message) {
       const response = await fetch('/api/anno/' + encodeURIComponent(item.id), {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ format: 'video-annotate/0.1', media: item.media, entries, replace: true }),
+        body: JSON.stringify({ format: (item.pack && item.pack.format) || 'video-annotate/0.1', media: item.media, entries, replace: true }),
       });
       if (!response.ok) throw new Error('HTTP ' + response.status);
       const pack = await response.json();
@@ -491,22 +505,33 @@
         const empty = document.createElement('div'); empty.className = 'library-entry-empty'; empty.textContent = '这条记录里没有标注了。';
         panel.appendChild(empty); return;
       }
+      const timed = mediaType(item.media) === 'video';
       item.entries.slice().sort((a, b) => (Number(a.t) || 0) - (Number(b.t) || 0)).forEach((entry) => {
         const line = document.createElement('div'); line.className = 'library-entry';
         const word = entryInput(entry.word, '词', 'le-word');
         const label = entryInput(entry.label, '释义（选填）', 'le-label');
         const pos = entryInput(entry.pos, '词性', 'le-pos');
-        const time = entryInput(entry.t, '秒', 'le-t', 'number');
+        let time = null, anchor = null;
+        if (timed) {
+          time = entryInput(entry.t, '秒', 'le-t', 'number');
+        } else if (entry.quote && entry.quote.exact) {
+          anchor = entryInput(entry.quote.exact, '锚定文本', 'le-t');
+          anchor.readOnly = true; anchor.title = '文本锚点（只读）';
+        } else {
+          anchor = document.createElement('span'); anchor.className = 'library-entry-empty'; anchor.textContent = '区域标注';
+        }
         const save = document.createElement('button'); save.className = 'secondary-button'; save.textContent = '保存';
         const remove = document.createElement('button'); remove.className = 'secondary-button'; remove.textContent = '删除';
         save.onclick = async () => {
           const next = (word.value || '').trim();
           if (!next) { notify('词不能为空'); word.focus(); return; }
-          const t = Number(time.value);
-          if (!Number.isFinite(t) || t < 0) { notify('时间需为非负数字'); time.focus(); return; }
-          const updated = item.entries.map((e) => (sameEntry(e, entry)
-            ? Object.assign({}, e, { word: next, label: (label.value || '').trim(), pos: (pos.value || '').trim(), t })
-            : e));
+          const patch = { word: next, label: (label.value || '').trim(), pos: (pos.value || '').trim() };
+          if (timed) {
+            const t = Number(time.value);
+            if (!Number.isFinite(t) || t < 0) { notify('时间需为非负数字'); time.focus(); return; }
+            patch.t = t;
+          }
+          const updated = item.entries.map((e) => (sameEntry(e, entry) ? Object.assign({}, e, patch) : e));
           try { await saveEntries(item, updated, '已保存「' + next + '」'); }
           catch (error) { notify('保存失败：' + error.message); }
         };
@@ -523,7 +548,7 @@
           try { await saveEntries(item, updated, '已删除「' + (entry.word || '') + '」'); }
           catch (error) { notify('删除失败：' + error.message); }
         };
-        line.append(word, label, pos, time, save, remove);
+        line.append(word, label, pos, timed ? time : anchor, save, remove);
         panel.appendChild(line);
       });
     }

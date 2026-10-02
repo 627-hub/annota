@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>video-annotate · article demo</title>
+<style>
+  body{margin:0;background:#0b0e13;color:#e6edf3;font:15px/1.75 -apple-system,"PingFang SC",Georgia,serif}
+  .wrap{max-width:720px;margin:0 auto;padding:28px 20px 120px}
+  h1{font-size:22px;line-height:1.35}
+  .note{color:#8b949e;font-size:13px;background:#11161d;border:1px solid #222a34;border-radius:8px;padding:10px 12px;font-family:-apple-system,sans-serif}
+  code{color:#9ecbff}
+  article{font-size:17px}
+  p{margin:0 0 1em}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="note">
+    本页模拟文章。点右下「标注」后，<b>用鼠标选中正文里的文字</b>即可建立文本锚点标注；刷新或改变窗口宽度后，高亮应仍在原文上。<br>
+    · 用 http 打开：<code>python3 -m http.server 8792</code> → <code>http://127.0.0.1:8792/dev/article.html</code>
+  </div>
+  <h1>The Tea Roads of the Western Hills</h1>
+  <article>
+    <p>In 1684 the tea was planted on the hills of this quiet district near the old post road. Traders carried the leaf along the ridges, and the whole valley learned to read the weather in the colour of the new shoots.</p>
+    <p>Later, the monsoon arrived late and the tea was scarce for a whole season. Farmers waited at the edges of their terraces, watching the clouds gather and break over the far range, counting the days until the first steady rain.</p>
+    <p>It was during those dry weeks that a strange calm settled on the villages. People repaired their tools, mended the irrigation channels, and told stories about the years when the harvest had been so heavy that no one could carry it down the mountain in a single trip.</p>
+  </article>
+</div>
+<script src="../dist/annotate.user.js"></script>
+</body>
+</html>
