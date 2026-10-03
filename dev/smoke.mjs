@@ -71,6 +71,7 @@ const sandbox = {
   requestAnimationFrame: (cb) => { if (frames < 3) { frames++; setTimeout(() => cb(0), 0); } return frames; },
   cancelAnimationFrame() {},
   Date, Math, JSON, Array, Object, String, Number, Boolean, RegExp, Error, Promise, URLSearchParams,
+  btoa, atob, TextEncoder, TextDecoder, crypto: (globalThis.crypto || { getRandomValues: (a) => { for (let i=0;i<a.length;i++) a[i]=(Math.random()*256)|0; return a; } }),
   PointerEvent: class PointerEvent { constructor(type, init = {}) { this.type = type; Object.assign(this, init); } },
 };
 sandbox.window = sandbox; sandbox.self = sandbox; sandbox.globalThis = sandbox;
@@ -113,6 +114,7 @@ assert.ok(saveButton, 'EditorCard 保存按钮缺失');
 saveButton.click();
 assert.equal(stEntries().length, 2, 'EditorCard 保存后标注数量错误');
 assert.equal(stEntries()[1].word, 'tractor', 'EditorCard 没有保存词语');
+assert.ok(stEntries()[1].creator && String(stEntries()[1].creator.id).startsWith('urn:hash:'), '新标注应带本地身份 creator');
 const listButton = dock.children.find((n) => n.attributes && n.attributes['aria-label'] === '列表');
 assert.ok(listButton, '标注列表入口未创建');
 listButton.click();

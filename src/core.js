@@ -38,6 +38,7 @@
     shortcuts: { annotate: 'alt+d', panel: 'alt+l', overlay: 'alt+s' },
     dictUrlTemplate: '',
     ai: { baseUrl: '', model: '' },
+    profile: { name: '匿名标注者' },
   };
   function mergeAppSettings(value) {
     value = value && typeof value === 'object' ? value : {};
@@ -57,6 +58,10 @@
       ai: {
         baseUrl: value.ai && typeof value.ai.baseUrl === 'string' ? value.ai.baseUrl : '',
         model: value.ai && typeof value.ai.model === 'string' ? value.ai.model : '',
+      },
+      profile: {
+        name: value.profile && typeof value.profile.name === 'string' && value.profile.name.trim()
+          ? value.profile.name.trim().slice(0, 40) : DEFAULT_APP_SETTINGS.profile.name,
       },
     };
   }
@@ -136,6 +141,28 @@
     try { localStorage.setItem(HIDDEN_PREFIX + mediaId, JSON.stringify(Array.from(set))); } catch (e) {}
   }
   function isHidden(e) { return !!(e && state.hidden && state.hidden.has(String(e.id))); }
+
+  /* ---------- 组来源条目（分层展示，不进 state.entries） ---------- */
+  const GROUP_CACHE_PREFIX = 'va:group:';    // va:group:<gid>:<mediaId> → 组内该媒体的 pack
+  function groupEntries() {
+    const out = [];
+    for (const g of (window.VAGroup ? window.VAGroup.listGroups() : [])) {
+      let pack = null;
+      try { pack = JSON.parse(localStorage.getItem(GROUP_CACHE_PREFIX + g.gid + ':' + state.mediaId) || 'null'); } catch (e) {}
+      if (!pack || !Array.isArray(pack.entries)) continue;
+      for (const e of pack.entries) {
+        out.push(Object.assign({}, e, { __group: true, __gid: g.gid, __author: (e.creator && e.creator.name) || g.name || '成员' }));
+      }
+    }
+    return out;
+  }
+  function loadGroupCache(gid, mediaId) {
+    try { return JSON.parse(localStorage.getItem(GROUP_CACHE_PREFIX + gid + ':' + mediaId) || 'null'); } catch (e) { return null; }
+  }
+  function saveGroupCache(gid, mediaId, pack) {
+    try { localStorage.setItem(GROUP_CACHE_PREFIX + gid + ':' + mediaId, JSON.stringify(pack)); } catch (e) {}
+  }
+
   function toggleHidden(e) {
     const id = String(e.id);
     if (state.hidden.has(id)) state.hidden.delete(id); else state.hidden.add(id);
@@ -175,6 +202,7 @@
     catch (e) { setSyncStatus('本地保存失败（隐私模式/空间不足？）'); }
     updateStatus();
     renderPanel();
+    scheduleGroupPush();   // 组同步：去抖后把本地实线条目推到已加入的组
   }
 
   /* ---------- Shadow DOM UI ---------- */
@@ -905,6 +933,75 @@
     rowDir.append(mkbtn('仅上传', uploadSync), mkbtn('仅下载', downloadSync), viewBtn);
     const row = el('div', { display: 'flex', gap: '5px', marginTop: '5px', flexWrap: 'wrap' }); row.className = 'va-menu-row';
     row.append(mkbtn('导出 Pack', exportJSON), mkbtn('导入 Pack', importJSON), mkbtn('清空当前', clearAll));
+    const groupPanel = el('section');
+    groupPanel.setAttribute('aria-label', '组管理菜单');
+    const groupHeading = el('div', { color: '#9b8260', fontSize: '9px', fontWeight: '700', letterSpacing: '.1em', padding: '0 9px 3px' }, '组');
+    const groupInvite = el('input'); groupInvite.className = 'va-input';
+    groupInvite.type = 'text'; groupInvite.placeholder = '粘贴 annota://join 邀请链接';
+    groupInvite.setAttribute('aria-label', '加入组邀请链接');
+    const groupFeedback = el('div', { color: '#89919b', fontSize: '10px', padding: '4px 9px' });
+    groupFeedback.setAttribute('role', 'status'); groupFeedback.setAttribute('aria-live', 'polite');
+    const groupList = el('div', { display: 'flex', flexDirection: 'column', gap: '3px', padding: '2px 4px' });
+    groupList.setAttribute('aria-label', '当前媒体所属组');
+    const renderDockGroups = () => {
+      groupList.textContent = '';
+      const api = window.VAGroup;
+      let groups = [];
+      try { groups = api && api.groupsForMedia ? api.groupsForMedia(state.mediaId) : []; } catch (e) {}
+      if (!groups || !groups.length) {
+        groupList.appendChild(el('div', { color: '#66717d', fontSize: '10px', padding: '2px 9px' }, state.mediaId ? '当前媒体尚未加入组片单' : '打开媒体后显示相关组'));
+        return;
+      }
+      groups.forEach((g) => {
+        const members = Array.isArray(g.members) ? g.members.length : (g.memberCount || 0);
+        let authors = [];
+        try {
+          const cached = JSON.parse(localStorage.getItem(GROUP_CACHE_PREFIX + g.gid + ':' + state.mediaId) || 'null');
+          authors = Array.from(new Set(((cached && cached.entries) || []).map((entry) => entry && entry.creator && entry.creator.name).filter(Boolean))).slice(0, 3);
+        } catch (e) {}
+        const hint = authors.length ? '标注者：' + authors.join('、') : members ? members + ' 位成员' : (g.role === 'owner' ? '创建者' : '组成员');
+        const item = el('div', { color: '#c3c7cc', fontSize: '10px', padding: '3px 9px', overflowWrap: 'anywhere' }, (g.name || g.gid || '组') + ' · ' + hint);
+        item.setAttribute('title', g.repo || ''); groupList.appendChild(item);
+      });
+    };
+    const joinRow = el('div', { display: 'flex', gap: '6px', marginTop: '5px' }); joinRow.className = 'va-menu-row';
+    const joinBtn = mkbtn('加入组', async () => {
+      const api = window.VAGroup;
+      if (!api || typeof api.parseInvite !== 'function' || typeof api.joinGroup !== 'function') { groupFeedback.textContent = '组功能暂不可用'; return; }
+      const parsed = api.parseInvite(groupInvite.value);
+      if (!parsed) { groupFeedback.textContent = '邀请链接无效'; return; }
+      joinBtn.disabled = true; groupFeedback.textContent = '正在读取组…';
+      try {
+        const result = await api.joinGroup(groupInvite.value);
+        const joinedName = (result && result.doc && result.doc.name) || (result && result.rec && result.rec.name) || '组';
+        groupFeedback.textContent = '已加入 ' + joinedName;
+        showToast('已加入 ' + joinedName);
+        groupInvite.value = ''; renderDockGroups(); render();
+      } catch (error) { groupFeedback.textContent = '加入失败：' + String(error && error.message || error); }
+      finally { joinBtn.disabled = false; }
+    });
+    joinBtn.style.width = 'auto'; joinBtn.style.flex = '1';
+    joinRow.appendChild(joinBtn);
+    const pushBtn = mkbtn('推送到组', async () => {
+      const api = window.VAGroup;
+      if (!api || typeof api.pushForMedia !== 'function') { groupFeedback.textContent = '组功能暂不可用'; return; }
+      if (!state.mediaId) { groupFeedback.textContent = '请先打开一段媒体内容'; return; }
+      pushBtn.disabled = true; groupFeedback.textContent = '正在推送…';
+      try {
+        const result = await api.pushForMedia(state.mediaId, state.entries);
+        const count = result && Number(result.pushed) || 0;
+        const message = result && result.groups && result.groups.length ? '已推送 ' + count + ' 条到 ' + result.groups.length + ' 个组' : '没有可推送的组';
+        groupFeedback.textContent = message;
+        showToast(message);
+        renderDockGroups();
+      } catch (error) { groupFeedback.textContent = '推送失败：' + String(error && error.message || error); }
+      finally { pushBtn.disabled = false; }
+    });
+    pushBtn.style.width = 'auto'; pushBtn.style.flex = '1';
+    joinRow.appendChild(pushBtn);
+    groupInvite.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); joinBtn.click(); } });
+    groupPanel.append(groupHeading, groupInvite, joinRow, groupFeedback, groupList);
+    renderDockGroups();
     menuPanel.textContent = '';
     const cands = (window.VA_SYNC_URLS || []).join('  ·  ');
     menuPanel.append(
@@ -935,6 +1032,8 @@
         mkbtn('测试', testSync)),
       rowDir,
       row,
+      el('div', { height: '1px', background: 'rgba(255,255,255,.08)', margin: '5px 3px' }),
+      groupPanel,
       el('div', { color: '#66717d', fontSize: '9px', padding: '2px 9px 0', overflowWrap: 'anywhere' }, cands ? '备选：' + cands : '默认 http://127.0.0.1:8793'),
       el('div', { height: '1px', background: 'rgba(255,255,255,.08)', margin: '5px 3px' }),
       el('div', { color: '#9b8260', fontSize: '9px', fontWeight: '700', letterSpacing: '.1em', padding: '0 9px 3px' }, 'DICTIONARY'),
@@ -1003,6 +1102,7 @@
     startProbe();
     scheduleReconcile();     // 先只读选版显示（服务器更新 → 显示服务器版；覆盖本地要用户选）
     scheduleAutoSync();      // 自动同步：仅在开启时把本地当前版推上服务器
+    scheduleGroupPull();     // 组来源层：拉组内该媒体标注
     if (!raf) raf = requestAnimationFrame(loop);
   }
 
@@ -1017,6 +1117,29 @@
   }
 
   let raf = null, lastSig = null, autoSyncTimer = null, autoSyncedMedia = null, reconciledMedia = null;
+  let groupPullTimer = null, groupPulledMedia = null, groupPushTimer = null;
+  // 打开媒体：拉一次组内该媒体的标注（组来源层，不影响个人层）
+  function scheduleGroupPull() {
+    if (!state.mediaId || !window.VAGroup || groupPulledMedia === state.mediaId) return;
+    groupPulledMedia = state.mediaId;
+    if (groupPullTimer) clearTimeout(groupPullTimer);
+    groupPullTimer = setTimeout(async () => {
+      groupPullTimer = null;
+      try {
+        const changed = await window.VAGroup.pullForMedia(state.mediaId);
+        if (changed) { render(); renderPanel(); }
+      } catch (e) {}
+    }, 600);
+  }
+  // save() 后去抖：把组片单媒体上的实线条目推到各已加入的组
+  function scheduleGroupPush() {
+    if (!state.mediaId || !window.VAGroup || state.renderLock) return;
+    if (groupPushTimer) clearTimeout(groupPushTimer);
+    groupPushTimer = setTimeout(async () => {
+      groupPushTimer = null;
+      try { await window.VAGroup.pushForMedia(state.mediaId, state.entries); } catch (e) {}
+    }, 5000);
+  }
   // 打开媒体：只读选版显示（不写不对齐）；覆盖本地由用户选，可记忆
   function scheduleReconcile() {
     if (!state.mediaId || reconciledMedia === state.mediaId) return;
@@ -1114,10 +1237,18 @@
       });
       box.className = 'va-mark';
       if (imgStale(e)) { box.classList.add('is-stale'); box.title = '图片版本已变，锚点可能需复核'; }
+      if (e.__group) {                       // 组来源：虚线 + 来源色点（他人标注视觉语言）
+        box.classList.add('is-group');
+        box.title = '组内标注 · ' + (e.__author || '成员');
+      }
       const markText = entryText(e);
       const lab = el('span', {}, markText + (e.label && e.label !== markText ? ' ' + e.label : ''));
       lab.className = 'va-mark-label';
       box.appendChild(lab);
+      if (e.__group && e.__author) {
+        const chip = el('span', null, e.__author); chip.className = 'va-mark-author';
+        box.appendChild(chip);
+      }
       box.onclick = (ev) => { ev.stopPropagation(); openEntryPop(e, ev.clientX, ev.clientY); };
       layer.appendChild(box);
     }
@@ -1130,6 +1261,12 @@
     const cr = state.cr; if (!cr) return;
     for (const e of state.entries) {
       if (isHidden(e)) continue;                       // 本地隐藏：画面上不渲染
+      if (!state.showAll && !binding.isVisible(e)) continue;
+      drawEntry(e);
+    }
+    // 组来源条目：叠加在个人条目之上（虚线 + 作者 chip），不污染 state.entries
+    for (const e of groupEntries()) {
+      if (isHidden(e)) continue;
       if (!state.showAll && !binding.isVisible(e)) continue;
       drawEntry(e);
     }
@@ -1431,6 +1568,8 @@
         word, label: label2, tags,
         created: nowIso, updated: nowIso,
       };
+      // 身份署名（R4a）：本地密钥对生成的 creator（离线可用，无账号）
+      if (window.VAIdentity) entry.creator = window.VAIdentity.creatorSync(appSettings.profile && appSettings.profile.name);
       if (quoteMode && initial.quote) entry.quote = initial.quote;
       else entry.box = box;
       if (timed && !quoteMode) {
@@ -1560,6 +1699,7 @@
       if (!word && !label2 && !tags.length) { wordInput.focus(); showToast('标题、评论、标签至少填一个'); return; }
       e.word = word; e.label = label2; e.tags = tags;
       e.updated = new Date().toISOString();
+      if (window.VAIdentity && !e.creator) e.creator = window.VAIdentity.creatorSync(appSettings.profile && appSettings.profile.name);
       state.displayVersion = 'local';   // 本地修改 → 之后同步应推本地
       if (timed) {
         e.t = Math.max(0, r2(parseFloat(tIn.value)));
@@ -2037,13 +2177,20 @@
     setSyncStatus,
     showToast,
     uiRoot,
+    mergePack: (a, b) => mergeLocal(a, b),   // 组同步复用同一合并规则
+    validEntries,
+    fingerprint,
   };
   try {
     if (window.VAExport && typeof window.VAExport.install === 'function') window.VAExport.install(coreApi);
   } catch (e) { /* Export UI must never interrupt annotation startup. */ }
+  try {
+    if (window.VAGroup && typeof window.VAGroup.install === 'function') window.VAGroup.install(coreApi);
+  } catch (e) { /* Group layer must never interrupt annotation startup. */ }
 
   /* ---------- 启动 ---------- */
   loadAppSettings();
+  try { if (window.VAIdentity) window.VAIdentity.warmup({ name: appSettings.profile && appSettings.profile.name }); } catch (e) {}
   mountShell();   // 即使页面无可自动绑定的媒态，也保留 dock（含「选对象」）
   A.watch((v) => {
     if (v) {

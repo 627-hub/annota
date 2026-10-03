@@ -140,6 +140,24 @@
     .settings-feedback { min-height:16px; color:#78c99d; font-size:10px; }
     .settings-feedback[data-state="error"] { color:#f19a9d; }
     .settings-feedback[data-state="busy"] { color:#d7b878; }
+    .groups-layout { display:grid; gap:14px; margin-top:24px; }
+    .group-list { display:grid; gap:8px; }
+    .group-card { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:14px 16px; border:1px solid var(--va-page-border); border-radius:13px; background:var(--va-page-surface-raised); }
+    .group-card-copy { min-width:0; }
+    .group-card-copy strong { display:block; color:#e1e2e3; font-size:12px; }
+    .group-card-copy span { display:block; margin-top:4px; color:#7e858e; font-size:10px; overflow-wrap:anywhere; }
+    .group-card-actions { display:flex; flex-wrap:wrap; gap:6px; }
+    .group-form { display:grid; gap:12px; }
+    .group-step { display:grid; gap:12px; }
+    .group-step[hidden] { display:none; }
+    .group-help { margin:0!important; padding:10px 12px; border:1px solid rgba(245,166,35,.17); border-radius:10px; background:rgba(245,166,35,.035); color:#a6a19a!important; }
+    .group-wizard-actions { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .group-result { display:grid; gap:8px; padding:12px; border:1px solid rgba(73,188,134,.22); border-radius:11px; background:rgba(73,188,134,.035); }
+    .group-result[hidden] { display:none; }
+    .group-result label { display:grid; gap:6px; color:#a4a9b1; font-size:10px; }
+    .group-result input { width:100%; }
+    .group-feedback { min-height:16px; color:#78c99d; font-size:10px; }
+    .group-feedback[data-state="error"] { color:#f19a9d; }
     .ai-status { display:flex; align-items:center; gap:8px; min-height:31px; color:#9299a3; font-size:10px; }
     .ai-status i { width:7px; height:7px; flex:none; border-radius:50%; background:#777e88; }
     .ai-status[data-state="ready"] i { background:#49bc86; box-shadow:0 0 8px rgba(73,188,134,.3); }
@@ -233,6 +251,7 @@
       <nav class="rail-nav">
         <a class="rail-link is-active" href="#home" data-route="home" aria-label="首页"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 10 8.5-7 8.5 7v9a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3.5 19v-9Z"/><path d="M9 20v-6h6v6"/></svg><span>首页</span></a>
         <a class="rail-link" href="#library" data-route="library" aria-label="我的库"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16M4 12h16M4 18.5h16"/><path d="M7 3v5M17 10v4M10 16v5"/></svg><span>我的库</span></a>
+        <a class="rail-link" href="#groups" data-route="groups" aria-label="组"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.4"/><path d="M3.5 19c.5-3.1 2.3-4.7 5.5-4.7s5 1.6 5.5 4.7M14.5 14.8c3.4-.7 5.4.7 6 3.8"/></svg><span>组</span></a>
       </nav>
       <div class="rail-spacer"></div>
       <nav class="rail-nav">
@@ -289,6 +308,54 @@
             <div id="library-list" class="library-list"></div>
           </section>
 
+          <section class="screen" id="screen-groups" aria-label="组管理">
+            <div class="eyebrow">SMALL GROUPS · SHARED ANNOTATIONS</div>
+            <div class="section-head" style="align-items:center;margin-top:10px"><div><h2 style="font-size:29px">组</h2><p>组标注独立于个人库，保存在你选择的 Git 仓库中。</p></div></div>
+            <div class="groups-layout">
+              <section class="setting-section" aria-labelledby="groups-list-heading">
+                <h3 id="groups-list-heading">已加入的组</h3>
+                <p>邀请链接含有组写口令，请只发给可信成员。</p>
+                <div id="group-list" class="group-list" aria-live="polite"></div>
+              </section>
+              <section class="setting-section" aria-labelledby="group-create-heading">
+                <h3 id="group-create-heading">创建一个组</h3>
+                <p>按步骤填写组信息。组默认私密；成员身份和个人标注不会写进你的个人库。</p>
+                <form class="group-form" id="group-create-form" novalidate>
+                  <div class="group-step" data-group-step="1">
+                    <label class="settings-field" for="group-name"><span>第 1 步 · 组名</span><input id="group-name" class="settings-input" maxlength="60" required placeholder="例如：英语听力互助组"></label>
+                    <div class="group-wizard-actions"><span class="settings-field"><small>1 / 3</small></span><button class="primary-button" type="button" data-group-next="1">下一步</button></div>
+                  </div>
+                  <div class="group-step" data-group-step="2" hidden>
+                    <p class="group-help"><strong>先手动创建一个空仓库。</strong>在 GitHub 或 Gitee 新建仓库，不要勾选 README、许可或模板文件。然后创建仅对这个仓库有 <code>contents:write</code> 权限的 PAT。令牌只保存在本机浏览器，不会写入组仓库或日志。</p>
+                    <div class="settings-grid">
+                      <label class="settings-field" for="group-host"><span>代码托管平台</span><select class="settings-input" id="group-host"><option value="github">GitHub</option><option value="gitee">Gitee</option></select></label>
+                      <label class="settings-field" for="group-repo"><span>仓库 owner/name</span><input class="settings-input" id="group-repo" required placeholder="owner/name" autocomplete="off" spellcheck="false"></label>
+                      <label class="settings-field" for="group-branch"><span>分支</span><input class="settings-input" id="group-branch" value="main" required autocomplete="off"></label>
+                      <label class="settings-field" for="group-token"><span>仓库 PAT（只需该仓 contents:write）</span><input class="settings-input" id="group-token" type="password" required autocomplete="new-password" spellcheck="false"></label>
+                    </div>
+                    <div class="group-wizard-actions"><button class="secondary-button" type="button" data-group-back="2">上一步</button><span class="settings-field"><small>2 / 3</small></span><button class="primary-button" type="button" data-group-next="2">下一步</button></div>
+                  </div>
+                  <div class="group-step" data-group-step="3" hidden>
+                    <label class="settings-field" for="group-first-url"><span>第 3 步 · 可选：添加首个视频链接作为片单项</span><input id="group-first-url" class="settings-input" type="url" inputmode="url" placeholder="https://…" autocomplete="url"></label>
+                    <div class="group-wizard-actions"><button class="secondary-button" type="button" data-group-back="3">上一步</button><span class="settings-field"><small>3 / 3</small></span><button class="primary-button" type="submit" id="group-create-submit">创建组</button></div>
+                  </div>
+                  <div id="group-create-feedback" class="group-feedback" role="status" aria-live="polite"></div>
+                  <div id="group-create-result" class="group-result" hidden>
+                    <strong>组已创建 · 邀请链接</strong>
+                    <label for="group-created-invite">链接含有写权限口令，请妥善保管<input id="group-created-invite" class="settings-input" readonly aria-label="新建组邀请链接"></label>
+                    <div class="setting-actions"><button class="secondary-button" type="button" id="copy-created-invite">复制邀请链接</button><a class="secondary-button" id="open-created-group" href="group.html">打开组页</a></div>
+                  </div>
+                </form>
+              </section>
+              <section class="setting-section" aria-labelledby="group-join-heading">
+                <h3 id="group-join-heading">加入已有组</h3>
+                <p>粘贴成员发来的 Annota 邀请链接。链接中的 token 会保存在此浏览器本地。</p>
+                <form class="open-form" id="group-join-form"><input id="group-invite" type="text" placeholder="annota://join?host=…#t=…" aria-label="组邀请链接" autocomplete="off" spellcheck="false"><button class="primary-button" type="submit">加入组</button></form>
+                <div id="group-join-feedback" class="group-feedback" role="status" aria-live="polite"></div>
+              </section>
+            </div>
+          </section>
+
           <section class="screen" id="screen-settings" aria-label="设置">
             <div class="eyebrow">ANNOTA PREFERENCES</div>
             <div class="section-head" style="align-items:center;margin-top:10px"><div><h2 style="font-size:29px">设置</h2><p>控制本地体验、查词和数据导出。</p></div></div>
@@ -325,6 +392,8 @@
     </div>
   </div>
   <div id="page-toast" class="page-toast" role="status" aria-live="polite"></div>
+  <script src="../../src/identity.js"></script>
+  <script src="../../src/group.js"></script>
   <script>
     const api = (path) => fetch(path, { headers: { Accept: 'application/json' } });
     const toast = document.getElementById('page-toast');
@@ -332,6 +401,15 @@
     let records = [];
     let activeFilter = 'all';
     function notify(text) { toast.textContent = text; toast.classList.add('is-visible'); clearTimeout(toastTimer); toastTimer = setTimeout(() => toast.classList.remove('is-visible'), 2600); }
+    async function copyText(value, fallbackInput) {
+      try { await navigator.clipboard.writeText(value); return true; }
+      catch (_) {
+        if (fallbackInput) { fallbackInput.focus(); fallbackInput.select(); return false; }
+        const field = document.createElement('textarea'); field.value = value; field.style.position = 'fixed'; field.style.left = '-9999px'; document.body.appendChild(field); field.select();
+        let copied = false; try { copied = document.execCommand('copy'); } catch (_) {}
+        field.remove(); return copied;
+      }
+    }
     function safeUrl(value) {
       try { const u = new URL(value); return ['http:', 'https:'].includes(u.protocol) ? u.href : ''; } catch (_) { return ''; }
     }
@@ -345,13 +423,14 @@
     }
     document.getElementById('open-form').addEventListener('submit', (event) => { event.preventDefault(); openContent(document.getElementById('quick-url').value); });
 
-    const screens = ['home', 'library', 'settings'];
+    const screens = ['home', 'library', 'groups', 'settings'];
     function setRoute(name) {
       const route = screens.includes(name) ? name : 'home';
       for (const screen of screens) document.getElementById('screen-' + screen).classList.toggle('is-active', screen === route);
       document.querySelectorAll('[data-route]').forEach((link) => link.classList.toggle('is-active', link.dataset.route === route));
       document.getElementById('crumb-label').textContent = 'ANNOTATION SPACE / ' + route.toUpperCase();
       if (route === 'library') renderLibrary();
+      if (route === 'groups') renderGroups();
     }
     window.addEventListener('hashchange', () => setRoute(location.hash.slice(1)));
     setRoute(location.hash.slice(1));
@@ -531,6 +610,133 @@
         list.appendChild(row);
       }
     }
+    function localGroups() {
+      try { const value = JSON.parse(localStorage.getItem('annota:groups') || '[]'); return Array.isArray(value) ? value : []; }
+      catch (_) { return []; }
+    }
+    function groupApi() { return window.VAGroup && typeof window.VAGroup === 'object' ? window.VAGroup : null; }
+    function groupPageUrl(rec) {
+      const url = new URL('group.html', location.href);
+      url.search = new URLSearchParams({ host: rec.host || 'github', repo: rec.repo || '', branch: rec.branch || 'main', gid: rec.gid || '' }).toString();
+      url.hash = 't=' + encodeURIComponent(rec.token || '');
+      return url.href;
+    }
+    function renderGroups() {
+      const list = document.getElementById('group-list');
+      if (!list) return;
+      list.textContent = '';
+      let groups = localGroups();
+      const api = groupApi();
+      try { if (api && typeof api.listGroups === 'function') groups = api.listGroups(); } catch (_) {}
+      if (!groups.length) {
+        const empty = document.createElement('div'); empty.className = 'empty-library';
+        empty.textContent = '还没有加入任何组。创建一个组，或粘贴邀请链接加入。'; list.appendChild(empty); return;
+      }
+      groups.forEach((rec) => {
+        const card = document.createElement('article'); card.className = 'group-card';
+        const copy = document.createElement('div'); copy.className = 'group-card-copy';
+        const name = document.createElement('strong'); name.textContent = rec.name || rec.gid || '未命名组';
+        const meta = document.createElement('span'); meta.textContent = (rec.host === 'gitee' ? 'Gitee' : 'GitHub') + ' · ' + (rec.repo || '仓库未知') + ' · ' + (rec.branch || 'main') + ' · ' + (rec.role || '成员');
+        copy.append(name, meta);
+        const actions = document.createElement('div'); actions.className = 'group-card-actions';
+        const invite = document.createElement('button'); invite.type = 'button'; invite.className = 'secondary-button'; invite.textContent = '邀请链接'; invite.setAttribute('aria-label', '复制 ' + (rec.name || '组') + ' 邀请链接');
+        invite.onclick = async () => {
+          const currentApi = groupApi();
+          const link = currentApi && typeof currentApi.inviteLink === 'function' ? currentApi.inviteLink(rec, rec.token) : '';
+          if (!link) { notify('组功能尚未连接，无法生成邀请链接'); return; }
+          const copied = await copyText(link);
+          notify(copied ? '邀请链接已复制' : '浏览器未允许复制，请检查剪贴板权限');
+        };
+        const open = document.createElement('a'); open.className = 'secondary-button'; open.textContent = '打开组页'; open.href = groupPageUrl(rec); open.target = '_blank'; open.rel = 'noopener noreferrer';
+        actions.append(invite, open); card.append(copy, actions); list.appendChild(card);
+      });
+    }
+    let activeGroupStep = 1;
+    function setGroupStep(step) {
+      activeGroupStep = Math.min(3, Math.max(1, Number(step) || 1));
+      document.querySelectorAll('[data-group-step]').forEach((node) => { node.hidden = Number(node.dataset.groupStep) !== activeGroupStep; });
+      if (activeGroupStep === 2) document.getElementById('group-repo').focus();
+      if (activeGroupStep === 3) document.getElementById('group-first-url').focus();
+    }
+    document.querySelectorAll('[data-group-next]').forEach((button) => button.addEventListener('click', () => {
+      if (activeGroupStep === 1 && !document.getElementById('group-name').value.trim()) { document.getElementById('group-name').focus(); return; }
+      if (activeGroupStep === 2) {
+        const repo = document.getElementById('group-repo');
+        const token = document.getElementById('group-token');
+        if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo.value.trim())) { repo.setAttribute('aria-invalid', 'true'); repo.focus(); return; }
+        repo.removeAttribute('aria-invalid');
+        if (!token.value.trim()) { token.focus(); return; }
+        if (!document.getElementById('group-branch').value.trim()) { document.getElementById('group-branch').focus(); return; }
+      }
+      setGroupStep(Number(button.dataset.groupNext) + 1);
+    }));
+    document.querySelectorAll('[data-group-back]').forEach((button) => button.addEventListener('click', () => setGroupStep(Number(button.dataset.groupBack) - 1)));
+    document.getElementById('group-create-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const api = groupApi();
+      const feedback = document.getElementById('group-create-feedback');
+      const submit = document.getElementById('group-create-submit');
+      if (!api || typeof api.createGroup !== 'function' || typeof api.inviteLink !== 'function') {
+        feedback.dataset.state = 'error'; feedback.textContent = '组功能尚未连接。请由 Annota 内容端加载 VAGroup 后再创建。'; return;
+      }
+      try { if (window.VAIdentity && typeof window.VAIdentity.ensure === 'function') await window.VAIdentity.ensure(); }
+      catch (_) { feedback.dataset.state = 'error'; feedback.textContent = '本地身份暂不可用，请刷新页面后重试。'; return; }
+      const host = document.getElementById('group-host').value;
+      const repo = document.getElementById('group-repo').value.trim();
+      const branch = document.getElementById('group-branch').value.trim() || 'main';
+      const token = document.getElementById('group-token').value.trim();
+      const name = document.getElementById('group-name').value.trim();
+      const firstUrl = safeUrl(document.getElementById('group-first-url').value.trim());
+      if (!firstUrl) {
+        const rawUrl = document.getElementById('group-first-url').value.trim();
+        if (rawUrl) { feedback.dataset.state = 'error'; feedback.textContent = '首个片单链接须为有效的 http(s) URL。'; return; }
+      }
+      const items = [];
+      if (firstUrl) {
+        const parsed = new URL(firstUrl);
+        const platform = /bilibili\.com$/i.test(parsed.hostname) ? 'bilibili' : /youtube\.com$|youtu\.be$/i.test(parsed.hostname) ? 'youtube' : /douyin\.com$/i.test(parsed.hostname) ? 'douyin' : 'web';
+        const videoId = platform === 'bilibili' ? ((firstUrl.match(/\/video\/([^/?#]+)/i) || [])[1] || firstUrl) : platform === 'youtube' ? (parsed.searchParams.get('v') || parsed.pathname.split('/').filter(Boolean).pop() || firstUrl) : firstUrl;
+        let addedBy = '';
+        try { addedBy = api.me ? api.me().id : ''; } catch (_) {}
+        items.push({ media: { platform, videoId, url: firstUrl, title: parsed.hostname, type: 'video' }, note: '', addedBy, addedAt: new Date().toISOString() });
+      }
+      submit.disabled = true; feedback.dataset.state = 'busy'; feedback.textContent = '正在写入空仓库…';
+      try {
+        const result = await api.createGroup({ host, repo, branch, token, name, contentItems: items, visibility: 'private' });
+        const rec = result.rec;
+        const invitation = api.inviteLink(rec, token);
+        document.getElementById('group-created-invite').value = invitation;
+        document.getElementById('group-create-result').hidden = false;
+        const openLink = document.getElementById('open-created-group'); openLink.href = groupPageUrl(rec);
+        feedback.dataset.state = 'ready'; feedback.textContent = '已创建「' + (result.doc.name || name) + '」。PAT 仅保存在本地浏览器。';
+        document.getElementById('group-token').value = '';
+        renderGroups();
+      } catch (_) {
+        feedback.dataset.state = 'error'; feedback.textContent = '创建失败。请确认仓库为空、分支正确，且 PAT 对该仓库有 contents:write 权限。';
+      } finally { submit.disabled = false; }
+    });
+    document.getElementById('copy-created-invite').addEventListener('click', async () => {
+      const value = document.getElementById('group-created-invite').value;
+      const input = document.getElementById('group-created-invite');
+      const copied = await copyText(value, input);
+      notify(copied ? '邀请链接已复制' : '请复制已选中的邀请链接');
+    });
+    document.getElementById('group-join-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const feedback = document.getElementById('group-join-feedback');
+      const invite = document.getElementById('group-invite').value.trim();
+      const api = groupApi();
+      if (!api || typeof api.parseInvite !== 'function' || typeof api.joinGroup !== 'function') {
+        feedback.dataset.state = 'error'; feedback.textContent = '组功能尚未连接。请稍后重试或从 Annota 内容页加入。'; return;
+      }
+      if (!api.parseInvite(invite)) { feedback.dataset.state = 'error'; feedback.textContent = '邀请链接格式无效。'; return; }
+      feedback.dataset.state = 'busy'; feedback.textContent = '正在读取组清单…';
+      try {
+        const result = await api.joinGroup(invite);
+        feedback.dataset.state = 'ready'; feedback.textContent = '已加入「' + ((result.doc && result.doc.name) || result.rec.name || '组') + '」。';
+        document.getElementById('group-invite').value = ''; renderGroups();
+      } catch (_) { feedback.dataset.state = 'error'; feedback.textContent = '加入失败。请确认仓库可读，且邀请口令有效。'; }
+    });
     async function saveEntries(item, entries, message) {
       const response = await fetch('/api/anno/' + encodeURIComponent(item.id), {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },

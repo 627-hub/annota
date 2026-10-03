@@ -133,6 +133,9 @@ pub async fn run_server(store: PathBuf, root: PathBuf, notes_dir: PathBuf, setti
         .route("/", get(root_handler))
         .route("/app/annota/public/tokens.css", get(tokens_css))
         .route("/console", get(console_page))
+        // 工作区页面态依赖的模块脚本（release 无 ServeDir，必须内嵌路由）
+        .route("/src/identity.js", get(identity_js))
+        .route("/src/group.js", get(group_js))
         .route("/api/health", get(health))
         .route("/api/list", get(list))
         .route("/api/settings", get(get_settings).put(put_settings))
@@ -716,9 +719,19 @@ async fn tokens_css() -> Response {
 }
 
 const CONSOLE_HTML: &str = include_str!("../../service/console.html");
+const IDENTITY_JS: &str = include_str!("../../../src/identity.js");
+const GROUP_JS: &str = include_str!("../../../src/group.js");
 
 async fn console_page() -> Response {
     Html(CONSOLE_HTML).into_response()
+}
+
+async fn identity_js() -> Response {
+    ([(CONTENT_TYPE, "application/javascript; charset=utf-8")], IDENTITY_JS).into_response()
+}
+
+async fn group_js() -> Response {
+    ([(CONTENT_TYPE, "application/javascript; charset=utf-8")], GROUP_JS).into_response()
 }
 
 fn key_to_file(store: &Path, key: &str) -> PathBuf {

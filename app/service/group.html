@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <meta name="referrer" content="no-referrer">
+  <title>Annota · 组页</title>
+  <link rel="stylesheet" href="../annota/public/tokens.css">
+  <style>
+    * { box-sizing:border-box; }
+    body { min-height:100vh; margin:0; padding:32px 18px 60px; color:var(--va-page-ink); background:var(--va-page-bg); font:14px/1.6 var(--va-font-ui); -webkit-font-smoothing:antialiased; }
+    main { width:min(820px,100%); margin:0 auto; }
+    .topline { display:flex; align-items:center; justify-content:space-between; gap:12px; padding-bottom:18px; border-bottom:1px solid var(--va-page-border); color:var(--va-page-muted); font-size:10px; letter-spacing:.12em; }
+    .brand { color:var(--va-accent); font-weight:750; }
+    header { padding:34px 0 24px; }
+    h1 { margin:0; color:var(--va-page-ink); font-size:clamp(28px,6vw,42px); line-height:1.2; letter-spacing:-.05em; }
+    .meta { margin:9px 0 0; color:var(--va-page-muted); font-size:12px; overflow-wrap:anywhere; }
+    .notice { margin:14px 0 24px; padding:10px 12px; border:1px solid var(--va-page-border); border-radius:10px; color:var(--va-page-muted); font-size:11px; }
+    .feed { display:grid; gap:15px; }
+    .media-group { overflow:hidden; border:1px solid var(--va-page-border); border-radius:15px; background:var(--va-page-surface); }
+    .media-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:14px 16px; border-bottom:1px solid var(--va-page-border); }
+    .media-title { min-width:0; }
+    .media-title strong { display:block; overflow:hidden; color:var(--va-page-ink); font-size:13px; text-overflow:ellipsis; white-space:nowrap; }
+    .media-title span { display:block; margin-top:3px; color:var(--va-page-muted); font-size:10px; }
+    .media-link { flex:none; color:#d2ac6d; font-size:10px; text-decoration:none; }
+    .media-link:hover { color:var(--va-accent); }
+    .entry-list { display:grid; }
+    .entry { display:grid; grid-template-columns:68px minmax(0,1fr) auto; align-items:start; gap:12px; padding:13px 16px; }
+    .entry + .entry { border-top:1px solid var(--va-page-border); }
+    .time { padding-top:1px; color:#c8a264; font:11px var(--va-font-mono); }
+    .entry-copy { min-width:0; }
+    .entry-copy strong { color:var(--va-page-ink); font-size:13px; font-weight:650; overflow-wrap:anywhere; }
+    .entry-copy p { margin:3px 0 0; color:var(--va-page-muted); font-size:11px; overflow-wrap:anywhere; }
+    .author { align-self:start; max-width:140px; overflow:hidden; padding:3px 8px; border:1px solid rgba(245,166,35,.19); border-radius:99px; background:rgba(245,166,35,.06); color:#d8bb89; font-size:9px; text-overflow:ellipsis; white-space:nowrap; }
+    .empty { padding:18px 16px; color:var(--va-page-muted); font-size:11px; }
+    .state { display:grid; justify-items:start; gap:8px; padding:22px; border:1px dashed var(--va-page-border); border-radius:14px; color:var(--va-page-muted); }
+    .state strong { color:var(--va-page-ink); font-size:14px; }
+    .state button { min-height:34px; padding:0 12px; border:1px solid var(--va-page-border); border-radius:9px; background:var(--va-page-surface-raised); color:var(--va-page-ink); cursor:pointer; }
+    .state button:hover { border-color:rgba(245,166,35,.4); }
+    .state[hidden], .feed[hidden] { display:none; }
+    @media (max-width:520px) { body { padding:20px 12px 42px; } .entry { grid-template-columns:52px minmax(0,1fr); gap:7px 10px; } .author { grid-column:2; } .media-head { align-items:flex-start; } }
+    @media (prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; transition-duration:.01ms!important; } }
+    :focus-visible { outline:2px solid var(--va-accent); outline-offset:3px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="topline"><span class="brand">ANNOTA</span><span>GROUP ANNOTATIONS</span></div>
+    <header>
+      <h1 id="group-name">正在读取组…</h1>
+      <p id="group-meta" class="meta"></p>
+    </header>
+    <p class="notice">这里只展示文字标注、作者和原内容链接，不嵌入视频、图片或缩略图。</p>
+    <section id="page-state" class="state" role="status" aria-live="polite">
+      <strong id="state-title">正在读取组清单…</strong><span id="state-copy">正在连接仓库。</span><button id="retry-load" type="button" hidden>重试读取</button>
+    </section>
+    <section id="group-feed" class="feed" aria-label="按片单分组的标注流" hidden></section>
+  </main>
+  <script>
+    (() => {
+      'use strict';
+      const params = new URLSearchParams(location.search);
+      const repo = (params.get('repo') || '').trim();
+      const branch = (params.get('branch') || 'main').trim() || 'main';
+      const gid = (params.get('gid') || '').trim();
+      const host = params.get('host') === 'gitee' || (!params.has('host') && /gitee\.io$/i.test(location.hostname)) ? 'gitee' : 'github';
+      const token = new URLSearchParams(location.hash.replace(/^#/, '')).get('t') || '';
+      const pageState = document.getElementById('page-state');
+      const stateTitle = document.getElementById('state-title');
+      const stateCopy = document.getElementById('state-copy');
+      const retry = document.getElementById('retry-load');
+      const feed = document.getElementById('group-feed');
+      const safeRepo = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo);
+      function showState(title, copy, canRetry) {
+        pageState.hidden = false; feed.hidden = true;
+        stateTitle.textContent = title; stateCopy.textContent = copy; retry.hidden = !canRetry;
+      }
+      function rawBase() {
+        return host === 'gitee'
+          ? 'https://gitee.com/' + repo.split('/').map(encodeURIComponent).join('/') + '/raw/' + encodeURIComponent(branch) + '/'
+          : 'https://raw.githubusercontent.com/' + repo.split('/').map(encodeURIComponent).join('/') + '/' + encodeURIComponent(branch) + '/';
+      }
+      async function readJson(path) {
+        const rawUrl = rawBase() + path.split('/').map(encodeURIComponent).join('/');
+        let response = await fetch(rawUrl, { headers: { Accept: 'application/json' }, referrerPolicy: 'no-referrer' });
+        if (response.ok) return response.json();
+        // 私有仓库无法 raw 匿名读取；携带 fragment token 时改走平台 Contents API。
+        if (token) {
+          const apiUrl = host === 'gitee'
+            ? 'https://gitee.com/api/v5/repos/' + repo + '/contents/' + path.split('/').map(encodeURIComponent).join('/') + '?ref=' + encodeURIComponent(branch)
+            : 'https://api.github.com/repos/' + repo + '/contents/' + path.split('/').map(encodeURIComponent).join('/') + '?ref=' + encodeURIComponent(branch);
+          response = await fetch(apiUrl, { headers: host === 'gitee' ? { Authorization: 'token ' + token, Accept: 'application/json' } : { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }, referrerPolicy: 'no-referrer' });
+          if (response.ok) {
+            const body = await response.json();
+            const binary = atob(String(body.content || '').replace(/\s/g, ''));
+            const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+            return JSON.parse(new TextDecoder().decode(bytes));
+          }
+        }
+        throw new Error('HTTP ' + response.status);
+      }
+      function text(tag, className, value) {
+        const node = document.createElement(tag); if (className) node.className = className; node.textContent = value || ''; return node;
+      }
+      function mediaKey(item) {
+        const media = item && item.media || {};
+        let id = String(media.videoId || media.mediaId || media.id || '');
+        if (id && !id.includes(':') && media.platform && media.platform !== 'web') id = media.platform + ':' + id;
+        return id.replace(/[^\w.-]+/g, '_');
+      }
+      function entryHref(url, seconds) {
+        try {
+          const target = new URL(url); if (!['http:', 'https:'].includes(target.protocol)) return '';
+          if (Number.isFinite(Number(seconds)) && Number(seconds) >= 0) {
+            const current = target.hash.replace(/^#/, '');
+            target.hash = (current ? current + '&' : '') + 't=' + Math.floor(Number(seconds));
+          }
+          return target.href;
+        } catch (_) { return ''; }
+      }
+      function formatTime(value) {
+        const seconds = Math.max(0, Math.floor(Number(value) || 0));
+        return String(Math.floor(seconds / 60)).padStart(2, '0') + ':' + String(seconds % 60).padStart(2, '0');
+      }
+      function render(doc, packs) {
+        document.getElementById('group-name').textContent = doc.name || 'Annota 组';
+        document.title = 'Annota · ' + (doc.name || '组页');
+        const members = Array.isArray(doc.members) ? doc.members.length : 0;
+        document.getElementById('group-meta').textContent = (members ? members + ' 位成员' : '组成员') + ' · ' + ((doc.contentList && doc.contentList.items || []).length) + ' 个片单项';
+        feed.textContent = '';
+        const items = doc.contentList && Array.isArray(doc.contentList.items) ? doc.contentList.items : [];
+        if (!items.length) { showState('组为空', '这个组还没有片单项。请让组创建者添加一条原内容链接。', false); return; }
+        items.forEach((item) => {
+          const media = item.media || {};
+          const key = mediaKey(item);
+          const pack = packs[key] || { entries: [] };
+          const entries = Array.isArray(pack.entries) ? pack.entries.slice().sort((a, b) => (Number(a.t) || 0) - (Number(b.t) || 0)) : [];
+          const section = document.createElement('article'); section.className = 'media-group';
+          const head = document.createElement('div'); head.className = 'media-head';
+          const title = document.createElement('div'); title.className = 'media-title';
+          title.append(text('strong', '', media.title || media.videoId || media.url || '片单项'), text('span', '', (media.platform || '内容') + (entries.length ? ' · ' + entries.length + ' 条标注' : ' · 暂无标注')));
+          head.appendChild(title);
+          const mediaUrl = entryHref(media.url || '', NaN);
+          if (mediaUrl) { const link = text('a', 'media-link', '打开原内容 ↗'); link.href = mediaUrl; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.referrerPolicy = 'no-referrer'; head.appendChild(link); }
+          section.appendChild(head);
+          if (!entries.length) section.appendChild(text('div', 'empty', '这段内容还没有组内标注。'));
+          else {
+            const list = document.createElement('div'); list.className = 'entry-list';
+            entries.forEach((entry) => {
+              const row = document.createElement('article'); row.className = 'entry';
+              row.appendChild(text('time', 'time', Number.isFinite(Number(entry.t)) ? formatTime(entry.t) : '—'));
+              const copy = document.createElement('div'); copy.className = 'entry-copy';
+              copy.appendChild(text('strong', '', entry.word || entry.label || '未命名标注'));
+              const tags = Array.isArray(entry.tags) ? entry.tags.map((tag) => '#' + tag).join(' ') : '';
+              const note = [entry.label, tags].filter(Boolean).join(' · ');
+              if (note) copy.appendChild(text('p', '', note));
+              row.appendChild(copy);
+              row.appendChild(text('span', 'author', (entry.creator && entry.creator.name) || '匿名成员'));
+              const permalink = entryHref(media.url || '', entry.t);
+              if (permalink) {
+                const a = document.createElement('a'); a.href = permalink; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.referrerPolicy = 'no-referrer';
+                a.setAttribute('aria-label', '打开原内容 ' + (entry.word || '标注')); a.className = 'entry-link';
+                // 链接放在词条正文中，不呈现任何媒体本体。
+                a.textContent = '跳到原内容'; a.style.cssText = 'grid-column:2;color:#c8a264;font-size:10px;text-decoration:none'; copy.appendChild(a);
+              }
+              list.appendChild(row);
+            });
+            section.appendChild(list);
+          }
+          feed.appendChild(section);
+        });
+        pageState.hidden = true; feed.hidden = false;
+      }
+      async function load() {
+        if (!safeRepo || !gid) { showState('组链接不完整', '需要仓库 owner/name 和组 ID。请从 Annota 组列表重新打开。', false); return; }
+        showState('正在读取组清单…', '正在连接仓库。', false);
+        try {
+          const doc = await readJson('group.json');
+          if (!doc || (doc.id && doc.id !== gid)) throw new Error('group mismatch');
+          const items = doc.contentList && Array.isArray(doc.contentList.items) ? doc.contentList.items : [];
+          const index = doc.packIndex && typeof doc.packIndex === 'object' ? doc.packIndex : {};
+          const keys = new Set(items.map(mediaKey).filter(Boolean));
+          Object.keys(index).forEach((key) => keys.add(String(key).replace(/[^\w.-]+/g, '_')));
+          const pairs = await Promise.all(Array.from(keys).map(async (key) => {
+            const sourceKey = Object.keys(index).find((candidate) => String(candidate).replace(/[^\w.-]+/g, '_') === key) ||
+              (items.find((item) => mediaKey(item) === key) && items.find((item) => mediaKey(item) === key).media.videoId) || key;
+            const entry = index[sourceKey] || {};
+            const path = entry.path || 'packs/' + key + '.json';
+            try { return [key, await readJson(path)]; } catch (_) { return [key, { entries: [] }]; }
+          }));
+          render(doc, Object.fromEntries(pairs));
+        } catch (_) {
+          showState('组不可读', '仓库可能是私有的，或当前链接没有有效的仓库写口令。请确认邀请链接权限后重试。', true);
+        }
+      }
+      retry.addEventListener('click', load);
+      load();
+    })();
+  </script>
+</body>
+</html>

@@ -793,6 +793,109 @@
   root.VAMedia = B;
 })(typeof self !== 'undefined' ? self : this);
 
+/* ===== src/identity.js ===== */
+/* Annota · 本地身份（R4a）
+ * 离线可用的 creator 身份：本地生成 P-256 密钥对，creator.id = urn:hash:sha256(公钥 JWK)。
+ * 纯 WebCrypto，无依赖；三形态（userscript / MV3 / Tauri）通用。
+ *
+ * 设计：不强制账号、不联网。密钥不可导出时（部分环境 WebCrypto 受限）退化为
+ * 一次性随机 id（仍可用，只是跨设备不稳定）。R4b 才接 OAuth 做跨设备身份。
+ */
+(function (root) {
+  'use strict';
+
+  const LS_KEY = 'annota:identity';
+  let cached = null;            // { id, name, publicJwk? }
+  let readyPromise = null;
+
+  function b64url(bytes) {
+    let s = '';
+    const arr = new Uint8Array(bytes);
+    for (let i = 0; i < arr.length; i++) s += String.fromCharCode(arr[i]);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  async function sha256Hex(str) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  function randomId() {
+    const a = new Uint8Array(8);
+    try {
+      if (typeof crypto !== 'undefined' && crypto.getRandomValues) crypto.getRandomValues(a);
+      else for (let i = 0; i < a.length; i++) a[i] = (Math.random() * 256) | 0;   // 兜底（无 WebCrypto 的环境）
+    } catch (e) { for (let i = 0; i < a.length; i++) a[i] = (Math.random() * 256) | 0; }
+    return b64url(a);
+  }
+
+  function readStore() {
+    try { return JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch (e) { return null; }
+  }
+  function writeStore(obj) {
+    try { localStorage.setItem(LS_KEY, JSON.stringify(obj)); } catch (e) {}
+  }
+
+  function nameFrom(opts) {
+    const n = (opts && opts.name != null) ? String(opts.name) : '';
+    return (n.trim() || '匿名标注者').slice(0, 40);
+  }
+
+  // 生成/加载身份；name 变化时更新（id 不变）。返回 {id, name, publicJwk?}
+  async function ensure(opts) {
+    const wantName = nameFrom(opts);
+    const stored = readStore();
+    if (stored && stored.id) {
+      if (stored.name !== wantName) { stored.name = wantName; writeStore(stored); }
+      cached = stored;
+      return { id: stored.id, name: stored.name, publicJwk: stored.publicJwk };
+    }
+    // 首次：生成本地密钥对（失败则随机 id 兜底，仍可用）
+    let id = 'urn:hash:' + randomId();
+    let publicJwk = null;
+    try {
+      if (root.crypto && root.crypto.subtle && root.crypto.subtle.generateKey) {
+        const kp = await root.crypto.subtle.generateKey(
+          { name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'],
+        );
+        publicJwk = await root.crypto.subtle.exportKey('jwk', kp.publicKey);
+        id = 'urn:hash:' + (await sha256Hex(JSON.stringify(publicJwk)));
+      }
+    } catch (e) { /* WebCrypto 不可用 → 随机 id */ }
+    const rec = { id, name: wantName, publicJwk, created: new Date().toISOString() };
+    writeStore(rec);
+    cached = rec;
+    return { id, name: wantName, publicJwk };
+  }
+
+  function current() {
+    if (cached) return { id: cached.id, name: cached.name, publicJwk: cached.publicJwk };
+    const stored = readStore();
+    if (stored && stored.id) { cached = stored; return { id: stored.id, name: stored.name, publicJwk: stored.publicJwk }; }
+    return null;
+  }
+
+  // 同步取 creator（若尚未 ensure 过，用已存的；都没有则给一个占位，避免阻塞保存）
+  function creatorSync(name) {
+    const c = current();
+    if (c) return { type: 'Person', id: c.id, name: c.name };
+    const id = 'urn:hash:' + randomId();
+    const rec = { id, name: (name || '匿名标注者').slice(0, 40), publicJwk: null, created: new Date().toISOString() };
+    writeStore(rec); cached = rec;
+    return { type: 'Person', id, name: rec.name };
+  }
+
+  // 后台预热（core 启动时调一次即可）
+  function warmup(opts) {
+    if (!readyPromise) readyPromise = ensure(opts).catch(() => null);
+    return readyPromise;
+  }
+
+  root.VAIdentity = { ensure, current, creatorSync, warmup, _sha256Hex: sha256Hex };
+
+  // 模块内自测（VM/无副作用）
+})(typeof self !== 'undefined' ? self : this);
+
 /* ===== data: sync urls ===== */
 window.VA_SYNC_URLS=[];
 
@@ -1183,6 +1286,11 @@ button { color: inherit; }
 .va-mark.is-stale { border-color:#ef7379; border-style:dashed; background:rgba(239,115,121,.08); }
 .va-mark.is-stale .va-mark-label { border-color:rgba(239,115,121,.4); color:#f0b0b4; }
 .va-mark.is-flash { animation: va-flash 160ms ease; }
+/* 组来源：虚线 + 来源色点（他人标注视觉语言） */
+.va-mark.is-group { border-style:dashed; border-color:#38BDF8; background:rgba(56,189,248,.09); }
+.va-mark.is-group .va-mark-label { border-color:rgba(56,189,248,.28); color:#bfe6fb; }
+.va-mark.is-group .va-mark-label::before { background:#38BDF8; }
+.va-mark-author { position:absolute; right:-1px; top:-24px; transform:translateX(100%); padding:2px 6px; border-radius:7px; background:rgba(56,189,248,.16); color:#bfe6fb; font:600 9px/1.3 var(--va-font-ui); white-space:nowrap; }
 .va-mark-label { position:absolute; left:-1px; top:-24px; display:inline-flex; align-items:center; gap:5px; max-width:min(240px,70vw); overflow:hidden; padding:3px 8px; border:1px solid rgba(245,166,35,.28); border-radius:8px; background:rgba(18,20,24,.94); color:#f3d4a2; font:600 10px/1.35 var(--va-font-ui); text-overflow:ellipsis; white-space:nowrap; box-shadow:0 4px 12px rgba(0,0,0,.22); }
 .va-mark-label::before { content:""; width:5px; height:5px; flex:none; border-radius:50%; background:var(--va-word); }
 .va-draft-mark { border:1.5px dashed #f5a623; border-radius:5px; background:rgba(245,166,35,.12); box-shadow:0 0 0 3px rgba(245,166,35,.06); }
@@ -1390,6 +1498,276 @@ button { color: inherit; }
 }
 `;
 })();
+
+/* ===== src/group.js ===== */
+/* Annota · 组（R4a）——GroupStore 抽象 + GitStore（GitHub / Gitee Contents API）
+ * 组 = 一个 git 仓库：group.json（组清单/片单/成员/packIndex）+ packs/<mediaKey>.json（现有 Pack）。
+ * 读：raw / contents GET；写：GET sha → 本地 merge → PUT；409 冲突重取 sha 重试。
+ * 纯客户端 + 第三方 API，零自建服务器。用户侧不依赖命令行/sec/env：token 由 UI 粘贴、存 localStorage。
+ *
+ * 三形态通用（build.py 并入产物）；网络用 fetch（GitHub/Gitee API 允许 CORS）。
+ * 合并复用 core 注入的 mergePack（mergeLocal/validEntries），与个人同步同一规则。
+ */
+(function (root) {
+  'use strict';
+
+  let core = null;                       // coreApi（VAGroup.install 注入）
+  const api = (function () {
+    return {
+      github: {
+        contents: (repo, path) => `https://api.github.com/repos/${repo}/contents/${path}`,
+        accept: 'application/vnd.github+json',
+        auth: (t) => ({ Authorization: 'Bearer ' + t, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }),
+      },
+      gitee: {
+        contents: (repo, path) => `https://gitee.com/api/v5/repos/${repo}/contents/${path}`,
+        accept: 'application/json',
+        // Gitee 用 access_token query 或 header 均可；用 header 更干净
+        auth: (t) => ({ Authorization: 'token ' + t, Accept: 'application/json' }),
+      },
+    };
+  })();
+
+  function b64encode(str) {
+    const bytes = new TextEncoder().encode(str);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+    return btoa(bin);
+  }
+  function b64decode(b64) {
+    const clean = String(b64 || '').replace(/\n/g, '');
+    const bin = atob(clean);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder().decode(bytes);
+  }
+
+  // 底层调用：直接用 fetch（GitHub/Gitee 允许跨域）。返回 {ok,status,json}
+  // Gitee：token 走 access_token query（官方推荐，header 亦可）；GitHub：Authorization header
+  async function request(hostKind, method, url, token, body) {
+    const plat = api[hostKind];
+    let full = url;
+    let headers = { Accept: plat.accept };
+    if (token && hostKind === 'gitee') {
+      full += (url.indexOf('?') >= 0 ? '&' : '?') + 'access_token=' + encodeURIComponent(token);
+    } else if (token) {
+      headers = Object.assign(headers, plat.auth(token));
+    }
+    if (body != null) headers['Content-Type'] = 'application/json';
+    const r = await fetch(full, { method, headers, body: body != null ? JSON.stringify(body) : undefined });
+    let json = null;
+    try { json = await r.json(); } catch (e) {}
+    return { ok: r.ok, status: r.status, json };
+  }
+
+  function commitMessage(action, mediaKey, extra) {
+    const who = (root.VAIdentity && root.VAIdentity.current() && root.VAIdentity.current().name) || 'member';
+    return `annota: ${action} ${mediaKey || ''}${extra ? ' ' + extra : ''} by ${who}`.trim();
+  }
+
+  // ---------- GroupStore 抽象（R4a 仅 GitStore） ----------
+  // 绑定 = { kind:'github'|'gitee', repo, branch, token, gid }
+  const GitStore = {
+    kind: 'git',
+
+    // 读 JSON 文件；不存在返回 null
+    async read(bind, path) {
+      const plat = api[bind.kind];
+      const url = plat.contents(bind.repo, path) + (bind.branch ? `?ref=${encodeURIComponent(bind.branch)}` : '');
+      const r = await request(bind.kind, 'GET', url, bind.token);
+      if (r.status === 404) return { missing: true, content: null, sha: null };
+      if (!r.ok) throw new Error(`read ${path}: HTTP ${r.status}`);
+      const content = r.json && r.json.content ? JSON.parse(b64decode(r.json.content)) : null;
+      return { missing: false, content, sha: (r.json && r.json.sha) || null };
+    },
+
+    // 写 JSON 文件。存在 → PUT+sha 更新；不存在 → 新建：
+    //   GitHub：PUT（可省 sha）；Gitee：POST /contents（PUT 对不存在文件会 "sha is empty"）。
+    // 冲突（409/422）→ 重取 sha 重合并重试（最多 3 次）
+    async write(bind, path, obj, message) {
+      const plat = api[bind.kind];
+      const url = plat.contents(bind.repo, path);
+      let lastErr = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const cur = await request(bind.kind, 'GET', url + (bind.branch ? `?ref=${encodeURIComponent(bind.branch)}` : ''), bind.token);
+        const exists = cur.ok && cur.json && cur.json.sha;
+        const sha = exists ? cur.json.sha : null;
+        const payload = { message: message || commitMessage('update', path), content: b64encode(JSON.stringify(obj, null, 1)) };
+        if (bind.branch) payload.branch = bind.branch;
+        let res;
+        if (!exists && bind.kind === 'gitee') {
+          res = await request(bind.kind, 'POST', url, bind.token, payload);   // Gitee 新建
+        } else {
+          if (sha) payload.sha = sha;   // GitHub 新建可省略；更新必须带
+          res = await request(bind.kind, 'PUT', url, bind.token, payload);
+        }
+        if (res.ok) return res.json;
+        lastErr = `write ${path}: HTTP ${res.status} ${(res.json && (res.json.message || res.json.error || (res.json.messages && res.json.messages.join(';')))) || ''}`;
+        if (res.status !== 409 && res.status !== 422) break;   // 非冲突不重试
+      }
+      throw new Error(lastErr || 'write failed');
+    },
+
+    // 读 pack（组内某媒体），不存在 = 空 pack
+    async readPack(bind, mediaKey) {
+      const r = await GitStore.read(bind, `packs/${mediaKey}.json`);
+      return r.missing || !r.content ? { format: 'video-annotate/0.1', media: { videoId: mediaKey }, entries: [] } : r.content;
+    },
+
+    // 写 pack：读现有 → merge（复用 core）→ 写回
+    async writePack(bind, mediaKey, incomingPack) {
+      const path = `packs/${mediaKey}.json`;
+      const r = await GitStore.read(bind, path);
+      const cur = (r.content && Array.isArray(r.content.entries)) ? r.content : { format: 'video-annotate/0.1', media: incomingPack.media || { videoId: mediaKey }, entries: [] };
+      const merged = core && core.mergePack
+        ? core.mergePack(cur.entries, incomingPack.entries || [])
+        : (incomingPack.entries || []);
+      const out = { format: cur.format || 'video-annotate/0.1', media: incomingPack.media || cur.media || { videoId: mediaKey }, entries: merged };
+      await GitStore.write(bind, path, out, commitMessage('+', mediaKey, `+${Math.max(0, merged.length - (cur.entries || []).length)}`));
+      return out;
+    },
+
+    async readGroup(bind) { const r = await GitStore.read(bind, 'group.json'); return r.missing ? null : r.content; },
+    async writeGroup(bind, doc) { return GitStore.write(bind, 'group.json', doc, commitMessage('group', bind.gid)); },
+  };
+
+  // ---------- 组注册表（本地） ----------
+  const GROUPS_KEY = 'annota:groups';
+  function listGroups() {
+    try { const a = JSON.parse(localStorage.getItem(GROUPS_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; }
+  }
+  function saveGroups(list) { try { localStorage.setItem(GROUPS_KEY, JSON.stringify(list)); } catch (e) {} }
+  function addGroup(rec) {
+    const list = listGroups().filter((g) => g.gid !== rec.gid);
+    list.push(rec); saveGroups(list); return list;
+  }
+  function findGroup(gid) { return listGroups().find((g) => g.gid === gid) || null; }
+
+  function bindOf(rec) { return { kind: rec.host, repo: rec.repo, branch: rec.branch || 'main', token: rec.token, gid: rec.gid }; }
+
+  // ---------- 组模型 / 建组 / 邀请链接 ----------
+  function newGid() {
+    const a = new Uint8Array(6);
+    try { (root.crypto && root.crypto.getRandomValues) ? root.crypto.getRandomValues(a) : a.forEach((_, i) => a[i] = (Math.random() * 256) | 0); }
+    catch (e) { for (let i = 0; i < a.length; i++) a[i] = (Math.random() * 256) | 0; }
+    return 'grp_' + Array.from(a).map((b) => b.toString(36)).join('').slice(0, 8);
+  }
+
+  function me() { return (root.VAIdentity && root.VAIdentity.current()) || { id: 'urn:hash:anon', name: '匿名标注者' }; }
+
+  // 建组：doc = 组清单；rec = 本地注册记录（含 repo/token）
+  // 调用方需传入已建好的空仓（host/repo/branch/token）。
+  async function createGroup({ host, repo, branch, token, name, contentItems, visibility }) {
+    const identity = me();
+    const gid = newGid();
+    const now = new Date().toISOString();
+    const doc = {
+      type: 'va:Group', id: gid, name: String(name || '未命名组').slice(0, 60),
+      created: now, updated: now, visibility: visibility || 'private',
+      host: { kind: host, repo, branch: branch || 'main' },
+      owner: { id: identity.id, name: identity.name },
+      members: [{ id: identity.id, name: identity.name, role: 'owner', addedAt: now }],
+      contentList: { id: 'list_' + gid.slice(4), label: '共同片单', items: contentItems || [] },
+      packIndex: {},
+    };
+    const bind = { kind: host, repo, branch: branch || 'main', token, gid };
+    await GitStore.writeGroup(bind, doc);
+    const rec = { gid, name: doc.name, host, repo, branch: branch || 'main', token, role: 'owner', joinedAt: now };
+    addGroup(rec);
+    return { doc, rec };
+  }
+
+  // 邀请链接：annota://join?host=…&repo=…&gid=…#t=<token>
+  // token 走 fragment（不进服务器日志/Referer）。readOnly 组将来可只带只读凭据。
+  function inviteLink(rec, token) {
+    const q = `host=${encodeURIComponent(rec.host)}&repo=${encodeURIComponent(rec.repo)}&gid=${encodeURIComponent(rec.gid)}&branch=${encodeURIComponent(rec.branch || 'main')}`;
+    return `annota://join?${q}#t=${encodeURIComponent(token || rec.token || '')}`;
+  }
+
+  // 解析邀请链接 → 注册记录（不含校验；真正可用性由后续 read 试探）
+  function parseInvite(link) {
+    try {
+      const s = String(link || '').trim();
+      const m = s.match(/annota:\/\/join\?(.*?)#t=(.*)$/i) || s.match(/[?#&]annota-group=([A-Za-z0-9_-]+)/);
+      if (!m) return null;
+      let host, repo, gid, branch = 'main', token;
+      if (s.indexOf('annota://join') === 0) {
+        const params = new URLSearchParams(m[1]);
+        host = params.get('host'); repo = params.get('repo'); gid = params.get('gid'); branch = params.get('branch') || 'main';
+        token = decodeURIComponent(m[2] || '');
+      } else {
+        const raw = m[1].replace(/-/g, '+').replace(/_/g, '/');
+        const obj = JSON.parse(b64decode(raw + '='.repeat((4 - raw.length % 4) % 4)));
+        host = obj.host; repo = obj.repo; gid = obj.gid; branch = obj.branch || 'main'; token = obj.token;
+      }
+      if (!host || !repo || !gid) return null;
+      return { gid, host, repo, branch, token: token || '' };
+    } catch (e) { return null; }
+  }
+
+  // 加入组：读 group.json 拿名称 → 注册本地
+  async function joinGroup(invite) {
+    const rec0 = typeof invite === 'string' ? parseInvite(invite) : invite;
+    if (!rec0) throw new Error('邀请链接无效');
+    const bind = { kind: rec0.host, repo: rec0.repo, branch: rec0.branch, token: rec0.token, gid: rec0.gid };
+    let doc = null;
+    try { doc = await GitStore.readGroup(bind); } catch (e) { doc = null; }
+    if (!doc) throw new Error('读取失败：仓库/权限/口令可能不对');
+    const rec = { gid: doc.id || rec0.gid, name: doc.name || rec0.gid, host: rec0.host, repo: rec0.repo, branch: rec0.branch, token: rec0.token, role: 'member', joinedAt: new Date().toISOString() };
+    addGroup(rec);
+    return { rec, doc };
+  }
+
+  // ---------- 客户端组同步（与个人同步正交；复用 core 的合并/缓存）----------
+  const CACHE_PREFIX = 'va:group:';
+  function mediaKey(mediaId) { return String(mediaId || '').replace(/[^\w.-]+/g, '_'); }
+  function readCache(gid, mediaId) { try { return JSON.parse(localStorage.getItem(CACHE_PREFIX + gid + ':' + mediaId) || 'null'); } catch (e) { return null; } }
+  function writeCache(gid, mediaId, pack) { try { localStorage.setItem(CACHE_PREFIX + gid + ':' + mediaId, JSON.stringify(pack)); } catch (e) {} }
+
+  // 当前媒体是否在某组片单里
+  function groupsForMedia(mediaId) {
+    return listGroups().filter((g) => {
+      const pack = readCache(g.gid, mediaId);
+      return pack != null;   // 已可见/已加入该媒体的组
+    });
+  }
+
+  // 拉：把组内该媒体的 pack 拉到本地缓存（组来源条目）；返回是否变化
+  async function pullForMedia(mediaId) {
+    let changed = false;
+    for (const g of listGroups()) {
+      try {
+        const pack = await GitStore.readPack(bindOf(g), mediaKey(mediaId));
+        const cur = readCache(g.gid, mediaId);
+        if (!cur || JSON.stringify(cur) !== JSON.stringify(pack)) { writeCache(g.gid, mediaId, pack); changed = true; }
+      } catch (e) { /* 组不可达：跳过，不影响个人 */ }
+    }
+    return changed;
+  }
+
+  // 推：把我锚点属于组片单媒体的实线条目，按组推送（每组各推一次）
+  async function pushForMedia(mediaId, entries) {
+    const out = { pushed: 0, groups: [] };
+    for (const g of listGroups()) {
+      try {
+        const clean = (entries || []).map((e) => { const c = Object.assign({}, e); delete c.__group; delete c.__gid; delete c.__author; return c; });
+        const merged = await GitStore.writePack(bindOf(g), mediaKey(mediaId), { media: (core && core.mediaMeta ? core.mediaMeta() : { videoId: mediaId }), entries: clean });
+        writeCache(g.gid, mediaId, merged);
+        out.pushed += clean.length; out.groups.push(g.gid);
+      } catch (e) { /* 单组失败不影响其它组 */ }
+    }
+    return out;
+  }
+
+  root.VAGroup = {
+    GitStore,
+    install(coreApi) { core = coreApi; root.__ANNOTA_GROUP__ = root.VAGroup; },
+    listGroups, addGroup, findGroup, saveGroups, bindOf,
+    newGid, createGroup, inviteLink, parseInvite, joinGroup, me,
+    pullForMedia, pushForMedia, groupsForMedia,
+    _b64: { encode: b64encode, decode: b64decode },
+  };
+})(typeof self !== 'undefined' ? self : this);
 
 /* ===== src/export.js ===== */
 /* Annota · local learning-card export. Loaded before core.js. */
@@ -1919,6 +2297,7 @@ button { color: inherit; }
     shortcuts: { annotate: 'alt+d', panel: 'alt+l', overlay: 'alt+s' },
     dictUrlTemplate: '',
     ai: { baseUrl: '', model: '' },
+    profile: { name: '匿名标注者' },
   };
   function mergeAppSettings(value) {
     value = value && typeof value === 'object' ? value : {};
@@ -1938,6 +2317,10 @@ button { color: inherit; }
       ai: {
         baseUrl: value.ai && typeof value.ai.baseUrl === 'string' ? value.ai.baseUrl : '',
         model: value.ai && typeof value.ai.model === 'string' ? value.ai.model : '',
+      },
+      profile: {
+        name: value.profile && typeof value.profile.name === 'string' && value.profile.name.trim()
+          ? value.profile.name.trim().slice(0, 40) : DEFAULT_APP_SETTINGS.profile.name,
       },
     };
   }
@@ -2017,6 +2400,28 @@ button { color: inherit; }
     try { localStorage.setItem(HIDDEN_PREFIX + mediaId, JSON.stringify(Array.from(set))); } catch (e) {}
   }
   function isHidden(e) { return !!(e && state.hidden && state.hidden.has(String(e.id))); }
+
+  /* ---------- 组来源条目（分层展示，不进 state.entries） ---------- */
+  const GROUP_CACHE_PREFIX = 'va:group:';    // va:group:<gid>:<mediaId> → 组内该媒体的 pack
+  function groupEntries() {
+    const out = [];
+    for (const g of (window.VAGroup ? window.VAGroup.listGroups() : [])) {
+      let pack = null;
+      try { pack = JSON.parse(localStorage.getItem(GROUP_CACHE_PREFIX + g.gid + ':' + state.mediaId) || 'null'); } catch (e) {}
+      if (!pack || !Array.isArray(pack.entries)) continue;
+      for (const e of pack.entries) {
+        out.push(Object.assign({}, e, { __group: true, __gid: g.gid, __author: (e.creator && e.creator.name) || g.name || '成员' }));
+      }
+    }
+    return out;
+  }
+  function loadGroupCache(gid, mediaId) {
+    try { return JSON.parse(localStorage.getItem(GROUP_CACHE_PREFIX + gid + ':' + mediaId) || 'null'); } catch (e) { return null; }
+  }
+  function saveGroupCache(gid, mediaId, pack) {
+    try { localStorage.setItem(GROUP_CACHE_PREFIX + gid + ':' + mediaId, JSON.stringify(pack)); } catch (e) {}
+  }
+
   function toggleHidden(e) {
     const id = String(e.id);
     if (state.hidden.has(id)) state.hidden.delete(id); else state.hidden.add(id);
@@ -2056,6 +2461,7 @@ button { color: inherit; }
     catch (e) { setSyncStatus('本地保存失败（隐私模式/空间不足？）'); }
     updateStatus();
     renderPanel();
+    scheduleGroupPush();   // 组同步：去抖后把本地实线条目推到已加入的组
   }
 
   /* ---------- Shadow DOM UI ---------- */
@@ -2786,6 +3192,75 @@ button { color: inherit; }
     rowDir.append(mkbtn('仅上传', uploadSync), mkbtn('仅下载', downloadSync), viewBtn);
     const row = el('div', { display: 'flex', gap: '5px', marginTop: '5px', flexWrap: 'wrap' }); row.className = 'va-menu-row';
     row.append(mkbtn('导出 Pack', exportJSON), mkbtn('导入 Pack', importJSON), mkbtn('清空当前', clearAll));
+    const groupPanel = el('section');
+    groupPanel.setAttribute('aria-label', '组管理菜单');
+    const groupHeading = el('div', { color: '#9b8260', fontSize: '9px', fontWeight: '700', letterSpacing: '.1em', padding: '0 9px 3px' }, '组');
+    const groupInvite = el('input'); groupInvite.className = 'va-input';
+    groupInvite.type = 'text'; groupInvite.placeholder = '粘贴 annota://join 邀请链接';
+    groupInvite.setAttribute('aria-label', '加入组邀请链接');
+    const groupFeedback = el('div', { color: '#89919b', fontSize: '10px', padding: '4px 9px' });
+    groupFeedback.setAttribute('role', 'status'); groupFeedback.setAttribute('aria-live', 'polite');
+    const groupList = el('div', { display: 'flex', flexDirection: 'column', gap: '3px', padding: '2px 4px' });
+    groupList.setAttribute('aria-label', '当前媒体所属组');
+    const renderDockGroups = () => {
+      groupList.textContent = '';
+      const api = window.VAGroup;
+      let groups = [];
+      try { groups = api && api.groupsForMedia ? api.groupsForMedia(state.mediaId) : []; } catch (e) {}
+      if (!groups || !groups.length) {
+        groupList.appendChild(el('div', { color: '#66717d', fontSize: '10px', padding: '2px 9px' }, state.mediaId ? '当前媒体尚未加入组片单' : '打开媒体后显示相关组'));
+        return;
+      }
+      groups.forEach((g) => {
+        const members = Array.isArray(g.members) ? g.members.length : (g.memberCount || 0);
+        let authors = [];
+        try {
+          const cached = JSON.parse(localStorage.getItem(GROUP_CACHE_PREFIX + g.gid + ':' + state.mediaId) || 'null');
+          authors = Array.from(new Set(((cached && cached.entries) || []).map((entry) => entry && entry.creator && entry.creator.name).filter(Boolean))).slice(0, 3);
+        } catch (e) {}
+        const hint = authors.length ? '标注者：' + authors.join('、') : members ? members + ' 位成员' : (g.role === 'owner' ? '创建者' : '组成员');
+        const item = el('div', { color: '#c3c7cc', fontSize: '10px', padding: '3px 9px', overflowWrap: 'anywhere' }, (g.name || g.gid || '组') + ' · ' + hint);
+        item.setAttribute('title', g.repo || ''); groupList.appendChild(item);
+      });
+    };
+    const joinRow = el('div', { display: 'flex', gap: '6px', marginTop: '5px' }); joinRow.className = 'va-menu-row';
+    const joinBtn = mkbtn('加入组', async () => {
+      const api = window.VAGroup;
+      if (!api || typeof api.parseInvite !== 'function' || typeof api.joinGroup !== 'function') { groupFeedback.textContent = '组功能暂不可用'; return; }
+      const parsed = api.parseInvite(groupInvite.value);
+      if (!parsed) { groupFeedback.textContent = '邀请链接无效'; return; }
+      joinBtn.disabled = true; groupFeedback.textContent = '正在读取组…';
+      try {
+        const result = await api.joinGroup(groupInvite.value);
+        const joinedName = (result && result.doc && result.doc.name) || (result && result.rec && result.rec.name) || '组';
+        groupFeedback.textContent = '已加入 ' + joinedName;
+        showToast('已加入 ' + joinedName);
+        groupInvite.value = ''; renderDockGroups(); render();
+      } catch (error) { groupFeedback.textContent = '加入失败：' + String(error && error.message || error); }
+      finally { joinBtn.disabled = false; }
+    });
+    joinBtn.style.width = 'auto'; joinBtn.style.flex = '1';
+    joinRow.appendChild(joinBtn);
+    const pushBtn = mkbtn('推送到组', async () => {
+      const api = window.VAGroup;
+      if (!api || typeof api.pushForMedia !== 'function') { groupFeedback.textContent = '组功能暂不可用'; return; }
+      if (!state.mediaId) { groupFeedback.textContent = '请先打开一段媒体内容'; return; }
+      pushBtn.disabled = true; groupFeedback.textContent = '正在推送…';
+      try {
+        const result = await api.pushForMedia(state.mediaId, state.entries);
+        const count = result && Number(result.pushed) || 0;
+        const message = result && result.groups && result.groups.length ? '已推送 ' + count + ' 条到 ' + result.groups.length + ' 个组' : '没有可推送的组';
+        groupFeedback.textContent = message;
+        showToast(message);
+        renderDockGroups();
+      } catch (error) { groupFeedback.textContent = '推送失败：' + String(error && error.message || error); }
+      finally { pushBtn.disabled = false; }
+    });
+    pushBtn.style.width = 'auto'; pushBtn.style.flex = '1';
+    joinRow.appendChild(pushBtn);
+    groupInvite.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); joinBtn.click(); } });
+    groupPanel.append(groupHeading, groupInvite, joinRow, groupFeedback, groupList);
+    renderDockGroups();
     menuPanel.textContent = '';
     const cands = (window.VA_SYNC_URLS || []).join('  ·  ');
     menuPanel.append(
@@ -2816,6 +3291,8 @@ button { color: inherit; }
         mkbtn('测试', testSync)),
       rowDir,
       row,
+      el('div', { height: '1px', background: 'rgba(255,255,255,.08)', margin: '5px 3px' }),
+      groupPanel,
       el('div', { color: '#66717d', fontSize: '9px', padding: '2px 9px 0', overflowWrap: 'anywhere' }, cands ? '备选：' + cands : '默认 http://127.0.0.1:8793'),
       el('div', { height: '1px', background: 'rgba(255,255,255,.08)', margin: '5px 3px' }),
       el('div', { color: '#9b8260', fontSize: '9px', fontWeight: '700', letterSpacing: '.1em', padding: '0 9px 3px' }, 'DICTIONARY'),
@@ -2884,6 +3361,7 @@ button { color: inherit; }
     startProbe();
     scheduleReconcile();     // 先只读选版显示（服务器更新 → 显示服务器版；覆盖本地要用户选）
     scheduleAutoSync();      // 自动同步：仅在开启时把本地当前版推上服务器
+    scheduleGroupPull();     // 组来源层：拉组内该媒体标注
     if (!raf) raf = requestAnimationFrame(loop);
   }
 
@@ -2898,6 +3376,29 @@ button { color: inherit; }
   }
 
   let raf = null, lastSig = null, autoSyncTimer = null, autoSyncedMedia = null, reconciledMedia = null;
+  let groupPullTimer = null, groupPulledMedia = null, groupPushTimer = null;
+  // 打开媒体：拉一次组内该媒体的标注（组来源层，不影响个人层）
+  function scheduleGroupPull() {
+    if (!state.mediaId || !window.VAGroup || groupPulledMedia === state.mediaId) return;
+    groupPulledMedia = state.mediaId;
+    if (groupPullTimer) clearTimeout(groupPullTimer);
+    groupPullTimer = setTimeout(async () => {
+      groupPullTimer = null;
+      try {
+        const changed = await window.VAGroup.pullForMedia(state.mediaId);
+        if (changed) { render(); renderPanel(); }
+      } catch (e) {}
+    }, 600);
+  }
+  // save() 后去抖：把组片单媒体上的实线条目推到各已加入的组
+  function scheduleGroupPush() {
+    if (!state.mediaId || !window.VAGroup || state.renderLock) return;
+    if (groupPushTimer) clearTimeout(groupPushTimer);
+    groupPushTimer = setTimeout(async () => {
+      groupPushTimer = null;
+      try { await window.VAGroup.pushForMedia(state.mediaId, state.entries); } catch (e) {}
+    }, 5000);
+  }
   // 打开媒体：只读选版显示（不写不对齐）；覆盖本地由用户选，可记忆
   function scheduleReconcile() {
     if (!state.mediaId || reconciledMedia === state.mediaId) return;
@@ -2995,10 +3496,18 @@ button { color: inherit; }
       });
       box.className = 'va-mark';
       if (imgStale(e)) { box.classList.add('is-stale'); box.title = '图片版本已变，锚点可能需复核'; }
+      if (e.__group) {                       // 组来源：虚线 + 来源色点（他人标注视觉语言）
+        box.classList.add('is-group');
+        box.title = '组内标注 · ' + (e.__author || '成员');
+      }
       const markText = entryText(e);
       const lab = el('span', {}, markText + (e.label && e.label !== markText ? ' ' + e.label : ''));
       lab.className = 'va-mark-label';
       box.appendChild(lab);
+      if (e.__group && e.__author) {
+        const chip = el('span', null, e.__author); chip.className = 'va-mark-author';
+        box.appendChild(chip);
+      }
       box.onclick = (ev) => { ev.stopPropagation(); openEntryPop(e, ev.clientX, ev.clientY); };
       layer.appendChild(box);
     }
@@ -3011,6 +3520,12 @@ button { color: inherit; }
     const cr = state.cr; if (!cr) return;
     for (const e of state.entries) {
       if (isHidden(e)) continue;                       // 本地隐藏：画面上不渲染
+      if (!state.showAll && !binding.isVisible(e)) continue;
+      drawEntry(e);
+    }
+    // 组来源条目：叠加在个人条目之上（虚线 + 作者 chip），不污染 state.entries
+    for (const e of groupEntries()) {
+      if (isHidden(e)) continue;
       if (!state.showAll && !binding.isVisible(e)) continue;
       drawEntry(e);
     }
@@ -3312,6 +3827,8 @@ button { color: inherit; }
         word, label: label2, tags,
         created: nowIso, updated: nowIso,
       };
+      // 身份署名（R4a）：本地密钥对生成的 creator（离线可用，无账号）
+      if (window.VAIdentity) entry.creator = window.VAIdentity.creatorSync(appSettings.profile && appSettings.profile.name);
       if (quoteMode && initial.quote) entry.quote = initial.quote;
       else entry.box = box;
       if (timed && !quoteMode) {
@@ -3441,6 +3958,7 @@ button { color: inherit; }
       if (!word && !label2 && !tags.length) { wordInput.focus(); showToast('标题、评论、标签至少填一个'); return; }
       e.word = word; e.label = label2; e.tags = tags;
       e.updated = new Date().toISOString();
+      if (window.VAIdentity && !e.creator) e.creator = window.VAIdentity.creatorSync(appSettings.profile && appSettings.profile.name);
       state.displayVersion = 'local';   // 本地修改 → 之后同步应推本地
       if (timed) {
         e.t = Math.max(0, r2(parseFloat(tIn.value)));
@@ -3918,13 +4436,20 @@ button { color: inherit; }
     setSyncStatus,
     showToast,
     uiRoot,
+    mergePack: (a, b) => mergeLocal(a, b),   // 组同步复用同一合并规则
+    validEntries,
+    fingerprint,
   };
   try {
     if (window.VAExport && typeof window.VAExport.install === 'function') window.VAExport.install(coreApi);
   } catch (e) { /* Export UI must never interrupt annotation startup. */ }
+  try {
+    if (window.VAGroup && typeof window.VAGroup.install === 'function') window.VAGroup.install(coreApi);
+  } catch (e) { /* Group layer must never interrupt annotation startup. */ }
 
   /* ---------- 启动 ---------- */
   loadAppSettings();
+  try { if (window.VAIdentity) window.VAIdentity.warmup({ name: appSettings.profile && appSettings.profile.name }); } catch (e) {}
   mountShell();   // 即使页面无可自动绑定的媒态，也保留 dock（含「选对象」）
   A.watch((v) => {
     if (v) {

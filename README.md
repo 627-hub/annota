@@ -115,7 +115,9 @@ node dev/smoke-picker.mjs   # 选对象
 | [`docs/implementation-plan.md`](docs/implementation-plan.md) | R0–R4 分期与进度 |
 | [`docs/roadmap.md`](docs/roadmap.md) | 竞品与差异化、社交层（小组共享）、批量导出规格、R3/R4 分期 |
 | [`docs/architecture.md`](docs/architecture.md) | 架构接缝：本地/托管分层、同步分层、身份、公开页（ADR） |
+| [`docs/r4-plan.md`](docs/r4-plan.md) | R4 社交层方案：GitStore（GitHub/Gitee）小组共享、组页、版本管理 |
 | [`docs/progress-2026-10-03.md`](docs/progress-2026-10-03.md) | 当日进展：R3a 落地、真机验收修复、OCR 审查修复 |
+| [`docs/progress-2026-10-03-r4a.md`](docs/progress-2026-10-03-r4a.md) | R4a 小组共享落地：身份/GitStore/组同步/组页 + Gitee 实测 |
 | [`docs/r2-plan.md`](docs/r2-plan.md) | R2 多媒态实施方案（图片 / 文章 / 选对象） |
 | [`docs/spec.md`](docs/spec.md) | 数据模型、共享协议、模型路线 |
 | [`docs/install.md`](docs/install.md) | 各端安装与宿主选择 |

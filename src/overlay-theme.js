@@ -289,6 +289,11 @@ button { color: inherit; }
 .va-mark.is-stale { border-color:#ef7379; border-style:dashed; background:rgba(239,115,121,.08); }
 .va-mark.is-stale .va-mark-label { border-color:rgba(239,115,121,.4); color:#f0b0b4; }
 .va-mark.is-flash { animation: va-flash 160ms ease; }
+/* 组来源：虚线 + 来源色点（他人标注视觉语言） */
+.va-mark.is-group { border-style:dashed; border-color:#38BDF8; background:rgba(56,189,248,.09); }
+.va-mark.is-group .va-mark-label { border-color:rgba(56,189,248,.28); color:#bfe6fb; }
+.va-mark.is-group .va-mark-label::before { background:#38BDF8; }
+.va-mark-author { position:absolute; right:-1px; top:-24px; transform:translateX(100%); padding:2px 6px; border-radius:7px; background:rgba(56,189,248,.16); color:#bfe6fb; font:600 9px/1.3 var(--va-font-ui); white-space:nowrap; }
 .va-mark-label { position:absolute; left:-1px; top:-24px; display:inline-flex; align-items:center; gap:5px; max-width:min(240px,70vw); overflow:hidden; padding:3px 8px; border:1px solid rgba(245,166,35,.28); border-radius:8px; background:rgba(18,20,24,.94); color:#f3d4a2; font:600 10px/1.35 var(--va-font-ui); text-overflow:ellipsis; white-space:nowrap; box-shadow:0 4px 12px rgba(0,0,0,.22); }
 .va-mark-label::before { content:""; width:5px; height:5px; flex:none; border-radius:50%; background:var(--va-word); }
 .va-draft-mark { border:1.5px dashed #f5a623; border-radius:5px; background:rgba(245,166,35,.12); box-shadow:0 0 0 3px rgba(245,166,35,.06); }

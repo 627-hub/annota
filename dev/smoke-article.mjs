@@ -96,6 +96,7 @@ const sandbox = {
   requestAnimationFrame: (cb) => { if (frames < 3) { frames++; setTimeout(() => cb(0), 0); } return frames; },
   cancelAnimationFrame() {},
   Date, Math, JSON, Array, Object, String, Number, Boolean, RegExp, Error, Promise, URLSearchParams,
+  btoa, atob, TextEncoder, TextDecoder, crypto: (globalThis.crypto || { getRandomValues: (a) => { for (let i=0;i<a.length;i++) a[i]=(Math.random()*256)|0; return a; } }),
   PointerEvent: class PointerEvent { constructor(type, init = {}) { this.type = type; Object.assign(this, init); } },
 };
 sandbox.window = sandbox; sandbox.self = sandbox; sandbox.globalThis = sandbox;
