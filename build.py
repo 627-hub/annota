@@ -32,7 +32,7 @@ VARIANTS = {
 }
 
 PARTS = ["geometry.js", "textquote.js", "adapter.js", "media.js"]
-TAIL = ["design-tokens.js", "overlay-theme.js", "core.js"]
+TAIL = ["design-tokens.js", "overlay-theme.js", "export.js", "core.js"]
 
 
 def read_src(p):
@@ -46,9 +46,13 @@ def main():
     for p in PARTS:
         body.append("/* ===== src/%s ===== */\n%s\n" % (p, read_src(p)))
 
-    # 烧入同步地址候选（由 dev/hub.py 写入 dist/.syncurl），实现零配置
+    # 同步地址候选：默认「发布构建」烧空列表（避免把本机/LAN 拓扑写进发行物）。
+    # 本地零配置调试时：`ANNOTA_LOCAL_SYNC=1 python3 build.py` 才会读 dev/hub.py 写入的 dist/.syncurl。
     spath = os.path.join(DIST, ".syncurl")
-    urls = open(spath, encoding="utf-8").read().strip() if os.path.exists(spath) else "[]"
+    if os.environ.get("ANNOTA_LOCAL_SYNC") == "1" and os.path.exists(spath):
+        urls = open(spath, encoding="utf-8").read().strip() or "[]"
+    else:
+        urls = "[]"
     body.append("/* ===== data: sync urls ===== */\nwindow.VA_SYNC_URLS=%s;\n" % urls)
 
     for p in TAIL:

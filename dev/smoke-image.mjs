@@ -100,7 +100,7 @@ capture.dispatchEvent(new sandbox.PointerEvent('pointermove', { pointerId: 1, cl
 capture.dispatchEvent(new sandbox.PointerEvent('pointerup', { pointerId: 1, clientX: 280, clientY: 340 }));
 const editor = uiRoot.children.find((n) => n.className === 'va-popover' && n.attributes['aria-label'] === '新建标注');
 assert.ok(editor, '拖框后没有打开 EditorCard');
-const wordInput = editor.children.find((n) => n.attributes && n.attributes['aria-label'] === '词语（必填）');
+const wordInput = editor.children.find((n) => n.attributes && n.attributes['aria-label'] === '标题或词语（选填）');
 wordInput.value = 'bicycle';
 const actions = editor.children.find((n) => n.className === 'va-pop-actions');
 actions.children.find((n) => n.className.includes('va-btn-primary')).click();

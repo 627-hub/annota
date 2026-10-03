@@ -23,7 +23,77 @@ button { color: inherit; }
   font: 13px/1.45 var(--va-font-ui);
   -webkit-font-smoothing: antialiased;
 }
-.va-ui-root[data-ui-hidden="1"] .va-panel { visibility: hidden; }
+.va-ui-root[data-ui-hidden="1"] .va-panel,
+.va-ui-root[data-ui-hidden="1"] .va-dock,
+.va-ui-root[data-ui-hidden="1"] .va-toast,
+.va-ui-root[data-ui-hidden="1"] .va-more-menu,
+.va-ui-root[data-ui-hidden="1"] .va-menu,
+.va-ui-root[data-ui-hidden="1"] .va-popover,
+.va-ui-root[data-ui-hidden="1"] .va-diag,
+.va-ui-root[data-ui-hidden="1"] .va-probe,
+.va-ui-root[data-ui-hidden="1"] .va-pick-box,
+.va-ui-root[data-ui-hidden="1"] .va-pick-hint,
+.va-ui-root[data-ui-hidden="1"] .va-onb,
+.va-ui-root[data-ui-hidden="1"] .va-export-progress { visibility:hidden !important; opacity:0 !important; pointer-events:none !important; }
+
+.va-export-progress {
+  position:fixed; z-index:2147483007; top:16px; left:50%; transform:translateX(-50%);
+  display:flex; align-items:center; gap:10px; min-width:190px; max-width:min(440px,calc(100vw - 24px));
+  padding:8px 10px 9px 13px; overflow:hidden; pointer-events:auto;
+  border:1px solid rgba(255,255,255,.12); border-radius:999px;
+  background:rgba(17,19,23,.88); color:#e7e8eb; font:11px/1.2 var(--va-font-ui);
+  -webkit-backdrop-filter:blur(20px) saturate(150%); backdrop-filter:blur(20px) saturate(150%);
+  box-shadow:0 10px 32px rgba(0,0,0,.38),inset 0 1px rgba(255,255,255,.05);
+}
+.va-export-progress > span { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.va-export-progress-track { position:relative; display:block; width:62px; height:3px; flex:none; overflow:hidden; border-radius:999px; background:rgba(255,255,255,.12); }
+.va-export-progress-fill { display:block; width:0; height:100%; border-radius:inherit; background:var(--va-accent); box-shadow:0 0 8px rgba(245,166,35,.52); transition:width 140ms ease; }
+.va-export-progress button {
+  min-height:24px; padding:0 8px; border:1px solid rgba(245,166,35,.24); border-radius:999px;
+  background:rgba(245,166,35,.09); color:#f0d2a0; font:550 10px var(--va-font-ui); cursor:pointer;
+}
+.va-export-progress button:hover { background:rgba(245,166,35,.17); color:#fff0d4; }
+
+/* 可见性：快捷条 / 眼睛按钮 / 隐藏行 */
+.va-vis-bar { display:flex; gap:6px; padding:0 14px 8px; }
+.va-vis-bar .va-chip { font-size:11px; }
+.va-entry-eye { width:24px; height:24px; flex:none; opacity:.62; }
+.va-entry-eye:hover { opacity:1; }
+.va-entry-row.is-hidden { opacity:.45; }
+.va-entry-row.is-hidden .va-entry-copy strong { text-decoration:line-through; }
+
+/* 手动确认截图条 */
+.va-export-confirm {
+  position:fixed; z-index:2147483008; bottom:24px; left:50%; transform:translateX(-50%);
+  display:flex; align-items:center; gap:10px; max-width:min(560px,calc(100vw - 24px));
+  padding:10px 12px 10px 16px; border:1px solid rgba(255,255,255,.12); border-radius:999px;
+  background:rgba(17,19,23,.9); color:#e7e8eb; font:12px/1.3 var(--va-font-ui);
+  -webkit-backdrop-filter:blur(20px) saturate(150%); backdrop-filter:blur(20px) saturate(150%);
+  box-shadow:0 10px 32px rgba(0,0,0,.42),inset 0 1px rgba(255,255,255,.05); pointer-events:auto;
+}
+.va-export-confirm-text { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.va-export-clock { flex:none; font:600 12px ui-monospace,monospace; color:#f0d2a0; }
+.va-export-confirm button {
+  min-height:28px; padding:0 12px; border-radius:999px; cursor:pointer; font:550 12px var(--va-font-ui);
+  border:1px solid rgba(245,166,35,.3); background:rgba(245,166,35,.12); color:#f0d2a0;
+}
+.va-export-confirm button:first-of-type:hover { background:rgba(245,166,35,.22); color:#fff0d4; }
+
+/* 标签编辑（通用批注） */
+.va-tag-box {
+  display:flex; flex-wrap:wrap; gap:5px; align-items:center; min-height:34px; padding:5px 7px;
+  border:1px solid rgba(255,255,255,.12); border-radius:8px; background:rgba(255,255,255,.04);
+}
+.va-tag-box:focus-within { border-color:rgba(245,166,35,.55); }
+.va-tag-chip {
+  display:inline-flex; align-items:center; gap:4px; padding:2px 4px 2px 8px; border-radius:999px;
+  background:rgba(245,166,35,.13); color:#f0d2a0; font-size:11px;
+}
+.va-tag-chip .va-tag-x { width:16px; height:16px; opacity:.7; }
+.va-tag-chip .va-tag-x:hover { opacity:1; }
+.va-tag-input { flex:1 1 90px; min-width:80px; border:0; outline:0; background:transparent; color:var(--va-text); font:inherit; padding:3px 2px; }
+.va-tag-presets { display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; }
+.va-tag-presets .va-chip { font-size:11px; }
 
 /* ---------- 更多菜单（⚙ 浮层） ---------- */
 .va-more-menu {

@@ -16,6 +16,7 @@
     crosshair: '<circle cx="12" cy="12" r="7.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3"/>',
     pick: '<path d="M5 3l14 8-6 1.5L11 19 5 3Z"/>',
     eye: '<path d="M2.5 12s3.2-6 9.5-6 9.5 6 9.5 6-3.2 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.6"/>',
+    'eye-off': '<path d="M4 4l16 16"/><path d="M9.6 6.3A9.7 9.7 0 0 1 12 6c6.3 0 9.5 6 9.5 6a15 15 0 0 1-2.9 3.4M6.4 7.2A15 15 0 0 0 2.5 12s3.2 6 9.5 6a9.7 9.7 0 0 0 3-.5"/><path d="M9.9 10.1a2.6 2.6 0 0 0 3.7 3.7"/>',
     list: '<path d="M8 6h12M8 12h12M8 18h12"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>',
     sync: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.7-2L20 12M4 12l2.7 5a7 7 0 0 0 11.7-2"/>',
     more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
@@ -81,22 +82,91 @@
   }
 
   const LS_PREFIX = 'va:entries:';
+  const HIDDEN_PREFIX = 'va:hidden:';             // 本地显示状态：被隐藏（不可见）的热力框 id 列表（不进 entry、不同步、不导出）
+  const SYNC_META_PREFIX = 'va:syncmeta:';       // 「已与服务端对齐到的版本」指纹 → 判定本地是否有未同步离线改动
+  const OVERRIDE_PREFIX = 'va:coverpref:';        // 「服务器更新时是否覆盖本地」的记忆（用户勾选不再询问）
   const FORMAT = 'video-annotate/0.1';   // 服务端回显为准；此处是本地/新建默认
 
   const state = {
     binding: null, mediaId: null, platform: null,
     entries: [], showAll: false, annotate: false, picking: false,
     rect: null, cr: null, draft: null, dragging: false,
+    renderLock: false, exportOnly: null,
+    displayVersion: null,   // 'local' | 'server' 本次显示用的是哪版（决定同步推什么）
+    hidden: new Set(),      // 本地隐藏的热力框 id（仅显示状态）
+    lastActiveId: null,     // 「仅当前」用：最近定位/点击的条目
   };
   window.__VA = { get state() { return state; } };   // 调试：控制台可 __VA.state 查看
 
-  /* ---------- 存储 ---------- */
-  function load() {
+  /* ---------- 存储：本地 = 缓存/离线草稿；服务器 = 云存储（分享/公开） ---------- */
+  function loadCached(mediaId) {
     try {
-      const raw = localStorage.getItem(LS_PREFIX + state.mediaId);
+      const raw = localStorage.getItem(LS_PREFIX + mediaId);
       const obj = raw ? JSON.parse(raw) : null;
-      state.entries = validEntries((obj && obj.entries) || []);
-    } catch (e) { state.entries = []; }
+      return validEntries((obj && obj.entries) || []);
+    } catch (e) { return []; }
+  }
+  // 与顺序无关的稳定指纹：id + updated + 内容（老数据无 updated 时也能区分改动）
+  function fingerprint(entries) {
+    return entries.map((e) => [e.id, e.updated || e.created || '', e.word || '', e.label || '',
+      (e.tags || []).join(','), e.t != null ? e.t : ''].join('@')).sort().join('|');
+  }
+  function syncMeta(mediaId) {
+    try { return JSON.parse(localStorage.getItem(SYNC_META_PREFIX + mediaId) || 'null') || null; } catch (e) { return null; }
+  }
+  function setSyncMeta(mediaId, serverEntries) {
+    try { localStorage.setItem(SYNC_META_PREFIX + mediaId, JSON.stringify({ fp: fingerprint(serverEntries), at: Date.now() })); } catch (e) {}
+  }
+  // 本地是否存在「未与服务器对齐」的离线改动
+  function hasLocalDraft(mediaId, cached) {
+    if (!cached.length) return false;
+    const meta = syncMeta(mediaId);
+    if (!meta) return true;                        // 从未同步过却有本地数据 → 视作离线改动
+    return meta.fp !== fingerprint(cached);
+  }
+
+  // 可见性 = 本地显示状态（按媒体存 localStorage，不进 entry、不同步）
+  function loadHidden(mediaId) {
+    try {
+      const arr = JSON.parse(localStorage.getItem(HIDDEN_PREFIX + mediaId) || '[]');
+      return new Set(Array.isArray(arr) ? arr.map(String) : []);
+    } catch (e) { return new Set(); }
+  }
+  function saveHidden(mediaId, set) {
+    try { localStorage.setItem(HIDDEN_PREFIX + mediaId, JSON.stringify(Array.from(set))); } catch (e) {}
+  }
+  function isHidden(e) { return !!(e && state.hidden && state.hidden.has(String(e.id))); }
+  function toggleHidden(e) {
+    const id = String(e.id);
+    if (state.hidden.has(id)) state.hidden.delete(id); else state.hidden.add(id);
+    saveHidden(state.mediaId, state.hidden);
+    render(); renderPanel();
+  }
+  function showAllVisible() {
+    state.hidden = new Set();
+    saveHidden(state.mediaId, state.hidden);
+    render(); renderPanel();
+  }
+  function onlyCurrentVisible() {
+    // 当前条目：最近定位的；否则取离播放点最近的
+    let cur = state.entries.find((e) => String(e.id) === String(state.lastActiveId));
+    if (!cur && state.binding && state.binding.timed) {
+      const t = state.binding.time();
+      cur = state.entries.slice().sort((a, b) => Math.abs((Number(a.t) || 0) - t) - Math.abs((Number(b.t) || 0) - t))[0];
+    }
+    if (!cur) return;
+    state.lastActiveId = String(cur.id);
+    state.hidden = new Set(state.entries.filter((e) => e !== cur).map((e) => String(e.id)));
+    saveHidden(state.mediaId, state.hidden);
+    if (state.binding) state.binding.locate(cur);
+    render(); renderPanel();
+  }
+
+  // 只读加载本地缓存（不联网、不询问）：打开页面先显示已有内容
+  function load() {
+    state.entries = loadCached(state.mediaId);
+    state.hidden = loadHidden(state.mediaId);
+    state.displayVersion = 'local';
   }
   function save() {
     const media = mediaMeta();
@@ -189,6 +259,11 @@
   const panelSearch = el('input'); panelSearch.className = 'va-input';
   panelSearch.type = 'search'; panelSearch.placeholder = '筛选标注…'; panelSearch.setAttribute('aria-label', '筛选标注');
   panelSearchWrap.appendChild(panelSearch);
+  // 可见性快捷：全部显示 / 仅当前
+  const visBar = el('div'); visBar.className = 'va-vis-bar';
+  const btnVisAll = mkbtn('全部', () => showAllVisible()); btnVisAll.classList.add('va-chip'); btnVisAll.setAttribute('aria-label', '显示全部热力框');
+  const btnVisOnly = mkbtn('仅当前', () => onlyCurrentVisible()); btnVisOnly.classList.add('va-chip'); btnVisOnly.setAttribute('aria-label', '只显示当前热力框');
+  visBar.append(btnVisAll, btnVisOnly);
   const entryList = el('div'); entryList.className = 'va-entry-list';
   entryList.id = 'va-entry-panel';
   entryList.setAttribute('role', 'tabpanel');
@@ -212,7 +287,7 @@
   assistantSend.className = 'va-btn va-btn-primary';
   assistantForm.append(assistantInput, assistantSend);
   assistantPane.append(assistantNotice, assistantTranscript, assistantForm);
-  sidePanel.append(panelHead, panelTabs, panelSearchWrap, entryList, panelFoot, assistantPane);
+  sidePanel.append(panelHead, panelTabs, panelSearchWrap, visBar, entryList, panelFoot, assistantPane);
   let panelOpen = false, panelTab = 'timeline';
 
   tabTimeline.onclick = () => { panelTab = 'timeline'; updatePanelTabs(); renderPanel(); };
@@ -599,19 +674,30 @@
       const time = el('span', null, timed ? formatTime(e.t) : '🖼');
       time.className = 'va-entry-time' + (timed ? '' : ' va-entry-time--none');
       const copy = el('span'); copy.className = 'va-entry-copy';
-      const title = el('strong', null, e.word || '未命名');
-      const subtitle = el('span', null, panelTab === 'words' ? ((e.label || '未添加释义') + (item.count > 1 ? ' · 出现 ' + item.count + ' 次' : '')) : (e.label || e.pos || '点击定位画面'));
+      const tagStr = entryTags(e).map((t) => '#' + t).join(' ');
+      const title = el('strong', null, entryText(e));
+      const subtitle = el('span', null, panelTab === 'words'
+        ? ((e.label || '未添加备注') + (item.count > 1 ? ' · 出现 ' + item.count + ' 次' : ''))
+        : ([e.label, tagStr].filter(Boolean).join(' · ') || '点击定位画面'));
       copy.append(title, subtitle);
+      const hiddenNow = isHidden(e);
+      if (hiddenNow) row.classList.add('is-hidden');
+      const eye = mkIconButton(hiddenNow ? '显示这一条' : '隐藏这一条', hiddenNow ? 'eye-off' : 'eye', () => {
+        toggleHidden(e);
+      });
+      eye.classList.add('va-entry-eye');
+      eye.setAttribute('aria-pressed', hiddenNow ? 'true' : 'false');
       const more = mkIconButton('编辑或管理词条', 'dots', () => {
         const r = more.getBoundingClientRect(); openEntryPop(e, r.left, r.bottom);
       });
       more.classList.add('va-entry-more');
-      row.append(time, copy, more);
+      row.append(time, copy, eye, more);
       row.onclick = (ev) => {
-        if (ev.target === more || more.contains(ev.target)) return;
+        if (ev.target === more || more.contains(ev.target) || ev.target === eye || eye.contains(ev.target)) return;
+        state.lastActiveId = String(e.id);
         if (state.binding) state.binding.locate(e);
         render();
-        showToast('已定位到 ' + (timed ? formatTime(e.t) + ' · ' : '') + (e.word || '标注'));
+        showToast('已定位到 ' + (timed ? formatTime(e.t) + ' · ' : '') + entryText(e));
       };
       entryList.appendChild(row);
     }
@@ -656,23 +742,45 @@
       img.src = dataUrl;
     });
   }
-  async function captureFrame() {
-    const rect = videoRect();
+  // 三通道统一：截图返回整窗/整屏，一律按视频（或媒态）矩形裁剪到画面。
+  // 裁剪超时（图片解码卡住等）→ 返回原图，宁可整窗也不让批量导出挂死。
+  async function cropToMedia(dataUrl, rect) {
+    if (!dataUrl) return null;
+    if (!rect) return dataUrl;
+    return await Promise.race([
+      cropDataUrl(dataUrl, rect),
+      // 超时宁可不给整窗（与 cropDataUrl 的闭锁策略一致）→ 退化为纯文字卡，绝不泄露整屏
+      new Promise((resolve) => setTimeout(() => resolve(null), 1200)),
+    ]);
+  }
+  // canvas 直接取媒态像素：最可靠（拿到的是纯画面，不含宿主 UI/播放器遮罩的合成层问题）
+  function captureViaCanvas() {
     try {
-      if (typeof window.vaCapture === 'function') return await window.vaCapture(rect);           // 自建浏览器
-      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {        // 扩展
-        const resp = await new Promise((res) => chrome.runtime.sendMessage({ type: 'va-capture' }, res));
-        if (resp && resp.dataUrl) return rect ? await cropDataUrl(resp.dataUrl, rect) : resp.dataUrl;
-        return null;
-      }
-    } catch (e) {}
-    try {   // 兜底：同源媒态可 drawImage（跨域会被 taint → 抛错返回 null）
       const m = state.binding && state.binding.el; if (!m) return null;
       const w = m.videoWidth || m.naturalWidth || 0, h = m.videoHeight || m.naturalHeight || 0;
       if (!w || !h) return null;
       const c = document.createElement('canvas'); c.width = w; c.height = h;
-      c.getContext('2d').drawImage(m, 0, 0); return c.toDataURL('image/png');
+      c.getContext('2d').drawImage(m, 0, 0);
+      return c.toDataURL('image/png');           // 跨域会被 taint → 抛错 → null（由上层回落）
     } catch (e) { return null; }
+  }
+  async function captureFrame() {
+    const rect = videoRect();
+    // 1) 优先 canvas：桌面端窗口截图（xcap）拿不到视频合成层会黑屏；canvas 能拿到真实像素
+    const viaCanvas = captureViaCanvas();
+    if (viaCanvas) return viaCanvas;
+    // 2) 回落：整窗/整屏截图 + 按媒态矩形裁剪（Tauri / 扩展）
+    try {
+      if (typeof window.vaCapture === 'function') {                                              // 自建浏览器（Tauri）
+        const raw = await window.vaCapture(rect);
+        return await cropToMedia(raw, rect);
+      }
+      if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {        // 扩展
+        const resp = await new Promise((res) => chrome.runtime.sendMessage({ type: 'va-capture' }, res));
+        return await cropToMedia(resp && resp.dataUrl, rect);
+      }
+    } catch (e) {}
+    return null;
   }
   function contextText() {
     const list = state.entries.slice(-20).map((e) => '  - ' + e.word + (e.label ? '（' + e.label + '）' : '') + (e.pos ? ' [' + e.pos + ']' : '') + ' @' + e.t + 's').join('\n');
@@ -893,7 +1001,8 @@
     lastSig = null;
     applyMode();
     startProbe();
-    scheduleAutoSync();
+    scheduleReconcile();     // 先只读选版显示（服务器更新 → 显示服务器版；覆盖本地要用户选）
+    scheduleAutoSync();      // 自动同步：仅在开启时把本地当前版推上服务器
     if (!raf) raf = requestAnimationFrame(loop);
   }
 
@@ -907,7 +1016,13 @@
     renderPanel();
   }
 
-  let raf = null, lastSig = null, autoSyncTimer = null, autoSyncedMedia = null;
+  let raf = null, lastSig = null, autoSyncTimer = null, autoSyncedMedia = null, reconciledMedia = null;
+  // 打开媒体：只读选版显示（不写不对齐）；覆盖本地由用户选，可记忆
+  function scheduleReconcile() {
+    if (!state.mediaId || reconciledMedia === state.mediaId) return;
+    reconciledMedia = state.mediaId;
+    setTimeout(() => { try { reconcileOnOpen(state.mediaId); } catch (e) {} }, 400);
+  }
   function scheduleAutoSync() {
     if (!AUTO_SYNC || !state.mediaId || autoSyncedMedia === state.mediaId) return;
     autoSyncedMedia = state.mediaId;
@@ -921,7 +1036,7 @@
 
     // SPA 切换（视频换集 / 画廊换图）：mediaId 变了就换一份标注
     const mid = binding.mediaId();
-    if (mid !== state.mediaId) { state.mediaId = mid; load(); render(); renderPanel(); autoSyncedMedia = null; scheduleAutoSync(); }
+    if (mid !== state.mediaId) { state.mediaId = mid; load(); render(); renderPanel(); autoSyncedMedia = null; reconciledMedia = null; scheduleReconcile(); scheduleAutoSync(); }
 
     // 全屏宿主处理：只有 fullscreen 元素的后代可见
     const fs = document.fullscreenElement;
@@ -952,12 +1067,14 @@
     overlay.style.left = '0px'; overlay.style.top = '0px';
     overlay.style.width = '100vw'; overlay.style.height = '100vh';
 
-    if (state.dragging && state.draft) drawDraft();
-    // 重绘触发：按「当前应显示的条目集合」签名；showAll 时是全集，否则是按可见性过滤的子集。
-    // 无轴媒态（图片/文章）可见性恒真 → 签名稳定，天然只渲染一次；滚动进出视口时会变化并重绘。
-    const sig = (state.showAll ? state.entries : state.entries.filter((e) => binding.isVisible(e)))
-      .map((e) => e.id).join(',');
-    if (sig !== lastSig) { lastSig = sig; render(); }
+    if (!state.renderLock) {
+      if (state.dragging && state.draft) drawDraft();
+      // 重绘触发：按「当前应显示的条目集合」签名；showAll 时是全集，否则是按可见性过滤的子集。
+      // 无轴媒态（图片/文章）可见性恒真 → 签名稳定，天然只渲染一次；滚动进出视口时会变化并重绘。
+      const sig = (state.showAll ? state.entries : state.entries.filter((e) => binding.isVisible(e)))
+        .map((e) => e.id).join(',');
+      if (sig !== lastSig) { lastSig = sig; render(); }
+    }
   }
 
   function detach() {
@@ -984,29 +1101,51 @@
     return !!(n && (n.w && n.w !== b.el.naturalWidth || n.h && n.h !== b.el.naturalHeight));
   }
 
+  function drawEntry(e) {
+    const binding = state.binding, cr = state.cr;
+    if (!binding || !cr || !e) return;
+    const rects = binding.entryRects(e, cr);
+    for (const p of rects) {
+      // 视口坐标（overlay 覆盖整视口）
+      const left = p.left, top = p.top;
+      const box = el('div', {
+        position: 'absolute', left: left + 'px', top: top + 'px',
+        width: (p.width != null ? p.width : p.w) + 'px', height: (p.height != null ? p.height : p.h) + 'px',
+      });
+      box.className = 'va-mark';
+      if (imgStale(e)) { box.classList.add('is-stale'); box.title = '图片版本已变，锚点可能需复核'; }
+      const markText = entryText(e);
+      const lab = el('span', {}, markText + (e.label && e.label !== markText ? ' ' + e.label : ''));
+      lab.className = 'va-mark-label';
+      box.appendChild(lab);
+      box.onclick = (ev) => { ev.stopPropagation(); openEntryPop(e, ev.clientX, ev.clientY); };
+      layer.appendChild(box);
+    }
+  }
+
   function render() {
     layer.textContent = '';
+    state.exportOnly = null;
     const binding = state.binding; if (!binding) return;
     const cr = state.cr; if (!cr) return;
     for (const e of state.entries) {
+      if (isHidden(e)) continue;                       // 本地隐藏：画面上不渲染
       if (!state.showAll && !binding.isVisible(e)) continue;
-      const rects = binding.entryRects(e, cr);
-      for (const p of rects) {
-        // 视口坐标（overlay 覆盖整视口）
-        const left = p.left, top = p.top;
-        const box = el('div', {
-          position: 'absolute', left: left + 'px', top: top + 'px',
-          width: (p.width != null ? p.width : p.w) + 'px', height: (p.height != null ? p.height : p.h) + 'px',
-        });
-        box.className = 'va-mark';
-        if (imgStale(e)) { box.classList.add('is-stale'); box.title = '图片版本已变，锚点可能需复核'; }
-        const lab = el('span', {}, e.word + (e.label ? ' ' + e.label : ''));
-        lab.className = 'va-mark-label';
-        box.appendChild(lab);
-        box.onclick = (ev) => { ev.stopPropagation(); openEntryPop(e, ev.clientX, ev.clientY); };
-        layer.appendChild(box);
-      }
+      drawEntry(e);
     }
+  }
+
+  function renderOnly(entry) {
+    layer.textContent = '';
+    state.exportOnly = entry || null;
+    if (entry && state.binding && state.cr) drawEntry(entry);
+  }
+
+  function setChromeHidden(hidden) {
+    const on = !!hidden;
+    uiRoot.dataset.uiHidden = on ? '1' : '';
+    if (on) setPageCursor('');
+    else if (state.annotate && !state.picking) setPageCursor('crosshair');
   }
 
   function drawDraft() {
@@ -1173,27 +1312,45 @@
     const head = el('div'); head.className = 'va-pop-head';
     const heading = el('div'); heading.className = 'va-pop-heading';
     const eyebrow = el('div', null, initial.suggested ? 'AI SUGGESTION · REVIEW' : (quoteMode ? 'TEXT SELECTED' : 'REGION CAPTURED')); eyebrow.className = 'va-eyebrow';
-    heading.append(eyebrow, el('strong', null, initial.suggested ? '确认 AI 标注' : '锚定一个词'),
-      el('span', null, quoteMode ? '已选中正文文字；填一个要记住的词。' : '词必填；释义和词性稍后也能补。'));
+    heading.append(eyebrow, el('strong', null, initial.suggested ? '确认 AI 标注' : '新建标注'),
+      el('span', null, quoteMode ? '已选中正文文字；填写标题、评论或标签。' : '标题、评论、标签至少填一个，也都能稍后补。'));
     const close = mkIconButton('关闭编辑卡', 'close', () => pop.remove()); close.classList.add('va-close');
     head.append(heading, close);
 
-    const wordLabel = el('label', null, '词语'); wordLabel.className = 'va-field-label';
-    const wIn = el('input'); wIn.className = 'va-input'; wIn.placeholder = '输入你想记住的词'; wIn.autocomplete = 'off'; wIn.maxLength = 120;
+    const wordLabel = el('label', null, '标题 / 词语'); wordLabel.className = 'va-field-label';
+    const wIn = el('input'); wIn.className = 'va-input'; wIn.placeholder = '词、句子或标题（可留空）'; wIn.autocomplete = 'off'; wIn.maxLength = 120;
     wIn.value = initial.word || '';
-    wIn.setAttribute('aria-label', '词语（必填）');
-    const label = el('label', null, '释义（选填）'); label.className = 'va-field-label';
-    const lIn = el('input'); lIn.className = 'va-input'; lIn.placeholder = '写下此处语境里的意思'; lIn.maxLength = 300; lIn.value = initial.label || '';
-    lIn.setAttribute('aria-label', '释义（选填）');
+    wIn.setAttribute('aria-label', '标题或词语（选填）');
+    const label = el('label', null, '评论 / 备注（选填）'); label.className = 'va-field-label';
+    const lIn = el('input'); lIn.className = 'va-input'; lIn.placeholder = '写下此处语境里的意思或你的批注'; lIn.maxLength = 300; lIn.value = initial.label || '';
+    lIn.setAttribute('aria-label', '评论或备注（选填）');
     const detailRow = el('div', { display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: '9px', alignItems: 'end' });
-    const posWrap = el('label', { display: 'block' });
-    const posLabel = el('span', null, '词性'); posLabel.className = 'va-field-label';
-    posWrap.append(posLabel);
-    const sel = el('select'); sel.className = 'va-select'; sel.setAttribute('aria-label', '词性（选填）');
-    const posOptions = [['', '不指定'], ['n', '名词'], ['v', '动词'], ['a', '形容词'], ['ad', '副词'], ['prep', '介词'], ['conj', '连词'], ['other', '其他']];
-    for (const [value, text] of posOptions) { const op = document.createElement('option'); op.value = value; op.textContent = text; sel.appendChild(op); }
-    sel.value = initial.pos || '';
-    posWrap.appendChild(sel);
+    const tagWrap = el('label', { display: 'block' });
+    const tagLabel = el('span', null, '标签'); tagLabel.className = 'va-field-label';
+    const tagBox = el('div'); tagBox.className = 'va-tag-box';
+    const tagInput = el('input'); tagInput.className = 'va-tag-input'; tagInput.placeholder = '回车添加标签'; tagInput.maxLength = 40; tagInput.setAttribute('aria-label', '标签');
+    const presetRow = el('div'); presetRow.className = 'va-tag-presets';
+    for (const p of ['英语学习', '雅思', '日语', '校对', '情报', '待复习']) { const c = mkbtn(p, () => addTag(p)); c.className = 'va-chip'; presetRow.appendChild(c); }
+    tagWrap.append(tagLabel, tagBox, presetRow);
+    let tagList = entryTags(initial).slice();
+    function renderTags() {
+      tagBox.textContent = '';
+      for (const t of tagList) {
+        const chip = el('span'); chip.className = 'va-tag-chip';
+        const tx = el('span', null, '#' + t);
+        const x = mkIconButton('移除标签 ' + t, 'close', (ev) => { if (ev) ev.stopPropagation(); tagList = tagList.filter((v) => v !== t); renderTags(); updateDictionary(); });
+        x.classList.add('va-tag-x');
+        chip.append(tx, x); tagBox.appendChild(chip);
+      }
+      tagBox.appendChild(tagInput);
+    }
+    function addTag(raw) {
+      const t = String(raw || '').trim().replace(/^[#\s]+/, '');
+      if (t && !tagList.includes(t) && tagList.length < 12) { tagList.push(t); renderTags(); updateDictionary(); }
+      tagInput.value = '';
+    }
+    tagInput.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' || ev.key === ',' || ev.key === '，') { ev.preventDefault(); ev.stopPropagation(); addTag(tagInput.value); } });
+    renderTags();
 
     const timeLabel = el('label', null, '出现时间'); timeLabel.className = 'va-field-label';
     const timeRow = el('div'); timeRow.className = 'va-time-row';
@@ -1207,8 +1364,8 @@
     const dIn = el('input'); dIn.className = 'va-input'; dIn.type = 'number'; dIn.min = '0.2'; dIn.step = '0.1'; dIn.value = String(initial.dur || DEFAULT_DUR);
     dIn.setAttribute('aria-label', '显示时长（秒）');
     const durationWrap = el('label'); durationWrap.append(durationLabel, dIn);
-    if (timed && !quoteMode) detailRow.append(posWrap, durationWrap);
-    else detailRow.append(posWrap);
+    if (timed && !quoteMode) detailRow.append(tagWrap, durationWrap);
+    else detailRow.append(tagWrap);
     const durChips = el('div'); durChips.className = 'va-duration';
     for (const seconds of [0.5, 1, 2, 3]) {
       const chip = mkbtn(seconds + 's', () => {
@@ -1240,7 +1397,10 @@
       dictionary.appendChild(a); return { a, href };
     });
     function updateDictionaryLinks() { for (const d of dictLinks) d.a.href = d.href(wIn.value.trim()); }
-    wIn.addEventListener('input', updateDictionaryLinks);
+    // 词典按标签触发：出现语言学习类标签（英语/日语/雅思…）才显示查词外链
+    function updateDictionary() { updateDictionaryLinks(); dictionary.style.display = tagList.some(isLangTag) ? '' : 'none'; }
+    wIn.addEventListener('input', updateDictionary);
+    updateDictionary();
 
     const actions = el('div'); actions.className = 'va-pop-actions';
     const cancel = mkbtn('取消', () => pop.remove());
@@ -1260,12 +1420,16 @@
     wIn.addEventListener('input', () => wIn.removeAttribute('aria-invalid'));
 
     function commit() {
+      if (tagInput.value.trim()) addTag(tagInput.value);
       const word = wIn.value.trim();
-      if (!word) { wIn.focus(); wIn.setAttribute('aria-invalid', 'true'); return; }
+      const label2 = lIn.value.trim();
+      const tags = tagList.slice();
+      if (!word && !label2 && !tags.length) { wIn.focus(); wIn.setAttribute('aria-invalid', 'true'); showToast('标题、评论、标签至少填一个'); return; }
+      const nowIso = new Date().toISOString();
       const entry = {
         id: 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-        word, label: lIn.value.trim(), pos: sel.value,
-        created: new Date().toISOString(),
+        word, label: label2, tags,
+        created: nowIso, updated: nowIso,
       };
       if (quoteMode && initial.quote) entry.quote = initial.quote;
       else entry.box = box;
@@ -1279,10 +1443,11 @@
         entry.img = { key: el2.currentSrc || el2.src || '', natural: { w: el2.naturalWidth, h: el2.naturalHeight } };
       }
       state.entries.push(entry);
+      state.displayVersion = 'local';   // 本地新建 → 之后同步应推本地
       save(); pop.remove(); render();
       if (state.binding) state.binding.endAnnotate();
       const s = (typeof window !== "undefined" && window.getSelection) ? window.getSelection() : null; if (s && s.removeAllRanges) s.removeAllRanges();
-      showToast('已保存标注 · ' + word);
+      showToast('已保存标注 · ' + entryText(entry));
     }
     pop.addEventListener('keydown', (ev) => {
       if (ev.key === 'Escape') { ev.stopPropagation(); pop.remove(); }
@@ -1336,7 +1501,7 @@
     const head = el('div'); head.className = 'va-pop-head';
     const heading = el('div'); heading.className = 'va-pop-heading';
     const eyebrow = el('div', null, 'ANNOTATION'); eyebrow.className = 'va-eyebrow';
-    heading.append(eyebrow, el('strong', null, e.word || '未命名'), el('span', null, (e.label || '未添加释义') + (e.pos ? ' · ' + e.pos : '')));
+    heading.append(eyebrow, el('strong', null, entryText(e)), el('span', null, (e.label || '未添加备注') + (entryTags(e).length ? ' · ' + entryTags(e).map((t) => '#' + t).join(' ') : '')));
     const close = mkIconButton('关闭词条详情', 'close', () => pop.remove()); close.classList.add('va-close');
     head.append(heading, close);
     const range = el('div'); range.className = 'va-range';
@@ -1364,6 +1529,7 @@
     ]) {
       const a = el('a', null, name); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; dictionary.appendChild(a);
     }
+    if (!entryTags(e).some(isLangTag)) dictionary.style.display = 'none';
     pop.appendChild(dictionary);
 
     if (isView()) {
@@ -1375,8 +1541,9 @@
       return;
     }
 
-    const wordInput = el('input'); wordInput.className = 'va-input'; wordInput.value = e.word || ''; wordInput.setAttribute('aria-label', '词语');
-    const labelInput = el('input'); labelInput.className = 'va-input'; labelInput.value = e.label || ''; labelInput.placeholder = '释义（选填）'; labelInput.setAttribute('aria-label', '释义');
+    const wordInput = el('input'); wordInput.className = 'va-input'; wordInput.value = e.word || ''; wordInput.placeholder = '词、句子或标题（可留空）'; wordInput.setAttribute('aria-label', '标题或词语');
+    const labelInput = el('input'); labelInput.className = 'va-input'; labelInput.value = e.label || ''; labelInput.placeholder = '评论 / 备注（选填）'; labelInput.setAttribute('aria-label', '评论或备注');
+    const tagsInput = el('input'); tagsInput.className = 'va-input'; tagsInput.value = entryTags(e).join(' '); tagsInput.placeholder = '标签，空格或逗号分隔'; tagsInput.setAttribute('aria-label', '标签');
     const timeLabel = el('label', null, '出现时间'); timeLabel.className = 'va-field-label';
     const timeRow = el('div'); timeRow.className = 'va-time-row';
     const now = mkbtn('用当前时间', () => { tIn.value = state.binding ? String(r2(state.binding.time())) : String(e.t); updRange(); });
@@ -1384,12 +1551,16 @@
     const durationLabel = el('label', null, '显示时长'); durationLabel.className = 'va-field-label';
     const actions = el('div'); actions.className = 'va-pop-actions';
     const jump = mkbtn('跳转', () => { if (state.binding) state.binding.seek(parseFloat(tIn.value) || e.t); pop.remove(); });
-    const remove = mkbtn('删除', () => { state.entries = state.entries.filter((item) => item !== e); save(); pop.remove(); render(); showToast('已删除标注'); });
+    const remove = mkbtn('删除', () => { state.entries = state.entries.filter((item) => item !== e); state.displayVersion = 'local'; save(); pop.remove(); render(); showToast('已删除标注'); });
     remove.classList.add('va-btn-danger');
     const saveButton = mkbtn('保存修改', () => {
       const word = wordInput.value.trim();
-      if (!word) { wordInput.focus(); return; }
-      e.word = word; e.label = labelInput.value.trim();
+      const label2 = labelInput.value.trim();
+      const tags = tagsInput.value.split(/[\s,，]+/).map((t) => t.replace(/^[#\s]+/, '').trim()).filter(Boolean).slice(0, 12);
+      if (!word && !label2 && !tags.length) { wordInput.focus(); showToast('标题、评论、标签至少填一个'); return; }
+      e.word = word; e.label = label2; e.tags = tags;
+      e.updated = new Date().toISOString();
+      state.displayVersion = 'local';   // 本地修改 → 之后同步应推本地
       if (timed) {
         e.t = Math.max(0, r2(parseFloat(tIn.value)));
         e.dur = Math.max(0.2, r2(parseFloat(dIn.value) || DEFAULT_DUR));
@@ -1399,7 +1570,7 @@
     saveButton.classList.add('va-btn-primary');
     if (timed) actions.append(jump);
     actions.append(remove, saveButton);
-    pop.append(el('label', null, '词语'), wordInput, el('label', null, '释义（选填）'), labelInput);
+    pop.append(el('label', null, '标题 / 词语（选填）'), wordInput, el('label', null, '评论 / 备注（选填）'), labelInput, el('label', null, '标签'), tagsInput);
     if (timed) pop.append(timeLabel, timeRow, durationLabel, dIn);
     pop.append(actions);
     pop.querySelectorAll('.va-popover > label').forEach((n) => { n.className = 'va-field-label'; });
@@ -1447,6 +1618,8 @@
     };
   }
   function pack() { return { format: FORMAT, media: mediaMeta(), entries: state.entries }; }
+  // 推送包：本地为主 → replace=true，服务器以本次推送为准（云存储/分享/公开）
+  function pushPack() { return { format: FORMAT, media: mediaMeta(), entries: state.entries, replace: true }; }
 
   function validBox(b) {
     return b && typeof b === 'object' &&
@@ -1459,8 +1632,31 @@
   }
   // box 与 quote 二选一即可（文章 = quote，视频/图片 = box）
   function validAnchor(e) { return validBox(e && e.box) || validQuote(e && e.quote); }
+  // 通用批注：word 可空，标签/备注至少一个（§8.3 A）
+  function entryTags(e) { return Array.isArray(e && e.tags) ? e.tags.filter(Boolean).map(String) : []; }
+  function entryHasContent(e) {
+    return !!(String((e && e.word) || '').trim() || entryTags(e).length || String((e && e.label) || '').trim());
+  }
+  function entryText(e) {
+    if (!e) return '';
+    const w = String(e.word || '').trim();
+    if (w) return w;
+    const tags = entryTags(e);
+    if (tags.length) return tags[0];
+    const label = String(e.label || '').trim();
+    return label ? label.slice(0, 40) : '标注';
+  }
+  const LANG_TAGS = ['英语', '英文', '日语', '法语', '德语', '西班牙语', '韩语', '俄语',
+    '雅思', '托福', '考研', '四六级', '专四', '专八', '英语学习', '语言学习'];
+  function isLangTag(t) { t = String(t || ''); return LANG_TAGS.includes(t) || /语$/.test(t) || /^(英语|日语|法语|德语|韩语|西班牙|俄语|葡萄牙)/.test(t); }
+  function tagKey(e) { return entryTags(e).map((t) => String(t).toLowerCase()).sort().join(','); }
   function sameEntry(e, o) {
     if ((e.word || '') !== (o.word || '')) return false;
+    // 无词条目：备注 + 标签共同区分（纯标签标注不被误并）
+    if (!e.word || !o.word) {
+      if (String(e.label || '') !== String(o.label || '')) return false;
+      if (tagKey(e) !== tagKey(o)) return false;
+    }
     const eb = validBox(e.box), ob = validBox(o.box);
     const eq = validQuote(e.quote), oq = validQuote(o.quote);
     if (eb && ob) {
@@ -1472,7 +1668,7 @@
   }
   function validEntries(list) {
     return (Array.isArray(list) ? list : []).filter((e) => {
-      if (!e || !e.word || !validAnchor(e)) return false;  // 形状守卫：脏数据不进、不抛
+      if (!e || !validAnchor(e) || !entryHasContent(e)) return false;  // 锚点 + 至少一个要素（词/标签/备注）
       if (!e.id) e.id = 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
       return true;
     });
@@ -1612,41 +1808,146 @@
     } catch (e) { setSyncStatus('连不上：' + e.message); }
   }
 
-  // 傻瓜式：一次「同步」= 拉取 + 本地合并 + 回传，union 双向
+  // ---- 显示：只读选版（不写数据）。同步：以本地为主推到服务器（云存储/分享/公开，非双向 union） ----
+  function coverPref(mediaId) {
+    try { return localStorage.getItem(OVERRIDE_PREFIX + mediaId); } catch (e) { return null; }   // 'server' | 'local' | null
+  }
+  function setCoverPref(mediaId, v) { try { localStorage.setItem(OVERRIDE_PREFIX + mediaId, v); } catch (e) {} }
+
+  // 弹窗骨架：带 Esc / 点击外部关闭，close() 只会 resolve 一次（默认值由调用方给）
+  function makeChoiceDialog(label, buildBody, onPick) {
+    return new Promise((resolve) => {
+      const pop = el('div'); pop.className = 'va-popover va-sync-choice';
+      pop.style.left = '50%'; pop.style.transform = 'translateX(-50%)'; pop.style.top = '18px';
+      pop.setAttribute('role', 'dialog'); pop.setAttribute('aria-label', label);
+      let done = false;
+      const close = (value) => { if (done) return; done = true; document.removeEventListener('keydown', onKey, true); uiRoot.removeEventListener('pointerdown', onOutside, true); pop.remove(); resolve(value); };
+      const onKey = (ev) => { if (ev.key === 'Escape') { ev.stopPropagation(); close(onPick.dismiss); } };
+      const onOutside = (ev) => { if (!pop.contains(ev.target)) close(onPick.dismiss); };
+      buildBody(pop, close);
+      document.addEventListener('keydown', onKey, true);
+      setTimeout(() => uiRoot.addEventListener('pointerdown', onOutside, true), 0);
+      uiRoot.appendChild(pop);
+    });
+  }
+
+  // 冲突弹窗：两个确定性选项。Esc/点外部 = 默认看服务器版（不改数据，最安全）
+  function chooseVersion({ serverEntries, cached }) {
+    return makeChoiceDialog('选择要显示的版本', (pop, close) => {
+      const head = el('div'); head.className = 'va-pop-head';
+      const heading = el('div'); heading.className = 'va-pop-heading';
+      heading.append(el('div', null, 'SYNC'), el('strong', null, '两版不一致，先看哪一版？'),
+        el('span', null, '服务器 ' + serverEntries.length + ' 条 · 本地 ' + cached.length + ' 条。选版本只影响显示，不改数据。'));
+      head.append(heading);
+      const acts = el('div'); acts.className = 'va-pop-actions';
+      const bLocal = mkbtn('看本地版（离线修改）', () => close('local'));
+      const bServer = mkbtn('看服务器版', () => close('server'));
+      bLocal.classList.add('va-btn-primary');
+      acts.append(bLocal, bServer);
+      pop.append(head, acts);
+    }, { dismiss: 'server' });
+  }
+
+  // 打开媒体时：只处理「显示」，不写不对齐。覆盖本地要用户选，可记忆。
+  async function reconcileOnOpen(mediaId) {
+    if (!state.mediaId || state.mediaId !== mediaId) return;   // 已切走
+    let serverEntries = null;
+    try {
+      const base = await resolveBase();
+      const g = await httpJson('GET', base + '/api/anno/' + encodeURIComponent(mediaId));
+      if (g.ok) serverEntries = validEntries((g.json && g.json.entries) || []);
+    } catch (e) { return; }   // 离线：维持本地缓存显示
+    if (!serverEntries) return;
+    if (!state.mediaId || state.mediaId !== mediaId) return;
+
+    const cached = loadCached(mediaId);
+    const fpCached = fingerprint(cached);
+    const localDraft = hasLocalDraft(mediaId, cached);
+    const serverNewer = fingerprint(serverEntries) !== (syncMeta(mediaId) ? syncMeta(mediaId).fp : fpCached);
+    const differ = fingerprint(serverEntries) !== fpCached;
+
+    if (!differ) {                                   // 完全一致：对齐标记即可
+      setSyncMeta(mediaId, serverEntries); return;
+    }
+    if (localDraft) {                                // 本地有未同步离线改动 → 选显示哪版
+      const choice = await chooseVersion({ serverEntries, cached });
+      // 弹窗期间用户若又改了本地（缓存与快照不一致）→ 放弃本次显示覆盖，保住在途编辑
+      if (loadCached(mediaId) !== cached && fingerprint(loadCached(mediaId)) !== fpCached) return;
+      state.entries = choice === 'local' ? cached : serverEntries;
+      state.displayVersion = choice;
+      save(); render(); renderPanel();
+    } else if (serverNewer) {                         // 本地没动、服务器更新
+      // 快照与当前缓存一致才动；否则说明期间有本地写入
+      if (fingerprint(loadCached(mediaId)) !== fpCached) return;
+      state.entries = serverEntries; state.displayVersion = 'server';
+      save(); render(); renderPanel();
+      const pref = coverPref(mediaId);
+      if (pref === 'server') { setSyncMeta(mediaId, serverEntries); }
+      else if (pref !== 'local') {                    // 未记忆过 → 询问是否覆盖本地
+        const cover = await confirmCover(mediaId);
+        if (cover) setSyncMeta(mediaId, serverEntries);
+      }
+    } else {
+      setSyncMeta(mediaId, serverEntries);
+    }
+  }
+
+  // Esc/点外部 = 保留本地版（不覆盖，最安全）
+  function confirmCover(mediaId) {
+    return makeChoiceDialog('是否用服务器版覆盖本地', (pop, close) => {
+      const cb = el('input'); cb.type = 'checkbox';
+      const done = (cover) => { if (cb.checked) setCoverPref(mediaId, cover ? 'server' : 'local'); close(cover); };
+      const head = el('div'); head.className = 'va-pop-head';
+      const heading = el('div'); heading.className = 'va-pop-heading';
+      heading.append(el('div', null, 'SYNC'), el('strong', null, '服务器有新版本'),
+        el('span', null, '当前已显示服务器版。要把本地缓存也更新为服务器版吗？'));
+      head.append(heading);
+      const remember = el('label', null); remember.className = 'va-remember';
+      const tx = el('span', null, '可选，以后不再询问');
+      remember.append(cb, tx);
+      const acts = el('div'); acts.className = 'va-pop-actions';
+      const bCover = mkbtn('用服务器版覆盖本地', () => done(true)); bCover.classList.add('va-btn-primary');
+      const bKeep = mkbtn('保留本地版', () => done(false));
+      acts.append(bCover, bKeep);
+      pop.append(head, remember, acts);
+    }, { dismiss: false });
+  }
+
+  // 同步 = 把「当前显示的这版」推到服务器（本地为主）；服务器是云存储/分享/公开
   async function syncNow() {
     if (!state.mediaId) return;
     setSyncStatus('同步中…');
     try {
       const base = await resolveBase();
       const url = base + '/api/anno/' + encodeURIComponent(state.mediaId);
-      const g = await httpJson('GET', url);
-      if (!g.ok) throw new Error('HTTP ' + g.status);
-      const before = state.entries.length;
-      state.entries = mergeLocal(state.entries, (g.json && g.json.entries) || []);
-      const p = await httpJson('PUT', url, pack());
+      const meta = syncMeta(state.mediaId);
+      const aligned = !!meta && meta.fp === fingerprint(state.entries);   // 本视图是否已知与服务端一致
+      if (state.displayVersion === 'server') {         // 当前显示服务器版 → 拉下来作为本地
+        const g = await httpJson('GET', url);
+        if (!g.ok) throw new Error('HTTP ' + g.status);
+        state.entries = validEntries((g.json && g.json.entries) || []);
+        setSyncMeta(state.mediaId, state.entries);
+        save(); render();
+        setSyncStatus('已对齐服务器版 · ' + state.entries.length + ' 条');
+        return;
+      }
+      // 本地为主推送。未与服务器确认对齐时不能整包替换（会删掉别处写入、本机没拉到的条目）→ 只做增量合并推送。
+      const payload = aligned ? pushPack() : pack();
+      const p = await httpJson('PUT', url, payload);
       if (!p.ok) throw new Error('HTTP ' + p.status);
-      state.entries = (p.json && p.json.entries) || state.entries;
+      const pushed = validEntries((p.json && p.json.entries) || state.entries);
+      state.entries = pushed;
+      state.displayVersion = 'local';
+      setSyncMeta(state.mediaId, pushed);
       save(); render();
-      setSyncStatus('已同步 · ' + state.entries.length + ' 条（拉取新增 ' + Math.max(0, state.entries.length - before) + '）');
+      setSyncStatus((aligned ? '已同步到服务器 · ' : '已合并推送到服务器 · ') + state.entries.length + ' 条');
     } catch (e) {
       setSyncStatus('同步失败：' + e.message);
       alert('同步失败：' + e.message + SYNC_HINT);
     }
   }
 
-  async function uploadSync() {
-    if (!state.mediaId) return;
-    setSyncStatus('上传中…');
-    try {
-      const base = await resolveBase();
-      const r = await httpJson('PUT', base + '/api/anno/' + encodeURIComponent(state.mediaId), pack());
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      state.entries = validEntries((r.json && r.json.entries) || state.entries);
-      save(); render();
-      setSyncStatus('已上传 · 服务器 ' + state.entries.length + ' 条');
-    } catch (e) { setSyncStatus('上传失败：' + e.message); alert('上传失败：' + e.message + SYNC_HINT); }
-  }
-
+  async function uploadSync() { await syncNow(); }
   async function downloadSync() {
     if (!state.mediaId) return;
     setSyncStatus('下载中…');
@@ -1654,10 +1955,10 @@
       const base = await resolveBase();
       const r = await httpJson('GET', base + '/api/anno/' + encodeURIComponent(state.mediaId));
       if (!r.ok) throw new Error('HTTP ' + r.status);
-      const before = state.entries.length;
-      state.entries = mergeLocal(state.entries, (r.json && r.json.entries) || []);
+      state.entries = validEntries((r.json && r.json.entries) || state.entries);
+      state.displayVersion = 'server';
       save(); render();
-      setSyncStatus('已下载 · 合并后 ' + state.entries.length + ' 条（新增 ' + (state.entries.length - before) + '）');
+      setSyncStatus('已载入服务器版 · ' + state.entries.length + ' 条');
     } catch (e) { setSyncStatus('下载失败：' + e.message); alert('下载失败：' + e.message + SYNC_HINT); }
   }
 
@@ -1682,6 +1983,7 @@
           const inc = (obj && obj.entries) || (Array.isArray(obj) ? obj : []);
           const before = state.entries.length;
           state.entries = mergeLocal(state.entries, inc);
+          state.displayVersion = 'local';
           save(); render();
           alert('导入完成：新增 ' + (state.entries.length - before) + ' 条（合并后 ' + state.entries.length + '）');
         } catch (err) { alert('导入失败：' + err.message); }
@@ -1694,7 +1996,7 @@
   function clearAll() {
     if (!state.entries.length) return;
     if (!confirm('清空本视频的 ' + state.entries.length + ' 条标注？')) return;
-    state.entries = []; save(); render();
+    state.entries = []; state.displayVersion = 'local'; save(); render();
   }
 
   function updateStatus() {
@@ -1702,8 +2004,55 @@
     status.dataset.state = 'ready';
   }
 
+  function decodeExportIntent(hash) {
+    const match = String(hash || '').match(/(?:^#|&)annota-export=([A-Za-z0-9_-]+)/);
+    if (!match) return null;
+    try {
+      const encoded = match[1].replace(/-/g, '+').replace(/_/g, '/');
+      const binary = atob(encoded + '='.repeat((4 - encoded.length % 4) % 4));
+      const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+      const intent = JSON.parse(new TextDecoder().decode(bytes));
+      return intent && typeof intent === 'object' ? intent : null;
+    } catch (e) { return null; }
+  }
+
+  let pendingExportIntent = decodeExportIntent(location.hash);
+  if (pendingExportIntent) {
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
+  }
+
+  const coreApi = {
+    state,
+    binding: () => state.binding,
+    entries: () => state.entries,
+    mediaMeta,
+    renderOnly,
+    render,
+    setChromeHidden,
+    save,
+    captureFrame,
+    videoRect,
+    resolveBase,
+    httpJson,
+    setSyncStatus,
+    showToast,
+    uiRoot,
+  };
+  try {
+    if (window.VAExport && typeof window.VAExport.install === 'function') window.VAExport.install(coreApi);
+  } catch (e) { /* Export UI must never interrupt annotation startup. */ }
+
   /* ---------- 启动 ---------- */
   loadAppSettings();
   mountShell();   // 即使页面无可自动绑定的媒态，也保留 dock（含「选对象」）
-  A.watch((v) => { if (v) attach(v); else detachBinding(); });
+  A.watch((v) => {
+    if (v) {
+      attach(v);
+      if (pendingExportIntent && window.__ANNOTA_EXPORT__) {
+        const intent = pendingExportIntent;
+        pendingExportIntent = null;
+        try { window.__ANNOTA_EXPORT__.start(intent); } catch (e) { showToast('批量导出启动失败'); }
+      }
+    } else detachBinding();
+  });
 })();

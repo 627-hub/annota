@@ -147,6 +147,12 @@
     .secondary-button { min-height:34px; padding:0 11px; border:1px solid rgba(255,255,255,.1); border-radius:9px; background:rgba(255,255,255,.045); color:#c3c7cc; font-size:10px; cursor:pointer; }
     .secondary-button:hover { border-color:rgba(245,166,35,.25); color:#f0c57f; }
     .secondary-button.is-active { border-color:rgba(245,166,35,.34); background:rgba(245,166,35,.1); color:#f0c57f; }
+    .library-actions { display:flex; align-items:center; gap:6px; }
+    .export-chooser { display:flex; align-items:center; gap:6px; margin-top:9px; padding:8px; border:1px solid rgba(245,166,35,.17); border-radius:10px; background:rgba(245,166,35,.035); }
+    .export-chooser[hidden] { display:none; }
+    .export-chooser label { color:#8d939c; font-size:10px; }
+    .export-chooser select { min-width:95px; height:30px; padding:0 7px; border:1px solid rgba(255,255,255,.12); border-radius:7px; background:#1a1b1f; color:#e1e2e3; font-size:10px; }
+    .export-chooser .secondary-button { min-height:30px; }
     .empty-library { padding:26px; border:1px dashed rgba(255,255,255,.1); border-radius:13px; color:#828994; text-align:center; font-size:11px; }
     .page-toast { position:fixed; right:25px; bottom:22px; z-index:5; max-width:380px; padding:10px 14px; border:1px solid rgba(255,255,255,.11); border-radius:11px; background:#1a1b1f; color:#e6e6e8; box-shadow:0 12px 36px rgba(0,0,0,.32); opacity:0; transform:translateY(6px); transition:all 150ms ease; pointer-events:none; font-size:11px; }
     .page-toast.is-visible { opacity:1; transform:translateY(0); }
@@ -230,6 +236,7 @@
       </nav>
       <div class="rail-spacer"></div>
       <nav class="rail-nav">
+        <a class="rail-link" href="/console" aria-label="数据工作台"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg><span>工作台</span></a>
         <a class="rail-link" href="#settings" data-route="settings" aria-label="设置"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="m19.4 15 .1.1 1.1 1.9-1.7 2.9-2.2-.5a7.9 7.9 0 0 1-1.6.9l-.8 2.1h-3.4l-.8-2.1a7.9 7.9 0 0 1-1.6-.9l-2.2.5-1.7-2.9 1.1-1.9A8.3 8.3 0 0 1 5.5 13l-2-1v-3l2-1a8.3 8.3 0 0 1 .2-1.6l-1.1-1.9 1.7-2.9 2.2.5a7.9 7.9 0 0 1 1.6-.9l.8-2.1h3.4l.8 2.1a7.9 7.9 0 0 1 1.6.9l2.2-.5 1.7 2.9-1.1 1.9a8.3 8.3 0 0 1 .2 1.6l2 1v3l-2 1a8.3 8.3 0 0 1-.3 1.9Z" transform="translate(0 1) scale(.9)"/></svg><span>设置</span></a>
       </nav>
       <div class="rail-engine" id="rail-engine" title="本地服务检测中" aria-label="本地服务状态"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><circle cx="12" cy="12" r="5.5"/></svg></div>
@@ -465,14 +472,62 @@
         const manageButton = document.createElement('button'); manageButton.className = 'secondary-button'; manageButton.textContent = '管理';
         const exportButton = document.createElement('button'); exportButton.className = 'secondary-button'; exportButton.textContent = '导出 Pack';
         exportButton.onclick = () => downloadJson(item.pack, 'annota_' + item.id + '.json');
+        const actions = document.createElement('div'); actions.className = 'library-actions';
+        actions.appendChild(exportButton);
+        let exportChooser = null;
+        if (mediaType(item.media) === 'video') {
+          const batchButton = document.createElement('button'); batchButton.className = 'secondary-button'; batchButton.textContent = '批量导出…';
+          const mediaUrl = safeUrl(item.media.url || '');
+          batchButton.disabled = !mediaUrl;
+          batchButton.title = mediaUrl ? '导出此视频的学习卡' : '此记录没有有效的视频链接';
+          exportChooser = document.createElement('div'); exportChooser.className = 'export-chooser'; exportChooser.hidden = true;
+          const formatLabel = document.createElement('label'); formatLabel.textContent = '格式';
+          const formatSelect = document.createElement('select'); formatSelect.setAttribute('aria-label', '批量导出格式');
+          [['apkg', 'Anki (.apkg)'], ['csv', 'CSV'], ['json', 'JSON'], ['jsonl', 'JSONL']].forEach(([value, label]) => {
+            const option = document.createElement('option'); option.value = value; option.textContent = label; formatSelect.appendChild(option);
+          });
+          formatLabel.appendChild(formatSelect);
+          const overlayLabel = document.createElement('label'); overlayLabel.style.cssText = 'display:flex;align-items:center;gap:5px';
+          const overlayCheck = document.createElement('input'); overlayCheck.type = 'checkbox'; overlayCheck.checked = false;
+          overlayCheck.setAttribute('aria-label', '截图上叠加热力框');
+          const overlayText = document.createElement('span'); overlayText.textContent = '叠加热力框';
+          overlayLabel.append(overlayCheck, overlayText);
+          const confirmExport = document.createElement('button'); confirmExport.type = 'button'; confirmExport.className = 'secondary-button is-active'; confirmExport.textContent = '打开并导出';
+          const cancelExport = document.createElement('button'); cancelExport.type = 'button'; cancelExport.className = 'secondary-button'; cancelExport.textContent = '取消';
+          batchButton.onclick = () => { exportChooser.hidden = !exportChooser.hidden; if (!exportChooser.hidden) formatSelect.focus(); };
+          cancelExport.onclick = () => { exportChooser.hidden = true; };
+          confirmExport.onclick = () => {
+            if (confirmExport.disabled) return;   // in-flight 防抖：避免双击重复触发导出
+            confirmExport.disabled = true; batchButton.disabled = true;
+            const encoded = base64url(JSON.stringify({ format: formatSelect.value, deckName: recordTitle(item.pack, item.id), overlay: overlayCheck.checked }));
+            const destination = new URL(mediaUrl);
+            // 追加而非覆盖原 fragment（保留页面已有的锚点/时间戳）
+            destination.hash = (destination.hash ? destination.hash.slice(1) + '&' : '') + 'annota-export=' + encoded;
+            const bridge = window.__ANNOTA__;
+            const reopen = () => { confirmExport.disabled = false; batchButton.disabled = false; };
+            if (bridge && typeof bridge.navigate === 'function') {
+              // 桌面端：驱动内置浏览器 webview 跳转；注入的 core.js 会读取 hash 自动开始导出
+              Promise.resolve(bridge.navigate(destination.href)).then(reopen).catch(() => { reopen(); notify('打开失败，请重试'); });
+            } else {
+              const opened = window.open(destination.href, '_blank', 'noopener,noreferrer');
+              if (!opened) notify('浏览器拦截了新窗口，请允许弹窗后重试');
+              reopen();
+            }
+            exportChooser.hidden = true;
+          };
+          exportChooser.append(formatLabel, overlayLabel, confirmExport, cancelExport);
+          actions.appendChild(batchButton);
+        }
         const panel = document.createElement('div'); panel.className = 'library-entries'; panel.hidden = true;
         manageButton.onclick = () => {
           panel.hidden = !panel.hidden;
           manageButton.textContent = panel.hidden ? '管理' : '收起';
           if (!panel.hidden) renderEntries(item, panel);
         };
-        main.append(mark, info, count, manageButton, exportButton);
-        row.append(main, panel);
+        main.append(mark, info, count, manageButton, actions);
+        row.append(main);
+        if (exportChooser) row.appendChild(exportChooser);
+        row.appendChild(panel);
         list.appendChild(row);
       }
     }
@@ -561,6 +616,12 @@
     function downloadJson(data, filename) {
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = filename; a.click(); URL.revokeObjectURL(a.href);
+    }
+    function base64url(value) {
+      const bytes = new TextEncoder().encode(String(value));
+      let binary = '';
+      for (const byte of bytes) binary += String.fromCharCode(byte);
+      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
     }
     async function exportAll() {
       await loadRecords();

@@ -114,7 +114,9 @@ def write_syncurl(urls):
 
 
 def build():
-    subprocess.run([sys.executable, os.path.join(ROOT, "build.py")], cwd=ROOT, check=True)
+    # 本地入口构建：允许把 dev/hub.py 探测到的同步候选（本机/LAN/隧道）烧进产物，实现零配置
+    env = dict(os.environ, ANNOTA_LOCAL_SYNC="1")
+    subprocess.run([sys.executable, os.path.join(ROOT, "build.py")], cwd=ROOT, check=True, env=env)
 
 
 def http_ok(url, timeout=6):

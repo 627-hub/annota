@@ -125,7 +125,7 @@ document.dispatchEvent({ type: 'mouseup' });
 await new Promise((r) => setTimeout(r, 5));
 const editor = uiRoot.children.find((n) => n.className === 'va-popover' && n.attributes['aria-label'] === '新建标注');
 assert.ok(editor, '划词后应打开编辑卡');
-const wordInput = editor.children.find((n) => n.attributes && n.attributes['aria-label'] === '词语（必填）');
+const wordInput = editor.children.find((n) => n.attributes && n.attributes['aria-label'] === '标题或词语（选填）');
 wordInput.value = 'monsoon';
 const actions = editor.children.find((n) => n.className === 'va-pop-actions');
 actions.children.find((n) => n.className.includes('va-btn-primary')).click();

@@ -14,6 +14,7 @@
     "id": { "type": "string", "description": "IRI / urn:uuid:..." },
     "type": { "const": "Annotation" },
     "created": { "type": "string", "format": "date-time" },
+    "updated": { "type": "string", "format": "date-time", "description": "最近一次修改时间；合并/多用户版本管理用" },
     "creator": {
       "type": "object",
       "properties": {
@@ -32,9 +33,11 @@
         "type": { "const": "TextualBody" },
         "purpose": { "const": "tagging" },
         "value": { "type": "string", "description": "词的拼写，如 tractor" },
-        "va:word": { "type": "string" },
-        "va:label": { "type": "string", "description": "中文/译名" },
-        "va:pos": { "type": "string", "enum": ["n", "v", "a", "ad", "other"] },
+        "va:word": { "type": "string", "description": "标题 / 词语（可空；通用批注允许纯标签或纯评论）" },
+        "va:label": { "type": "string", "description": "评论 / 备注 / 释义" },
+        "va:tags": { "type": "array", "items": { "type": "string" }, "description": "自由标签（语言、主题、用途）；词典按语言类标签触发" },
+        "va:pos": { "type": "string", "description": "可选词性（向后兼容）" },
+        "va:comment": { "type": "string", "description": "评论 / 备注（与 va:label 同义）" },
         "va:lexiconId": { "type": "string" }
       }
     },

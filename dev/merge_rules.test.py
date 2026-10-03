@@ -38,6 +38,19 @@ class MergeRules(unittest.TestCase):
         b = {"id": "b2", "word": "w", "box": {"x": 0.11, "y": 0.11, "w": 0.2, "h": 0.2}, "t": 1.1}
         self.assertEqual(len(S.merge_entries([a], [b])), 1)
 
+    def test_keeps_wordless_tag_annotation(self):
+        e = {"id": "t1", "tags": ["日语"], "label": "注釈", "box": {"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2}, "t": 2.0}
+        self.assertEqual(len(S.merge_entries([], [e])), 1, "纯标签/备注（无词）应被保留")
+
+    def test_drops_annotation_without_any_content(self):
+        e = {"id": "t2", "box": {"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2}}
+        self.assertEqual(len(S.merge_entries([], [e])), 0, "无词、无标签、无备注应被丢弃")
+
+    def test_wordless_distinguished_by_label(self):
+        a = {"id": "a", "label": "意见A", "box": {"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2}, "t": 1.0}
+        b = {"id": "b", "label": "意见B", "box": {"x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2}, "t": 1.0}
+        self.assertEqual(len(S.merge_entries([a], [b])), 2, "无词时不同备注应视为不同标注")
+
     def test_render_note_video_has_time_columns(self):
         md = S.render_note("t", {"platform": "bilibili", "type": "video", "videoId": "bilibili:BV1"},
                            [{"word": "w", "t": 3, "dur": 1}], [], "", "2026-01-01T00:00:00")

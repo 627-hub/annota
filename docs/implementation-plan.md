@@ -1,7 +1,8 @@
-# Annota 实现规划 v0.1
+# Annota 实现规划 v0.2
 
-> 承接 [`product-spec.md`](product-spec.md) v1.1。先做 Tauri 壳 + MCP-first agent，再铺 UI/多媒态/AI/社交。
+> 承接 [`product-spec.md`](product-spec.md) v1.2 与 [`roadmap.md`](roadmap.md)。先做 Tauri 壳 + MCP-first agent，再铺 UI/多媒态/R3a/社交。
 > 原则：**不重复造轮子；每个界面做完再做下一个；10MB 安装包 + 浏览器内置 agent 是 R1 核心卖点。**
+> **R3 拆分（v1.2 A9）**：AI 押后到 R3b，先做 R3a（数据工作台 + 通用 tag + 批量导出）；R4 重定义为**小组共享**（Group + 片单 + 组页），不做通用社交网络。
 
 ---
 
@@ -131,6 +132,14 @@
 | Step 5 文章划词 | ✅ 完成（`src/textquote.js` TextQuoteSelector 纯函数 + `ArticleBinding` + 划词 UI；`findArticle` 三级退化）。textquote 7 例 + smoke-article 通过 |
 | Step 6 选对象/去猜主图/图片校验 | ✅ 完成（dock「选对象」picker + 自动绑只做确定信号 + 图片版本校验 `imgStale`；顺修壳丢失/overlay 视口定位/showAll 不重绘）。smoke-picker 通过 |
 
+**规划调整（2026-10-03，product-spec v1.2）**
+
+- **R3 拆分为 R3a / R3b**：AI（`/suggest`、AI 辅助建议、agent loop）**押后**到 R3b（等模型选型 + 数据基线）；
+  先做 **R3a**（数据工作台 + 通用 tag §8.3 A + **批量导出**）。
+- **R4 重定义为「小组共享，非社交网络」**：Group + 共同片单 + 组页 permalink + W3C 互通；赞踩/点数/发现**有密度后再做**。
+- **批量导出（新增）**：标注时点截图（仅本条文本 + 热力框）+ 词汇/句子要素 → Anki/CSV/JSONL。
+- 依据文档：[`roadmap.md`](roadmap.md)（竞争格局 / 四层清单 / 分期 / 导出规格）。
+
 ### R2 多媒态（预计 3–4 周）
 
 > 详细实施方案（接缝重构、图片/长图/画廊/文章划词分步做法、测试规范）见 **[`r2-plan.md`](r2-plan.md)**。
@@ -139,17 +148,63 @@
 - 文章划词：`TextQuoteSelector`、高亮底层、评论侧栏
 - Pack/我的库/起始页 支持混媒态
 
-### R3 AI 协作（预计 3–4 周）
+### R3a 数据可见 + 学习闭环（非 AI，预计 2–3 周）
+
+> 从原 R3 抽出的**非 AI**部分：不依赖模型选型，先把数据引擎变现与学习闭环跑通。
+
+| # | 任务 | 验收 |
+|---|---|---|
+| a.1 | 数据工作台 `/console`：总量卡 / top 媒体 / 词频 / 时刻分布 / 一致性 | 一键导出训练集 JSONL（对齐 spec.md §9.2） |
+| a.2 | 通用批注 / 自定义 tag（product-spec §8.3 A）；文案去语言化 | 纯评论标注（word 可空）+ 自定义 tag 可用 |
+| a.3 | **批量导出**（product-spec §6.14）：标注时点截图（**仅本条**文本 + 热力框）+ 词汇/句子要素 → Anki/CSV/JSONL | 我的库选中媒体 → 一键出带截图的 `.apkg`；共享 Pack 不含截图 |
+| a.4 | `renderOnly(entry)` 单项渲染 + `seek(t)` 等帧稳定后截帧 | 截图只出现本条标注的框与文本 |
+
+**R3a 进度（2026-10-03）**
+
+| 项 | 状态 |
+|---|---|
+| a.3 批量导出 | ✅ 完成（`src/export.js` 驱动 + 我的库「批量导出…」入口 + `app/service/anki_export.py` 标准库 `.apkg` 写出器 + `sync_server.py` 三个端点）。测试：`dev/anki_export.test.py`、`dev/export_server.test.py`、`dev/smoke-export.mjs` 通过 |
+| a.4 单项渲染/等帧 | ✅ 完成（`drawEntry`/`renderOnly`/`renderLock`/`setChromeHidden`；等帧走 `seeked`+rVFC，超时降级为纯文字卡） |
+| a.1 数据工作台 `/console` | ✅ 完成（`app/service/console.html` 单页：总量/按媒体/词频 + 训练集 JSONL/CSV/JSON 导出；Python `/console` 路由 + Rust axum `/console`；工作区导航加入口） |
+| a.2 通用批注/自定义 tag | ✅ 完成（决策：**word 可空**、**词典按 tag 触发**）：editor 词性→标签 chips + 文案去语言化；校验放宽 `box\|quote` + (**word \| tags \| comment** 至少一个)，core/Python/Rust 三处对齐；渲染/面板/导出空词回退标签；`schemas/annotation.schema.json` 增 `va:tags`/`va:comment` |
+| **Tauri 原生通道** | ✅ 完成（`app/annota/src/apkg.rs` Rust `.apkg` 写出器 + `sync_server.rs` axum `/api/export/card|finalize|exports/*`；桥新增 `__ANNOTA__.navigate`，库页在桌面端直接驱动内置 webview 跳转并复用 `#annota-export=` 自启）。测试：`cargo test` 8 例通过（含 apkg 结构校验） |
+| 真机截图验证 | ✅ 已验（2026-10-03）：桌面端全链路跑通（库页→内置 webview→自动导出→下载 `.apkg`）。**发现并修复**整窗截图（`captureFrame` 漏裁剪）；随后针对"画面/时机"再改：跳转后等 2s、每条间隔 1.2s、截前 pause → 再升级为**手动确认模式**（见下） |
+| 截图时机/对齐 | ✅ 手动确认（默认开）：`seek(t+0.15)` + pause + `renderOnly` 单条框 → 确认条（带实时时间码/回到标注点/截图/跳过）→ 用户手动拖过则**以当前帧为准回写 `t`+`updated`**。解决"框滞后/停在上一条" |
+| 导出文件名 | ✅ 改为 `annota_<视频号>.apkg`（不再把中文 deck 名洗成下划线） |
+| 卡片格式 | ✅ 正面=单词；背面=词+截图+释义/词性+来源；标签=固定 `annota` + 用户选的语言学习类 tag |
+| OCR 代码审查 | ✅ 已跑（24 文件/35 条），critical/high/medium 全修（详见 [`progress-2026-10-03.md`](progress-2026-10-03.md)） |
+
+**同步模型重构（2026-10-03，真机验收后）**：把「显示 / 覆盖 / 推送」三步拆开（见下），修掉"库里改完、视频页被还原"的根因。
+
+- **显示**：打开视频页只读选版——服务器更新则显示服务器版；本地有未同步离线改动则弹窗选看哪版；**显示不写数据**。
+- **覆盖**：服务器更新、本地没动 → 弹一次"是否用服务器版覆盖本地"，带「以后不再询问」记忆。
+- **推送**：`⇅ 同步` = 把**当前显示的这版**推到服务器（**本地为主**；服务器=云存储/分享/公开），`replace:true` 整包替换。
+- **删除**：本地删只影响本地，点同步才推到服务器。
+- **entry 加 `updated`**：合并/多用户版本管理用；服务器保留冲突双方（R4 版本 UI 预留）。
+- 测试：`dev/sync_replace.test.py`（replace/updated 透传/无词区分）；三处校验（core/Python/Rust）对齐。
+
+### R3b AI 协作（押后，触发条件见下）
+
+> **触发条件**：① 云开放词表模型选型定（product-spec §16 #4）；② 有可用数据基线（R3a 工作台产出）。
+> 在此之前不做，避免在不确定的模型/成本上押注。
 
 - `/suggest` AI 找词：云开放词表检测 → 虚线候选框 → 人确认
-- 数据工作台（`/console`）
-- Agent loop 增强：多轮调用、记忆上下文
+- **AI 辅助标注**：划词/框选后点「AI 建议」→ 模型读选区上下文，判断 tag + 生成草稿，人确认后落库（复用内置 agent / MCP tool loop）
+- AI 引导词自定义；Agent loop 增强：多轮调用、记忆上下文
 
-### R4 社交层（预计 4–6 周）
+### R4 社交层：小组共享，非社交网络（预计 4–6 周）
 
-- 发现页 / Feed 订阅 / 作者关注
-- 信任管理与合并 diff 面板
-- 轻后端（可选静态 Feed 聚合）
+> 重定义依据：product-spec §9、[`roadmap.md`](roadmap.md) §1–4、[`architecture.md`](architecture.md)。核心对象 = **Group**，逐级放开。
+> 架构接缝（ADR-1/2）：本地服务与托管服务分两个部署目标、共用同一契约；同步 **云默认 / 本地兜底 / 公开可匿名读**，本地服务降级不取消；登录绑高意愿动作，不拦浏览。
+
+| 期 | 内容 | 验收 |
+|---|---|---|
+| **R4a 私组** | 私密 Group + 共同片单 ContentList + 组内同步列表 + 私密组页 | 同组两人各自标注在组页可见 |
+| **R4b 公开组页 + 互通** | 可选假名轻账号 + private/public + tag + 公开组页 permalink + **W3C 导入/导出（对接 Hypothesis）** | 公开组页可分享且可被标准工具导入；私密组不公开 |
+| **R4c 镜头对齐** | shot/take 分割（**边播边采帧**，不搬媒体）+ **从标注点向两端对齐镜头** + 计数器 | 标注自动获得镜头长度的片段（R5 训练样本） |
+| **R4d 社交机制** | 赞踩 / 点数（防刷+审核）/ 关注 / 发现 / 热门 | **有密度后**才做；不做全局空榜 |
+
+> 后端形态（product-spec §16 #6）：**静态 Feed + 组页优先**，不建媒体云；身份用本地密钥起步（§16 #3）。
 
 ---
 

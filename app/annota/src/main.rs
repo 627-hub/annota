@@ -12,6 +12,7 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 
 mod sync_server;
 mod agent;
+mod apkg;
 use agent::{agent_cancel, agent_chat, agent_run};
 
 // 全局 AppHandle，供 MCP tool handler 使用（clipboard 等需要后端状态）
@@ -54,6 +55,7 @@ const BRIDGE_JS: &str = r#"
 
   window.__ANNOTA__ = {
     captureFrame: function () { return invoke('capture_frame'); },
+    navigate: function (url) { return invoke('navigate_browser', { url: url }); },
     copyToClipboard: function (opts) { return invoke('write_clipboard', opts || {}); },
     agentRun: function (messages) { return invoke('agent_run', { messages: messages || [] }); },
     agentConfirm: function (confirmId) { return invoke('agent_chat', { confirmId: confirmId }); },

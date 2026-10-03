@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Annota · 数据工作台</title>
+  <link rel="stylesheet" href="/app/annota/public/tokens.css">
+  <style>
+    * { box-sizing:border-box; }
+    html, body { min-height:100%; margin:0; }
+    body { color:var(--va-page-ink); background:var(--va-page-bg); font:14px/1.55 var(--va-font-ui); -webkit-font-smoothing:antialiased; }
+    button { color:inherit; font:inherit; cursor:pointer; }
+    a { color:inherit; }
+    .wrap { max-width:1040px; margin:0 auto; padding:34px 26px 72px; }
+    header.top { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:26px; }
+    .crumb { display:flex; align-items:center; gap:9px; font:600 11px/1 var(--va-font-ui); letter-spacing:.14em; color:#8d939c; }
+    .crumb i { width:22px; height:22px; border-radius:6px; background:linear-gradient(140deg,var(--va-accent,#F5A623),#c07f12); }
+    .back { font-size:12px; color:#8d939c; text-decoration:none; border:1px solid rgba(255,255,255,.12); padding:6px 12px; border-radius:999px; }
+    .back:hover { color:#e7e8eb; border-color:rgba(255,255,255,.24); }
+    h1 { font-size:30px; margin:0 0 6px; }
+    .sub { color:#8d939c; margin:0 0 26px; }
+    .cards { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin-bottom:26px; }
+    .card { border:1px solid var(--va-page-edge,rgba(255,255,255,.08)); background:var(--va-page-card,#16181d); border-radius:14px; padding:16px 16px 14px; }
+    .card b { display:block; font-size:26px; font-variant-numeric:tabular-nums; }
+    .card span { color:#8d939c; font-size:12px; }
+    .panel { border:1px solid var(--va-page-edge,rgba(255,255,255,.08)); background:var(--va-page-card,#16181d); border-radius:16px; padding:18px 18px 20px; margin-bottom:18px; }
+    .panel h2 { font-size:15px; margin:0 0 14px; }
+    .bars { display:flex; flex-direction:column; gap:9px; }
+    .bar { display:grid; grid-template-columns:minmax(0,1fr) 72px 38px; align-items:center; gap:10px; font-size:12px; }
+    .bar .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#c9ccd1; }
+    .bar .track { grid-column:2/4; display:flex; align-items:center; gap:8px; }
+    .bar .fill { height:8px; border-radius:999px; background:linear-gradient(90deg,var(--va-accent,#F5A623),#e0961d); min-width:2px; }
+    .bar .n { color:#8d939c; font-variant-numeric:tabular-nums; }
+    table { width:100%; border-collapse:collapse; font-size:12.5px; }
+    th, td { text-align:left; padding:7px 8px; border-bottom:1px solid rgba(255,255,255,.06); }
+    th { color:#8d939c; font-weight:600; font-size:11px; letter-spacing:.06em; }
+    td.num { text-align:right; font-variant-numeric:tabular-nums; color:#c9ccd1; }
+    .grid2 { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:18px; }
+    .actions { display:flex; gap:10px; flex-wrap:wrap; }
+    .btn { border:1px solid rgba(245,166,35,.32); background:rgba(245,166,35,.09); color:#f0d2a0; border-radius:9px; padding:8px 14px; font-size:12.5px; }
+    .btn:hover { background:rgba(245,166,35,.17); color:#fff0d4; }
+    .empty { color:#8d939c; padding:22px 0; text-align:center; }
+    a.mut { color:#8d939c; }
+    @media (max-width:820px){ .cards{grid-template-columns:repeat(2,1fr)} .grid2{grid-template-columns:1fr} }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <div class="crumb"><i></i><span>ANNOTATION SPACE / CONSOLE</span></div>
+      <a class="back" href="/">← 返回工作区</a>
+    </header>
+    <h1>数据工作台</h1>
+    <p class="sub">本机所有标注的汇总视图，以及训练集导出（JSONL 对齐 spec.md §9.2 三原语）。</p>
+
+    <div class="cards" id="cards"></div>
+
+    <div class="grid2">
+      <section class="panel"><h2>按媒体 · 标注数</h2><div class="bars" id="media-bars"></div></section>
+      <section class="panel"><h2>词频 Top</h2><div id="word-table"></div></section>
+    </div>
+
+    <section class="panel">
+      <h2>训练集导出</h2>
+      <div class="actions">
+        <button class="btn" id="exp-jsonl" type="button">导出 JSONL</button>
+        <button class="btn" id="exp-csv" type="button">导出 CSV</button>
+        <button class="btn" id="exp-json" type="button">导出 JSON</button>
+      </div>
+      <p class="sub" style="margin:12px 0 0;font-size:12px">带截图的学习卡（Anki）在「我的库 → 批量导出…」按视频逐条生成。</p>
+    </section>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    async function api(path) { return fetch(path, { headers: { Accept: 'application/json' } }); }
+    const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+
+    let rows = [];
+    let mediaCount = 0;
+
+    function render(cards, media, words) {
+      $('cards').innerHTML = [
+        ['标注总数', cards.entries],
+        ['媒体数', cards.media],
+        ['不同词条', cards.words],
+        ['累计天数', cards.days],
+      ].map(([label, n]) => `<div class="card"><b>${n}</b><span>${label}</span></div>`).join('');
+
+      const max = Math.max(1, ...media.map((m) => m.n));
+      $('media-bars').innerHTML = media.length
+        ? media.slice(0, 12).map((m) => `<div class="bar"><span class="name" title="${esc(m.title)}">${esc(m.title)}</span><span class="track"><i class="fill" style="width:${Math.round(m.n / max * 100)}%"></i><span class="n">${m.n}</span></span></div>`).join('')
+        : '<div class="empty">还没有标注数据。</div>';
+
+      $('word-table').innerHTML = words.length
+        ? `<table><thead><tr><th>词条</th><th>释义</th><th class="num">次数</th></tr></thead><tbody>${words.slice(0, 30).map((w) => `<tr><td>${esc(w.word)}</td><td style="color:#8d939c">${esc(w.label)}</td><td class="num">${w.n}</td></tr>`).join('')}</tbody></table>`
+        : '<div class="empty">还没有词条。</div>';
+    }
+
+    function download(text, mime, name) {
+      const blob = new Blob([text], { type: mime });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }
+    const CSV_KEYS = ['word','label','tags','t','dur','box','quote','mediaId','url','type','created'];
+    function cell(v) { return '"' + String(v == null ? '' : (typeof v === 'object' ? JSON.stringify(v) : v)).replace(/"/g, '""') + '"'; }
+    $('exp-jsonl').onclick = () => download(rows.map((r) => JSON.stringify(r)).join('\n') + '\n', 'application/x-ndjson;charset=utf-8', 'annota-training.jsonl');
+    $('exp-csv').onclick = () => download('\uFEFF' + [CSV_KEYS.join(','), ...rows.map((r) => CSV_KEYS.map((k) => cell(r[k])).join(','))].join('\r\n'), 'text/csv;charset=utf-8', 'annota-training.csv');
+    $('exp-json').onclick = () => download(JSON.stringify(rows, null, 2), 'application/json;charset=utf-8', 'annota-training.json');
+
+    async function load() {
+      rows = []; mediaCount = 0;   // 复位：重跑 load() 不会重复累加
+      try {
+        const files = (await (await api('/api/list')).json()).files || [];
+        // 分批拉取（每批 8），避免一次性 200 并发打爆单线程本地服务
+        const list = [];
+        const names = files.slice(0, 200);
+        for (let i = 0; i < names.length; i += 8) {
+          const batch = await Promise.all(names.slice(i, i + 8).map(async (file) => {
+            const id = String(file).replace(/\.json$/i, '');
+            try { const pack = await (await api('/api/anno/' + encodeURIComponent(id))).json(); return { id, pack }; } catch (_) { return null; }
+          }));
+          for (const item of batch) if (item) list.push(item);
+        }
+        mediaCount = list.filter((p) => (Array.isArray(p.pack.entries) ? p.pack.entries : []).length > 0).length;
+
+        let entries = 0, days = new Set();
+        const wordMap = new Map();
+        const media = [];
+        for (const p of list) {
+          const pack = p.pack || {};
+          const media_ = pack.media || {};
+          const es = Array.isArray(pack.entries) ? pack.entries : [];
+          if (!es.length) continue;
+          entries += es.length;
+          media.push({ title: media_.title || media_.mediaId || media_.videoId || p.id, n: es.length });
+          for (const e of es) {
+            if (e.created) { const d = String(e.created).slice(0, 10); if (d) days.add(d); }
+            const tags = Array.isArray(e.tags) ? e.tags : [];
+            rows.push({
+              id: e.id || '', word: e.word || '', label: e.label || '', pos: e.pos || '', tags,
+              t: e.t != null ? e.t : null, dur: e.dur != null ? e.dur : null,
+              box: e.box || null, quote: e.quote || null, kind: e.kind || '',
+              mediaId: media_.mediaId || media_.videoId || p.id, url: media_.url || '',
+              type: media_.type || 'video', created: e.created || '',
+            });
+            const w = (e.word || '').trim();
+            if (w) {
+              const cur = wordMap.get(w) || { word: w, label: e.label || '', n: 0 };
+              cur.n += 1;
+              if (!cur.label && e.label) cur.label = e.label;
+              wordMap.set(w, cur);
+            }
+          }
+        }
+        const words = Array.from(wordMap.values()).sort((a, b) => b.n - a.n);
+        render({ entries, media: mediaCount, words: words.length, days: days.size }, media.sort((a, b) => b.n - a.n), words);
+      } catch (error) {
+        $('cards').innerHTML = `<div class="card" style="grid-column:1/-1"><b>—</b><span>无法读取本地服务：${esc(error.message || error)}</span></div>`;
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

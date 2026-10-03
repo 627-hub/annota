@@ -18,6 +18,8 @@ use tokio::fs;
 use tokio::sync::Mutex;
 use tower_http::services::ServeDir;
 
+use crate::apkg;
+
 const HOST: &str = "127.0.0.1";
 const PORT: u16 = 8793;
 const MAX_BODY_BYTES: usize = 8 * 1024 * 1024;
@@ -30,17 +32,19 @@ pub struct AppState {
     root: PathBuf,
     notes_dir: PathBuf,
     settings: PathBuf,
+    exports: PathBuf,
     locks: Arc<DashMap<String, Arc<Mutex<()>>>>,
     settings_lock: Arc<Mutex<()>>,
 }
 
 impl AppState {
-    fn new(store: PathBuf, root: PathBuf, notes_dir: PathBuf, settings: PathBuf) -> Self {
+    fn new(store: PathBuf, root: PathBuf, notes_dir: PathBuf, settings: PathBuf, exports: PathBuf) -> Self {
         Self {
             store,
             root,
             notes_dir,
             settings,
+            exports,
             locks: Arc::new(DashMap::new()),
             settings_lock: Arc::new(Mutex::new(())),
         }
@@ -119,16 +123,24 @@ pub fn resolve_settings_path(app: &AppHandle) -> PathBuf {
 }
 
 pub async fn run_server(store: PathBuf, root: PathBuf, notes_dir: PathBuf, settings: PathBuf) {
-    let state = AppState::new(store, root, notes_dir, settings);
+    let exports = store
+        .parent()
+        .map(|p| p.join("exports"))
+        .unwrap_or_else(|| store.join("exports"));
+    let state = AppState::new(store, root, notes_dir, settings, exports);
 
     let mut app = Router::new()
         .route("/", get(root_handler))
         .route("/app/annota/public/tokens.css", get(tokens_css))
+        .route("/console", get(console_page))
         .route("/api/health", get(health))
         .route("/api/list", get(list))
         .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/ai", get(ai_status))
         .route("/api/note", post(note))
+        .route("/api/export/card", post(export_card))
+        .route("/api/export/finalize", post(export_finalize))
+        .route("/exports/:file", get(serve_export))
         .route(
             "/api/anno/:media_id",
             get(get_anno).put(put_anno).post(put_anno),
@@ -432,6 +444,252 @@ async fn note(State(state): State<AppState>, body: Bytes) -> Response {
     }
 }
 
+// ---------- 批量导出：截图卡 → Anki（本地个人导出；共享 Pack 不含截图，ADR-6）----------
+fn shot_name(idx: i64) -> String {
+    format!("annota_{}.png", sanitize_key(&idx.to_string()))
+}
+
+fn esc(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+fn card_html(entry: &Value, media: &Value, t: f64, idx: i64, has_shot: bool) -> (String, String) {
+    let raw_word = entry.get("word").and_then(|v| v.as_str()).unwrap_or("");
+    let word = if raw_word.trim().is_empty() {
+        entry
+            .get("tags")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+            .and_then(|v| v.as_str())
+            .unwrap_or("标注")
+    } else {
+        raw_word
+    };
+    let word = esc(word);
+    let label = esc(entry.get("label").and_then(|v| v.as_str()).unwrap_or(""));
+    let pos = esc(entry.get("pos").and_then(|v| v.as_str()).unwrap_or(""));
+    let tagstr = esc(&entry
+        .get("tags")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str()).map(|x| format!("#{x}")).collect::<Vec<_>>().join(" "))
+        .unwrap_or_default());
+    let plat = esc(media.get("platform").and_then(|v| v.as_str()).unwrap_or(""));
+    let title = esc(media.get("title").and_then(|v| v.as_str()).unwrap_or(""));
+    let url = esc(media.get("url").and_then(|v| v.as_str()).unwrap_or(""));
+    // 正面 = 只看单词；背面 = 词 + 截图 + 释义/词性 + 来源
+    let front = format!("<div class=\"va-word\">{word}</div>");
+    let shot = if has_shot { format!("<img src=\"{}\">", shot_name(idx)) } else { String::new() };
+    let back = format!(
+        "<div class=\"va-word\">{word}</div>{shot}<div class=\"va-meta\">{label} {pos} {tagstr}</div>\
+         <div class=\"va-src\">{plat} · {title} · {t}s<br>{url}</div>"
+    );
+    (front, back)
+}
+
+async fn count_cards(dir: &Path) -> i64 {
+    let mut n = 0i64;
+    if let Ok(mut entries) = fs::read_dir(dir).await {
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if entry.file_name().to_string_lossy().ends_with(".json") {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+async fn export_card(State(state): State<AppState>, body: Bytes) -> Response {
+    if body.len() > MAX_BODY_BYTES {
+        return json_error(StatusCode::PAYLOAD_TOO_LARGE, "body too large");
+    }
+    let payload: Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => return json_error(StatusCode::BAD_REQUEST, &format!("bad json: {e}")),
+    };
+    let deck_id = payload.get("deck_id").and_then(|v| v.as_str()).unwrap_or("deck");
+    let idx = match payload.get("idx").and_then(|v| v.as_i64()) {
+        Some(i) => i,
+        None => return json_error(StatusCode::BAD_REQUEST, "idx 必填"),
+    };
+    let base = state.exports.join(".tmp").join(sanitize_key(deck_id));
+    let cards_dir = base.join("cards");
+    // 每次导出是新一批：首卡到来时清空上一批的 cards/media，避免残留旧卡（按 idx 命名会串数据）
+    if idx == 0 {
+        let _ = fs::remove_dir_all(base.join("cards")).await;
+        let _ = fs::remove_dir_all(base.join("media")).await;
+    }
+    if let Err(e) = fs::create_dir_all(&cards_dir).await {
+        return json_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("create cards dir: {e}"));
+    }
+    let mut has_shot = false;
+    if let Some(shot) = payload.get("screenshot").and_then(|v| v.as_str()) {
+        if shot.starts_with("data:image") {
+            if let Some(b64) = shot.split(',').nth(1) {
+                if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64.trim()) {
+                    let media_dir = base.join("media");
+                    if fs::create_dir_all(&media_dir).await.is_ok()
+                        && fs::write(media_dir.join(shot_name(idx)), &bytes).await.is_ok()
+                    {
+                        has_shot = true;
+                    }
+                }
+            }
+        }
+    }
+    let rec = json!({
+        "idx": idx,
+        "entry": payload.get("entry").cloned().unwrap_or(json!({})),
+        "media": payload.get("media").cloned().unwrap_or(json!({})),
+        "has_shot": has_shot,
+        "t": payload.get("entry").and_then(|e| e.get("t")).and_then(|v| v.as_f64()).unwrap_or(0.0),
+    });
+    let path = cards_dir.join(format!("{}.json", sanitize_key(&idx.to_string())));
+    let bytes = match serde_json::to_vec(&rec) {
+        Ok(b) => b,
+        Err(e) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("serialize: {e}")),
+    };
+    if let Err(e) = fs::write(&path, bytes).await {
+        return json_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("write card: {e}"));
+    }
+    let done = count_cards(&cards_dir).await;
+    json_ok(json!({ "ok": true, "has_shot": has_shot, "done": done }))
+}
+
+async fn export_finalize(State(state): State<AppState>, body: Bytes) -> Response {
+    if body.len() > MAX_BODY_BYTES {
+        return json_error(StatusCode::PAYLOAD_TOO_LARGE, "body too large");
+    }
+    let payload: Value = match serde_json::from_slice(&body) {
+        Ok(v) => v,
+        Err(e) => return json_error(StatusCode::BAD_REQUEST, &format!("bad json: {e}")),
+    };
+    let deck_id = payload.get("deck_id").and_then(|v| v.as_str()).unwrap_or("deck");
+    let deck_name = payload.get("deck_name").and_then(|v| v.as_str()).unwrap_or("Annota").trim();
+    let deck_name = if deck_name.is_empty() { "Annota" } else { deck_name };
+
+    let base = state.exports.join(".tmp").join(sanitize_key(deck_id));
+    let cards_dir = base.join("cards");
+    let media_dir = base.join("media");
+
+    let mut recs: Vec<Value> = Vec::new();
+    match fs::read_dir(&cards_dir).await {
+        Ok(mut entries) => {
+            while let Ok(Some(entry)) = entries.next_entry().await {
+                if !entry.file_name().to_string_lossy().ends_with(".json") {
+                    continue;
+                }
+                if let Ok(bytes) = fs::read(entry.path()).await {
+                    if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
+                        recs.push(v);
+                    }
+                }
+            }
+        }
+        Err(_) => return json_error(StatusCode::BAD_REQUEST, "没有可导出的卡片（先调 /api/export/card）"),
+    }
+    recs.sort_by(|a, b| {
+        let ai = a.get("idx").and_then(|v| v.as_i64()).unwrap_or(0);
+        let bi = b.get("idx").and_then(|v| v.as_i64()).unwrap_or(0);
+        ai.cmp(&bi)
+    });
+
+    let mut notes: Vec<apkg::Note> = Vec::new();
+    let mut media_files: Vec<apkg::Media> = Vec::new();
+    for r in &recs {
+        let entry = r.get("entry").cloned().unwrap_or(json!({}));
+        let media = r.get("media").cloned().unwrap_or(json!({}));
+        let idx = r.get("idx").and_then(|v| v.as_i64()).unwrap_or(0);
+        let t = r.get("t").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let has_shot = r.get("has_shot").and_then(|v| v.as_bool()).unwrap_or(false);
+        // 只有截图文件确实可读时才算有图，避免 note 里 <img> 指向不存在的媒体
+        let shot_bytes = if has_shot {
+            fs::read(media_dir.join(shot_name(idx))).await.ok()
+        } else {
+            None
+        };
+        let (front, back) = card_html(&entry, &media, t, idx, shot_bytes.is_some());
+        if let Some(bytes) = shot_bytes {
+            media_files.push(apkg::Media { name: shot_name(idx), bytes });
+        }
+        // 标签：固定 annota + 只保留用户选的语言学习类 tag（英语学习/雅思…）
+        let mut tags: Vec<String> = vec!["annota".to_string()];
+        if let Some(list) = entry.get("tags").and_then(|v| v.as_array()) {
+            for tag in list.iter().filter_map(|x| x.as_str()) {
+                if is_lang_tag(tag) {
+                    tags.push(tag.to_string());
+                }
+            }
+        }
+        let mid = media
+            .get("mediaId")
+            .and_then(|v| v.as_str())
+            .or_else(|| media.get("videoId").and_then(|v| v.as_str()))
+            .unwrap_or("");
+        let eid = entry
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_else(|| idx.to_string());
+        notes.push(apkg::Note {
+            guid: apkg::guid_for(&[mid, &eid]),
+            front,
+            back,
+            tags,
+            sort: entry.get("word").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        });
+    }
+
+    if let Err(e) = fs::create_dir_all(&state.exports).await {
+        return json_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("create exports: {e}"));
+    }
+    // 文件名：annota_<视频号>.apkg（不掺中文 deck 名）
+    let mid_raw = recs
+        .first()
+        .and_then(|r| r.get("media"))
+        .and_then(|m| m.get("mediaId").or_else(|| m.get("videoId")))
+        .and_then(|v| v.as_str())
+        .map(|s| s.replace(':', "_"))
+        .unwrap_or_else(|| deck_id.to_string());
+    let mid = sanitize_key(&mid_raw);
+    let file_name = format!("annota_{}.apkg", mid);
+    let out = state.exports.join(&file_name);
+    if let Err(e) = apkg::build_apkg(&out, deck_name, &notes, &media_files, None) {
+        return json_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("build apkg: {e}"));
+    }
+    json_ok(json!({
+        "ok": true,
+        "path": out.to_string_lossy(),
+        "url": format!("/exports/{}", file_name),
+        "cards": notes.len(),
+        "media": media_files.len(),
+    }))
+}
+
+async fn serve_export(State(state): State<AppState>, AxumPath(file): AxumPath<String>) -> Response {
+    let name = Path::new(&file)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    if name.is_empty() || name.contains("..") {
+        return json_error(StatusCode::NOT_FOUND, "not found");
+    }
+    match fs::read(state.exports.join(name)).await {
+        Ok(bytes) => {
+            let mut resp = bytes.into_response();
+            resp.headers_mut().insert(
+                CONTENT_TYPE,
+                "application/octet-stream".parse().unwrap(),
+            );
+            resp.headers_mut().insert(
+                axum::http::header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{name}\"").parse().unwrap(),
+            );
+            resp
+        }
+        Err(_) => json_error(StatusCode::NOT_FOUND, "not found"),
+    }
+}
+
 async fn root_handler(State(state): State<AppState>) -> Response {
     #[cfg(not(debug_assertions))]
     let _ = &state;
@@ -455,6 +713,12 @@ async fn root_handler(State(state): State<AppState>) -> Response {
 
 async fn tokens_css() -> Response {
     ([(CONTENT_TYPE, "text/css; charset=utf-8")], APP_TOKENS_CSS).into_response()
+}
+
+const CONSOLE_HTML: &str = include_str!("../../service/console.html");
+
+async fn console_page() -> Response {
+    Html(CONSOLE_HTML).into_response()
 }
 
 fn key_to_file(store: &Path, key: &str) -> PathBuf {
@@ -500,6 +764,14 @@ fn valid_anchor(e: &Value) -> bool {
         || valid_quote(e.get("quote").unwrap_or(&Value::Null))
 }
 
+// 通用批注：word 可空，标签/备注至少一个（§8.3 A）
+fn entry_has_content(e: &Value) -> bool {
+    let word = e.get("word").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let label = e.get("label").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let tags = e.get("tags").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+    !word.is_empty() || !label.is_empty() || tags > 0
+}
+
 fn to_float(v: &Value, default: f64) -> f64 {
     v.as_f64().unwrap_or(default)
 }
@@ -535,11 +807,38 @@ fn box_dims(b: &Value) -> (f64, f64, f64, f64) {
     )
 }
 
+fn is_lang_tag(t: &str) -> bool {
+    const EXACT: &[&str] = &["英语", "英文", "日语", "法语", "德语", "西班牙语", "韩语", "俄语",
+                             "雅思", "托福", "考研", "四六级", "专四", "专八", "英语学习", "语言学习"];
+    const PREFIX: &[&str] = &["英语", "日语", "法语", "德语", "韩语", "西班牙", "俄语", "葡萄牙"];
+    EXACT.contains(&t) || t.ends_with('语') || PREFIX.iter().any(|p| t.starts_with(p))
+}
+
+fn tag_key(e: &Value) -> String {
+    let mut tags: Vec<String> = e
+        .get("tags")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str()).map(|s| s.to_lowercase()).collect())
+        .unwrap_or_default();
+    tags.sort();
+    tags.join(",")
+}
+
 fn same(e: &Value, o: &Value) -> bool {
     let e_word = e.get("word").and_then(|v| v.as_str()).unwrap_or("");
     let o_word = o.get("word").and_then(|v| v.as_str()).unwrap_or("");
     if e_word != o_word {
         return false;
+    }
+    if e_word.is_empty() && o_word.is_empty() {
+        let el = e.get("label").and_then(|v| v.as_str()).unwrap_or("");
+        let ol = o.get("label").and_then(|v| v.as_str()).unwrap_or("");
+        if el != ol {
+            return false; // 无词时用标签/备注区分
+        }
+        if tag_key(e) != tag_key(o) {
+            return false;
+        }
     }
     let eb = valid_box(e.get("box").unwrap_or(&Value::Null));
     let ob = valid_box(o.get("box").unwrap_or(&Value::Null));
@@ -567,10 +866,7 @@ fn merge_entries(a: &[Value], b: &[Value]) -> Vec<Value> {
         if !e.is_object() {
             continue;
         }
-        if e.get("word").and_then(|v| v.as_str()).map(|s| s.is_empty()).unwrap_or(true) {
-            continue;
-        }
-        if !valid_anchor(e) {
+        if !valid_anchor(e) || !entry_has_content(e) {
             continue;
         }
         if out.iter().any(|o| same(e, o)) {

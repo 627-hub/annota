@@ -1,6 +1,6 @@
 # Annota
 
-**给视频和网页内容加一层可带走的标注：在画面上框一块，记下词条，它就被钉在这一秒和这个位置。**
+**给视频、图片和网页文章加一层可带走的标注：框一块画面、划一段文字，记下你要说的话，它就被钉在这一处。**
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/627-hub/annota)](https://github.com/627-hub/annota/releases)
@@ -10,14 +10,16 @@
 
 ## 这是什么
 
-看视频或文章时遇到想记的东西，通常只能在另一个 App 里记一行字，跟当时那一幕就断了。Annota 把标注直接锚定到**内容本身**：视频里的时间点和画面区域，网页里的位置。原内容仍由原平台托管，Annota 只保存你写的那一层标注。
+看视频、图片或文章时遇到想记的东西，通常只能在另一个 App 里记一行字，跟当时那一处就断了。Annota 把标注直接锚定到**内容本身**：视频里的时间点和画面区域，图片上的框，文章里的选中文字。原内容仍由原平台托管，Annota 只保存你写的那一层标注。
 
 标注默认留在本机，可以导出，也可以同步到自己的设备。数据属于标注者。
 
 ## 演示
 
-- 在画面上框选区域，填词条、释义、词性，绑定出现时间（截图见上）。
-- 从时间轴、词汇表或来源面板回看，点击跳回对应的一帧。
+- **视频**：在画面上框选区域，填词条、释义、词性，绑定出现时间（截图见上）。
+- **图片**：在图片上框选区域；长图滚动、窗口缩放、换设备后框位不漂。
+- **文章**：选中正文里的一段文字建立文本锚点，重排版后仍能定位。
+- 从时间轴、词汇表或来源面板回看，点击跳回对应的画面 / 位置 / 文字。
 
 <details>
 <summary>更多界面截图（首页 / 我的库 / 助手面板 / 设置）</summary>
@@ -38,9 +40,13 @@
 
 ## 功能
 
-**标注**：在视频画面拖框选区域，记录词条、释义、词性、开始时间和持续时长。编辑器里可以一键外链 Cambridge、有道、欧路查词。
+**三种媒态**：视频（时间 + 区域）、图片（区域）、文章（选中文字）。一套数据模型通吃，同一份标注可导出、可跨设备渲染。
 
-**回看与管理**：时间轴、词汇、来源三个视图；「我的库」汇总本机所有标注，支持搜索、按类型筛选、直接编辑或删除条目，导出 Pack。
+**智能绑定 + 选对象**：视频页、单图页、文章页自动识别；瀑布流 / 多图页等不确定的页面不瞎猜，点右下「选对象」用鼠标点选要标的图片或正文即可。
+
+**标注**：画面拖框，或正文划词，记录词条、释义、词性。编辑器里可一键外链 Cambridge、有道、欧路查词。图片标注会记录锚定证据，图片换版本时提示复核而不错位。
+
+**回看与管理**：「我的库」汇总本机所有标注，按视频 / 图片 / 文章筛选，支持搜索、直接编辑或删除条目，导出 Pack。
 
 **同步**：本地服务把标注在设备之间同步，去重合并；局域网内手机可只读观看。
 
@@ -90,15 +96,27 @@ cargo tauri build                   # 打包 dmg / exe
 ```bash
 python3 build.py
 node --test dev/geometry.test.mjs
-node dev/smoke.mjs
+node --test dev/textquote.test.mjs
+python3 dev/merge_rules.test.py
+node dev/smoke.mjs          # 视频
+node dev/smoke-image.mjs    # 图片
+node dev/smoke-article.mjs  # 文章
+node dev/smoke-picker.mjs   # 选对象
 (cd app/annota && cargo check)
 ```
+
+调试图：`dev/demo.html`（视频）、`dev/image.html`（图片）、`dev/article.html`（文章）。
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
 | [`docs/product-spec.md`](docs/product-spec.md) | 产品定位、界面规格、路线与决策 |
+| [`docs/implementation-plan.md`](docs/implementation-plan.md) | R0–R4 分期与进度 |
+| [`docs/roadmap.md`](docs/roadmap.md) | 竞品与差异化、社交层（小组共享）、批量导出规格、R3/R4 分期 |
+| [`docs/architecture.md`](docs/architecture.md) | 架构接缝：本地/托管分层、同步分层、身份、公开页（ADR） |
+| [`docs/progress-2026-10-03.md`](docs/progress-2026-10-03.md) | 当日进展：R3a 落地、真机验收修复、OCR 审查修复 |
+| [`docs/r2-plan.md`](docs/r2-plan.md) | R2 多媒态实施方案（图片 / 文章 / 选对象） |
 | [`docs/spec.md`](docs/spec.md) | 数据模型、共享协议、模型路线 |
 | [`docs/install.md`](docs/install.md) | 各端安装与宿主选择 |
 | [`docs/sync.md`](docs/sync.md) | 同步机制 |

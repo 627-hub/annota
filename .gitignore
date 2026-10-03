@@ -21,6 +21,7 @@ local/
 *.local.jsonl
 app/service/store/
 app/service/notes/
+app/service/exports/
 app/service/settings.json
 dist/.syncurl
 dev/hub.html
