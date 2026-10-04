@@ -11,6 +11,7 @@ fn main() {
                     "agent_run",
                     "agent_chat",
                     "agent_cancel",
+                    "install_update",
                 ]),
             ),
     )

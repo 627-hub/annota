@@ -4,16 +4,47 @@ use base64::Engine;
 use serde_json::{json, Value};
 use std::{fs, io::Cursor, path::PathBuf, sync::OnceLock};
 use tauri::{
-  AppHandle, Listener, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
+  AppHandle, Emitter, Listener, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
 };
 use tauri::window::WindowBuilder;
 use tauri::webview::WebviewBuilder;
 use tauri_plugin_clipboard_manager::ClipboardExt;
+use tauri_plugin_updater::UpdaterExt;
 
 mod sync_server;
 mod agent;
 mod apkg;
 use agent::{agent_cancel, agent_chat, agent_run};
+
+// 启动自动更新检查：延迟后查一次；有新版则 emit 给 toolbar（「更多」菜单出角标），
+// 用户确认后由前端调 `install_update` 下载并重启安装。24h 后再查一次。
+fn spawn_update_check(app: &AppHandle) {
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        // 启动后 5s 首查，避免与首屏/同步服务抢资源
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        loop {
+            let h = handle.clone();
+            match h.updater() {
+                Ok(updater) => match updater.check().await {
+                    Ok(Some(update)) => {
+                        println!("[annota] update available: {} -> {}", update.current_version, update.version);
+                        let payload = json!({
+                            "version": update.version,
+                            "currentVersion": update.current_version,
+                            "notes": update.body.clone().unwrap_or_default(),
+                        });
+                        let _ = h.emit("annota://update-available", payload);
+                    }
+                    Ok(None) => println!("[annota] up to date"),
+                    Err(e) => println!("[annota] update check failed: {e}"),
+                },
+                Err(e) => println!("[annota] updater unavailable: {e}"),
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(24 * 60 * 60)).await;
+        }
+    });
+}
 
 // 全局 AppHandle，供 MCP tool handler 使用（clipboard 等需要后端状态）
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
@@ -682,10 +713,29 @@ fn make_mcp_tools() -> tauri_plugin_mcp_server::McpBuilder {
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+// 用户确认后：下载并安装更新，然后重启应用（由工具栏「更多」菜单触发）。
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<String, String> {
+    let updater = app.updater().map_err(|e| e.to_string())?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "已是最新版本".to_string())?;
+    update
+        .download_and_install(|_chunk, _total| {}, || {})
+        .await
+        .map_err(|e| e.to_string())?;
+    // 安装完成后重启（tauri-plugin-process 的 relaunch）
+    app.restart();
+}
+
 pub fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_screenshots::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(make_mcp_tools().build())
         .invoke_handler(tauri::generate_handler![
             capture_frame,
@@ -696,7 +746,8 @@ pub fn main() {
             va_fetch,
             agent_run,
             agent_chat,
-            agent_cancel
+            agent_cancel,
+            install_update
         ])
         .setup(|app| {
             let _ = APP_HANDLE.set(app.handle().clone());
@@ -733,6 +784,9 @@ pub fn main() {
             let _id2 = app.listen("annota-bridge-ready", |_event| {
                 println!("[annota] __ANNOTA__ bridge ready");
             });
+
+            // 自动更新：启动后延迟检查 + 24h 轮询
+            spawn_update_check(app.handle());
 
             // 测试钩子：ANNOTA_AGENT_TEST=1 时后台跑一轮 agent，打印结果（仅 debug）
             #[cfg(debug_assertions)]

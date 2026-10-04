@@ -111,17 +111,46 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: cargo tauri build --bundles ${{ matrix.bundle }}
         working-directory: app/annota
       - name: Build desktop installer
         if: runner.os != 'macOS' || steps.apple-signing.outputs.enabled != 'true'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: cargo tauri build --bundles ${{ matrix.bundle }}
         working-directory: app/annota
+      - name: Collect updater artifacts (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          # Tauri 更新包：.app.tar.gz + .sig（比 dmg 更适合增量覆盖安装）
+          find app/annota/target/release/bundle/macos -name '*.app.tar.gz' -exec cp {} release-assets/ \;
+          find app/annota/target/release/bundle/macos -name '*.app.tar.gz.sig' -exec cp {} release-assets/ \;
+          ls -la release-assets/ || true
+      - name: Collect updater artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          find app/annota/target/release/bundle/nsis -name '*.exe.sig' -exec cp {} release-assets/ \;
+          ls -la release-assets/ || true
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: ${{ matrix.path }}
+          path: |
+            ${{ matrix.path }}
           if-no-files-found: error
+          retention-days: 5
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'macOS' || runner.os == 'Windows'
+        with:
+          name: ${{ matrix.artifact }}-updater
+          path: release-assets/*
+          if-no-files-found: warning
           retention-days: 5
 
   publish:
@@ -129,12 +158,53 @@ jobs:
     needs: [portable, desktop]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
           merge-multiple: true
+      - name: Generate updater latest.json
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
+        run: |
+          python - <<'PY'
+          import json, os, glob
+          tag = os.environ["RELEASE_TAG"]
+          version = json.load(open("app/annota/tauri.conf.json", encoding="utf-8"))["version"]
+          base = f"https://github.com/627-hub/annota/releases/download/{tag}"
+          files = os.listdir("release-assets")
+          def sig_for(suffix):
+              for f in files:
+                  if f.endswith(suffix + ".sig"):
+                      return open(os.path.join("release-assets", f), encoding="utf-8").read().strip()
+              return None
+          platforms = {}
+          mac_tar = next((f for f in files if f.endswith(".app.tar.gz")), None)
+          if mac_tar:
+              # aarch64 与 x86_64 都指向同一产物（CI 只出一个 mac 包时）；有双包再细分
+              platforms["darwin-aarch64"] = {"signature": sig_for(".app.tar.gz"), "url": f"{base}/{mac_tar}"}
+              platforms["darwin-x86_64"] = platforms["darwin-aarch64"]
+          win_sig = sig_for(".exe")
+          win_exe = next((f for f in files if f.endswith(".exe") and not f.endswith(".sig")), None)
+          if win_exe and win_sig:
+              platforms["windows-x86_64"] = {"signature": win_sig, "url": f"{base}/{win_exe}"}
+          out = {"version": version, "notes": f"Annota {tag}", "pub_date": "2026-01-01T00:00:00Z", "platforms": platforms}
+          open("release-assets/latest.json", "w", encoding="utf-8").write(json.dumps(out, ensure_ascii=False, indent=2))
+          print(json.dumps(out, ensure_ascii=False, indent=2))
+          PY
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           tag_name: ${{ env.RELEASE_TAG }}
           files: release-assets/*
+      # 把 latest.json 推到 CloudBase 静态托管（应用内 updater 的 endpoint）
+      # 条件：配置了 TCB_ENV secret（用 job 级 env 判断，避免 step env 自引用）
+      - name: Publish updater manifest to CloudBase
+        env:
+          TCB_ENV: ${{ secrets.TCB_ENV }}
+        shell: bash
+        run: |
+          if [ -z "$TCB_ENV" ]; then echo "TCB_ENV 未配置，跳过 updater manifest 上传"; exit 0; fi
+          npm i -g @cloudbase/cli@latest
+          tcb hosting deploy release-assets/latest.json app/latest.json -e "$TCB_ENV"

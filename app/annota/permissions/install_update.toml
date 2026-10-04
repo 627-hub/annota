@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-install-update"
+description = "Allows the toolbar to download and install an available app update, then restart."
+commands.allow = ["install_update"]

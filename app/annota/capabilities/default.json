@@ -18,6 +18,8 @@
     "clipboard-manager:allow-write-image",
     "clipboard-manager:allow-write-html",
     "screenshots:default",
+    "updater:default",
+    "process:allow-restart",
     "mcp-server:default",
     "allow-capture-frame",
     "allow-write-clipboard",
@@ -27,6 +29,7 @@
     "allow-bridge-probe-reply",
     "allow-agent-run",
     "allow-agent-chat",
-    "allow-agent-cancel"
+    "allow-agent-cancel",
+    "allow-install-update"
   ]
 }
