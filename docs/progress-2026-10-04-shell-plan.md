@@ -110,3 +110,15 @@
 2. 打 tag（如 `v0.1.1`，需先把 `tauri.conf.json` version 提上去）验证一次端到端更新。
 3. 首次发布后确认 `.../app/latest.json` 可达。
 
+### M2 Shell 接缝（已完成）
+
+- `src/core.js` 两处接缝：`mountShell()` 调 `VA_BROWSER_SHELL.adopt({dock,panel,overlay,toast,uiRoot,api})`；
+  `applyMode()` 调 `VA_BROWSER_SHELL.onModeChange('view'|'edit')`。未注入壳时行为与旧版一致。
+- 新增 `src/browser-shell.js`（M2 pass-through；M5 才实现抽屉）；`docs/shell-contract.md` 固化红线。
+- `build.py` 增第 4 变体 `dist/annotate.browser.js`（无 userscript header/BOM、不含 `version-check.js`、
+  烧本地同步地址、含 browser-shell）；Tauri `ANNOTATE_JS` 改指它。
+- `app/annota/build.rs` 加新鲜度守护（产物缺失/比 src 旧则 `panic!` 提示先 `python3 build.py`）。
+- `dev/check-shell-drift.mjs`（6 断言）：core 引用次数/位置、shell 不直连内部、变体纯净度；已挂 release.yml CI。
+- 验证：Playwright 注入 mock `__ANNOTA__` 后 `data-va-shell="browser"`、shell 已 adopt；全量回归绿。
+
+

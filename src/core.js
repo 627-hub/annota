@@ -352,6 +352,11 @@
     // viewer setup (before toast DOM initialization) would hit a TDZ via showToast.
     if (v && state.annotate) toggleAnnotate(false);
     updateListBadge();
+    // 浏览器壳接缝（M2）：通知壳层模式变化（壳可据此在观看/编辑态间切换）。
+    try {
+      const shell = window.VA_BROWSER_SHELL;
+      if (shell && typeof shell.onModeChange === 'function') shell.onModeChange(v ? 'view' : 'edit');
+    } catch (e) {}
   }
   applyMode();
 
@@ -1206,6 +1211,23 @@
     if (shellMounted) return;
     shellMounted = true;
     uiRoot.append(overlay, bar, sidePanel, toast);
+    // 浏览器壳接缝（M2）：自建浏览器（Tauri）可接管 dock/panel 容器与「观看/编辑」态，
+    // 但**不改**标注状态机 / popover / 数据层。未注入 VA_BROWSER_SHELL 时行为与现在完全一致。
+    try {
+      const shell = window.VA_BROWSER_SHELL;
+      if (shell && typeof shell.adopt === 'function') {
+        shell.adopt({
+          dock: bar, panel: sidePanel, overlay, toast,
+          uiRoot,
+          api: {
+            isView, applyMode,
+            toggleAnnotate, togglePicker, togglePanel, toggleSources, toggleMenu,
+            syncNow, render, renderPanel,
+            getState: () => state,
+          },
+        });
+      }
+    } catch (e) { /* 壳接管失败：保持默认 dock/panel，不影响标注 */ }
   }
 
   function attach(target) {

@@ -120,8 +120,8 @@ const BRIDGE_JS: &str = r#"
 })();
 "#;
 
-// 注入已有的 userscript（geometry / adapter / vocab / core）
-const ANNOTATE_JS: &str = include_str!("../../../dist/annotate.user.js");
+// 注入已有的浏览器壳变体（geometry / adapter / core + browser-shell 接缝）
+const ANNOTATE_JS: &str = include_str!("../../../dist/annotate.browser.js");
 
 // ---------- 截图辅助：用 xcap 直接捕获当前 Annota 窗口 ----------
 fn capture_annota_window() -> Result<(u32, u32, Vec<u8>), String> {

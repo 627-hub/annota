@@ -46,8 +46,15 @@ VARIANTS = {
     "annotate.view.user.js": {"name": "Annota（只读观看端）", "grant": "// @grant        GM_xmlhttpRequest\n// @connect      *\n", "config": "window.VA_VIEW_ONLY=true;window.VA_AUTO_SYNC=true;\n"},
 }
 
+# 浏览器壳变体（Tauri 内联；无 userscript header/BOM，注入 browser-shell.js）
+BROWSER_VARIANT = "annotate.browser.js"
+
 PARTS = ["geometry.js", "textquote.js", "adapter.js", "media.js", "identity.js"]
-TAIL = ["design-tokens.js", "overlay-theme.js", "group.js", "export.js", "version-check.js", "core.js"]
+# browser-shell.js 在 core.js 之前（core 启动时读取 window.VA_BROWSER_SHELL）
+TAIL = ["design-tokens.js", "overlay-theme.js", "group.js", "export.js", "version-check.js", "browser-shell.js", "core.js"]
+# 浏览器壳变体不装 version-check.js：那是 userscript 的自动更新探测，
+# 浏览器端有 tauri-plugin-updater，二者不能混。
+BROWSER_TAIL = ["design-tokens.js", "overlay-theme.js", "group.js", "export.js", "browser-shell.js", "core.js"]
 
 
 def read_src(p):
@@ -149,6 +156,23 @@ def main():
         with open(out, "w", encoding="utf-8") as f:
             f.write("\ufeff" + header + "\n" + body_text)
         print("built:", os.path.relpath(out, HERE), os.path.getsize(out), "bytes", "· us_ver=%s build=%d" % (us_ver, build_ver))
+
+    # 浏览器壳变体（Tauri 内联）：无 userscript header、无 BOM、无 version-check.js、
+    # 烧本地同步地址（Tauri 本地服务 8793）、含 browser-shell.js 接缝。
+    bbody = []
+    for p in PARTS:
+        bbody.append("/* ===== src/%s ===== */\n%s\n" % (p, read_src(p)))
+    bbody.append("/* ===== data: sync urls ===== */\nwindow.VA_SYNC_URLS=[\"http://127.0.0.1:8793\",\"http://localhost:8793\"];\n")
+    if pk:
+        bbody.append("/* ===== data: hub publishable key ===== */\nwindow.__ANNOTA_CB_PK__=%s;\n" % json.dumps(pk))
+    for p in BROWSER_TAIL:
+        bbody.append("/* ===== src/%s ===== */\n%s\n" % (p, read_src(p)))
+    browser_header = ("// Annota · 浏览器壳变体（Tauri 内联）。无 userscript 元数据；"
+                      "无 version-check；含 browser-shell.js 接缝。\n")
+    browser_out = os.path.join(DIST, BROWSER_VARIANT)
+    with open(browser_out, "w", encoding="utf-8") as f:
+        f.write(browser_header + "\n".join(bbody))
+    print("built:", os.path.relpath(browser_out, HERE), os.path.getsize(browser_out), "bytes", "· browser variant")
 
     # MV3 扩展 / 自建浏览器壳 的 core（与 userscript 共用同一份）
     for sub in ("extension", "browser"):

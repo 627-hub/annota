@@ -1,23 +1,4 @@
-﻿// ==UserScript==
-// @name         Annota（编辑）
-// @namespace    https://video-annotate.local/
-// @version      0.1.0.10
-// @description  给视频和网页内容添加可共享标注（框选、时间锚点、词条与同步）
-// @author       Annota
-// @match        *://*/*
-// @updateURL    https://tencentcloudtest-d2eg4lu85c76fb0-1414056833.tcloudbaseapp.com/annotate.user.js
-// @downloadURL  https://tencentcloudtest-d2eg4lu85c76fb0-1414056833.tcloudbaseapp.com/annotate.user.js
-// @grant        none
-// @run-at       document-idle
-// @noframes
-// ==/UserScript==
-// Annota · 内容标注层。Apple（macOS/iOS Safari）可使用免费开源的 Userscripts。
-// 构建 build.py ｜ 自测 dev/demo.html ｜ 文档 README.md、docs/spec.md
-
-/* ===== data: build id ===== */
-window.VA_BUILD=1791085284;
-window.VA_US_VER="0.1.0.10";
-window.VA_DIST_BASE="https://tencentcloudtest-d2eg4lu85c76fb0-1414056833.tcloudbaseapp.com";
+// Annota · 浏览器壳变体（Tauri 内联）。无 userscript 元数据；无 version-check；含 browser-shell.js 接缝。
 /* ===== src/geometry.js ===== */
 /* video-annotate · geometry
  * 内容区坐标：把「左上角归一化 box(x,y,w,h)」在 <video> 元素与其内容矩形之间互相换算。
@@ -921,7 +902,7 @@ window.VA_DIST_BASE="https://tencentcloudtest-d2eg4lu85c76fb0-1414056833.tcloudb
 })(typeof self !== 'undefined' ? self : this);
 
 /* ===== data: sync urls ===== */
-window.VA_SYNC_URLS=[];
+window.VA_SYNC_URLS=["http://127.0.0.1:8793","http://localhost:8793"];
 
 /* ===== data: hub publishable key ===== */
 window.__ANNOTA_CB_PK__="eyJhbGciOiJSUzI1NiIsImtpZCI6IjIzNTE3YWViLWUyZTctNDhkZC05YmMyLTlkNmQ3ZmEwZmE4YiJ9.eyJpc3MiOiJodHRwczovL3RlbmNlbnRjbG91ZHRlc3QtZDJlZzRsdTg1Yzc2ZmIwLmFwLXNoYW5naGFpLnRjYi1hcGkudGVuY2VudGNsb3VkYXBpLmNvbSIsInN1YiI6ImFub24iLCJhdWQiOiJ0ZW5jZW50Y2xvdWR0ZXN0LWQyZWc0bHU4NWM3NmZiMCIsImV4cCI6NDA5NDcyNTM5MywiaWF0IjoxNzkxMDQyMTkzLCJub25jZSI6IjBPRG1NS21BUVdXS2lDMlludGFNdUEiLCJhdF9oYXNoIjoiME9EbU1LbUFRV1dLaUMyWW50YU11QSIsIm5hbWUiOiJBbm9ueW1vdXMiLCJzY29wZSI6ImFub255bW91cyIsInByb2plY3RfaWQiOiJ0ZW5jZW50Y2xvdWR0ZXN0LWQyZWc0bHU4NWM3NmZiMCIsIm1ldGEiOnsicGxhdGZvcm0iOiJQdWJsaXNoYWJsZUtleSJ9LCJyb2xlIjoiYW5vbiIsImlzX2Fub255bW91cyI6dHJ1ZSwiYXBwX21ldGFkYXRhIjp7InByb3ZpZGVyIjoiYW5vbnltb3VzIiwicHJvdmlkZXJzIjpbImFub255bW91cyJdfSwidXNlcl9tZXRhZGF0YSI6eyJuYW1lIjoiQW5vbnltb3VzIn0sInVzZXJfdHlwZSI6IiIsImNsaWVudF90eXBlIjoiY2xpZW50X3VzZXIiLCJpc19zeXN0ZW1fYWRtaW4iOmZhbHNlfQ.Qy1Hq4PchuajDrvr8m5APf3fuHDAhXNI6w0JzZQnTx9lpEb9wHMPdufh4uWBZ4_gfP_z9m1ceVAs09lFwtDfkIyEdWS-7j7A-rAyN4jcIjRu4oIBy5lf7LFOR95NznYd7vvWn3NMXwr7jMBqETA029xAoaOLFzYEVVQlw7wvCTiTZsvKMDa_qmMrbXCP3rJ9mC7qFTt4t3jAI1uHekv8zyNy0PQeizNb9kKtJimpwfGNfs7jKQYITvLH8YSDglP4rMReQAwBPZ_zIwjPA0YcRN1eUzCgb0OwWQI8m6IjwDIgcJZCO_TK9O1AsProM-IuEFJj1QVVzBGCxdg4X678Ig";
@@ -2570,70 +2551,6 @@ button { color: inherit; }
     },
   };
 })(typeof window !== 'undefined' ? window : this);
-
-/* ===== src/version-check.js ===== */
-/* video-annotate · version-check
- * 轻量「版本探测」：向发布基址拉 version.json，比本地 build 号；落后则提示用户重装。
- * 这是对管理器自动更新（@updateURL）的兜底——即便管理器不自动更新，用户也能被提醒。
- * 只依赖 window，失败静默，不打扰标注主流程。
- */
-(function (root) {
-  'use strict';
-  const CHECK_KEY = 'va:lastVersionCheck';
-  const THROTTLE_MS = 6 * 60 * 60 * 1000;   // 6 小时最多探测一次
-
-  function corsFetch(url) {
-    if (root.GM_xmlhttpRequest) {
-      return new Promise((resolve, reject) => {
-        try {
-          root.GM_xmlhttpRequest({ method: 'GET', url, timeout: 8000, onload: (r) => resolve(r.responseText), onerror: reject, ontimeout: reject });
-        } catch (e) { reject(e); }
-      });
-    }
-    return fetch(url, { cache: 'no-store' }).then((r) => (r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status))));
-  }
-
-  function nudge(latest, local) {
-    try {
-      if (document.getElementById('annota-version-nudge')) return;
-      const host = document.createElement('div');
-      host.id = 'annota-version-nudge';
-      host.style.cssText = 'position:fixed;z-index:2147483600;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translateX(-50%);' +
-        'max-width:calc(100vw - 32px);display:flex;gap:10px;align-items:center;padding:10px 14px;border:1px solid rgba(245,166,35,.4);' +
-        'border-radius:12px;background:rgba(18,20,24,.96);color:#f3d4a2;font:13px/1.4 -apple-system,"PingFang SC",sans-serif;' +
-        'box-shadow:0 12px 40px rgba(0,0,0,.5);';
-      const text = document.createElement('span');
-      text.textContent = 'Annota 有新版本，建议更新';
-      const a = document.createElement('a');
-      a.textContent = '重装';
-      a.href = (root.VA_DIST_BASE || '') + '/annotate.view.user.js';
-      a.target = '_blank';
-      a.rel = 'noopener';
-      a.style.cssText = 'color:#f5a623;font-weight:700;text-decoration:none;white-space:nowrap;';
-      const x = document.createElement('button');
-      x.textContent = '×';
-      x.setAttribute('aria-label', '忽略');
-      x.style.cssText = 'all:unset;cursor:pointer;color:#8b949e;padding:0 2px;font-size:15px;';
-      x.onclick = () => host.remove();
-      host.append(text, a, x);
-      (document.body || document.documentElement).appendChild(host);
-    } catch (e) { /* 提示失败不影响主流程 */ }
-  }
-
-  async function check() {
-    try {
-      if (!root.VA_BUILD || !root.VA_DIST_BASE) return;
-      const last = Number(localStorage.getItem(CHECK_KEY) || 0);
-      if (Date.now() - last < THROTTLE_MS) return;
-      localStorage.setItem(CHECK_KEY, String(Date.now()));
-      const meta = JSON.parse(await corsFetch(root.VA_DIST_BASE + '/version.json') || '{}');
-      const latest = Number(meta && meta.build) || 0;
-      if (latest > Number(root.VA_BUILD)) nudge(latest, root.VA_BUILD);
-    } catch (e) { /* 探测失败：静默 */ }
-  }
-
-  root.VAVersion = { check, _nudge: nudge };
-})(typeof self !== 'undefined' ? self : this);
 
 /* ===== src/browser-shell.js ===== */
 /* video-annotate · browser-shell（M2 接缝骨架）

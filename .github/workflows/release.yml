@@ -36,6 +36,8 @@ jobs:
               sys.exit(f"tag {tag} does not match app version v{version}")
           PY
           python build.py
+      - name: Guard browser-shell contract
+        run: node dev/check-shell-drift.mjs
       - name: Package portable downloads
         shell: bash
         run: |
