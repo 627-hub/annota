@@ -19,6 +19,10 @@ python3 dev/hub.py
 观看端就是 `dist/annotate.view.user.js`：构建时烧入 `VA_VIEW_ONLY=true` + `VA_AUTO_SYNC=true`，
 叠层**隐藏「标注」按钮**并关闭标注模式，页面打开后自动同步。适合手机只看不编辑。
 
+> **自动更新**：观看端脚本带 `@updateURL`/`@downloadURL`（发布在 CloudBase 静态托管）。
+> 用户**装一次即可**，管理器会按 `@version` 自动拉新版；另有脚本内「版本探测」兜底提示条。
+> 详见 [`docs/install.md`](install.md) 的「自动更新」。
+
 步骤：
 
 1. 电脑上跑 `python3 dev/hub.py`（**必须**这一步：它会把局域网同步地址烧进脚本）。

@@ -27,7 +27,8 @@ function makeRepo() {
       if (method === 'PUT') {
         const body = JSON.parse(opts.body);
         const cur = files.get(p);
-        if (body.sha && (!cur || cur.sha !== body.sha)) return resp(409, { message: 'sha mismatch' });
+        // 与真实 GitHub 一致：更新已存在文件必须带匹配的 sha，否则 409/422
+        if (cur && (!body.sha || cur.sha !== body.sha)) return resp(409, { message: 'sha mismatch' });
         const f = { content: JSON.parse(fromB64(body.content)), sha: 'sha' + (shaSeq++) };
         files.set(p, f);
         return resp(200, { content: {}, sha: f.sha, commit: { sha: f.sha } });
@@ -119,20 +120,50 @@ await G.writePack(bind, 'BV1', { media: { videoId: 'BV1' }, entries: [{ id: 'e2'
 p = await G.readPack(bind, 'BV1');
 assert.equal(p.entries.length, 2, '同 id 重复写应幂等');
 
-// 4) 409 重试：手动制造 sha 过期
-const filePath = 'packs/BV1.json';
+// 4) 409 重试：手动制造 sha 过期（try/finally 保证恢复 mock，避免污染后续步骤）
 const realFetch = repo.fetch;
-repo.fetch = async (url, opts = {}) => {
-  if ((opts.method || 'GET').toUpperCase() === 'PUT' && JSON.parse(opts.body).sha) {
-    // 第一次 PUT 强制 409，让 store 重取 sha 再试
-    if (!repo.__forced) { repo.__forced = true; return resp(409, { message: 'forced conflict' }); }
-  }
-  return realFetch(url, opts);
-};
-await G.writePack(bind, 'BV1', { media: { videoId: 'BV1' }, entries: [{ id: 'e3', word: 'cherry', box: { x: .5, y: .5, w: .1, h: .1 }, t: 3 }] });
-p = await G.readPack(bind, 'BV1');
-assert.equal(p.entries.length, 3, '409 重试后应写入第 3 条');
-repo.fetch = realFetch;
+try {
+  repo.fetch = async (url, opts = {}) => {
+    if ((opts.method || 'GET').toUpperCase() === 'PUT' && JSON.parse(opts.body).sha) {
+      if (!repo.__forced) { repo.__forced = true; return resp(409, { message: 'forced conflict' }); }
+    }
+    return realFetch(url, opts);
+  };
+  await G.writePack(bind, 'BV1', { media: { videoId: 'BV1' }, entries: [{ id: 'e3', word: 'cherry', box: { x: .5, y: .5, w: .1, h: .1 }, t: 3 }] });
+  p = await G.readPack(bind, 'BV1');
+  assert.equal(p.entries.length, 3, '409 重试后应写入第 3 条');
+} finally {
+  repo.fetch = realFetch;
+}
+
+// 4b) write 的 builder 语义：409 重试会用「最新远端内容」重建 → 不覆盖并发写入（review High 的核心）
+//     直接验证 GitStore.write 的 builder 在每次尝试都拿到 remote，并基于它生成内容。
+{
+  const files2 = new Map([['packs/X.json', { content: { format: 'video-annotate/0.1', entries: [{ id: 'old' }] }, sha: 'v1' }]]);
+  let puts = 0;
+  const mock = async (url, opts = {}) => {
+    const method = (opts.method || 'GET').toUpperCase();
+    const p = url.split('/contents/')[1].split('?')[0];
+    if (method === 'GET') { const f = files2.get(p); return f ? resp(200, { content: b64(JSON.stringify(f.content)), sha: f.sha }) : resp(404, {}); }
+    if (method === 'PUT') {
+      puts += 1;
+      if (puts === 1) {   // 首次：模拟并发——远端被别人加了 e9，sha 变化 → 409
+        files2.set(p, { content: { format: 'video-annotate/0.1', entries: [{ id: 'old' }, { id: 'external' }] }, sha: 'v2' });
+        return resp(409, { message: 'sha changed' });
+      }
+      const body = JSON.parse(opts.body);
+      if (body.sha !== files2.get(p).sha) return resp(409, {});
+      files2.set(p, { content: JSON.parse(fromB64(body.content)), sha: 'v3' });
+      return resp(200, { sha: 'v3' });
+    }
+  };
+  sandbox.fetch = mock;
+  const merge2 = (cur, add) => { const o = (cur || []).slice(); for (const e of add) if (!o.some((x) => x.id === e.id)) o.push(e); return o; };
+  const res = await G.write(bind, 'packs/X.json', (remote) => ({ format: 'video-annotate/0.1', entries: merge2(remote && remote.entries, [{ id: 'mine' }]) }));
+  const ids = res.content.entries.map((e) => e.id).sort().join(',');
+  assert.equal(ids, 'external,mine,old', '重试应基于最新远端重合并，不覆盖他人条目');
+  sandbox.fetch = realFetch;
+}
 
 // 5) group.json 读/写
 assert.equal(await G.readGroup(bind), null, 'group.json 缺失应 null');

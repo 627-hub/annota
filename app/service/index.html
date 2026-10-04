@@ -142,6 +142,13 @@
     .settings-feedback[data-state="busy"] { color:#d7b878; }
     .groups-layout { display:grid; gap:14px; margin-top:24px; }
     .group-list { display:grid; gap:8px; }
+    .group-login-bar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 15px; padding:11px 13px; border:1px solid var(--va-page-border); border-radius:11px; background:var(--va-page-surface); color:var(--va-page-muted); font-size:10px; }
+    .group-login-bar p { margin:0; }
+    .group-mode-options { display:flex; flex-wrap:wrap; gap:8px; margin:0; padding:0; border:0; }
+    .group-mode-option { display:flex; align-items:center; gap:7px; min-height:36px; padding:0 10px; border:1px solid rgba(255,255,255,.1); border-radius:9px; color:#aeb3bb; font-size:10px; cursor:pointer; }
+    .group-mode-option:has(input:checked) { border-color:rgba(245,166,35,.34); background:rgba(245,166,35,.08); color:#f0c57f; }
+    .group-mode-option input { accent-color:var(--va-accent); }
+    .group-step [hidden] { display:none!important; }
     .group-card { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:14px 16px; border:1px solid var(--va-page-border); border-radius:13px; background:var(--va-page-surface-raised); }
     .group-card-copy { min-width:0; }
     .group-card-copy strong { display:block; color:#e1e2e3; font-size:12px; }
@@ -309,21 +316,27 @@
           </section>
 
           <section class="screen" id="screen-groups" aria-label="组管理">
+            <div class="group-login-bar" id="group-login-status" aria-live="polite"><p>正在读取登录状态…</p></div>
             <div class="eyebrow">SMALL GROUPS · SHARED ANNOTATIONS</div>
-            <div class="section-head" style="align-items:center;margin-top:10px"><div><h2 style="font-size:29px">组</h2><p>组标注独立于个人库，保存在你选择的 Git 仓库中。</p></div></div>
+            <div class="section-head" style="align-items:center;margin-top:10px"><div><h2 style="font-size:29px">组</h2><p>组标注独立于个人库；可使用云开发共享，或自行选择 Git 仓库。</p></div></div>
             <div class="groups-layout">
               <section class="setting-section" aria-labelledby="groups-list-heading">
                 <h3 id="groups-list-heading">已加入的组</h3>
-                <p>邀请链接含有组写口令，请只发给可信成员。</p>
+                <p>云开发组由登录身份管理；Git 仓库组的邀请链接含有写口令，请只发给可信成员。</p>
                 <div id="group-list" class="group-list" aria-live="polite"></div>
               </section>
               <section class="setting-section" aria-labelledby="group-create-heading">
                 <h3 id="group-create-heading">创建一个组</h3>
-                <p>按步骤填写组信息。组默认私密；成员身份和个人标注不会写进你的个人库。</p>
+                <p>组默认私密；成员身份和个人标注不会写进你的个人库。</p>
                 <form class="group-form" id="group-create-form" novalidate>
                   <div class="group-step" data-group-step="1">
+                    <fieldset class="group-mode-options" aria-label="建组方式">
+                      <label class="group-mode-option"><input type="radio" name="group-mode" value="hub" checked>云开发（推荐）</label>
+                      <label class="group-mode-option"><input type="radio" name="group-mode" value="git">GitHub / Gitee 仓库（进阶）</label>
+                    </fieldset>
                     <label class="settings-field" for="group-name"><span>第 1 步 · 组名</span><input id="group-name" class="settings-input" maxlength="60" required placeholder="例如：英语听力互助组"></label>
-                    <div class="group-wizard-actions"><span class="settings-field"><small>1 / 3</small></span><button class="primary-button" type="button" data-group-next="1">下一步</button></div>
+                    <label class="settings-field" id="group-hub-first-url-field" for="group-first-url-hub" hidden><span>可选 · 添加首个视频链接作为片单项</span><input id="group-first-url-hub" class="settings-input" type="url" inputmode="url" placeholder="https://…" autocomplete="url"></label>
+                    <div class="group-wizard-actions"><span class="settings-field" id="group-step-counter"><small>1 / 3</small></span><button class="primary-button" type="button" data-group-next="1">下一步</button><button class="primary-button" type="submit" id="group-hub-create-submit">创建云开发组</button></div>
                   </div>
                   <div class="group-step" data-group-step="2" hidden>
                     <p class="group-help"><strong>先手动创建一个空仓库。</strong>在 GitHub 或 Gitee 新建仓库，不要勾选 README、许可或模板文件。然后创建仅对这个仓库有 <code>contents:write</code> 权限的 PAT。令牌只保存在本机浏览器，不会写入组仓库或日志。</p>
@@ -342,14 +355,14 @@
                   <div id="group-create-feedback" class="group-feedback" role="status" aria-live="polite"></div>
                   <div id="group-create-result" class="group-result" hidden>
                     <strong>组已创建 · 邀请链接</strong>
-                    <label for="group-created-invite">链接含有写权限口令，请妥善保管<input id="group-created-invite" class="settings-input" readonly aria-label="新建组邀请链接"></label>
+                    <label for="group-created-invite">云开发组需登录加入；Git 仓库组邀请含写权限口令，请妥善保管<input id="group-created-invite" class="settings-input" readonly aria-label="新建组邀请链接"></label>
                     <div class="setting-actions"><button class="secondary-button" type="button" id="copy-created-invite">复制邀请链接</button><a class="secondary-button" id="open-created-group" href="group.html">打开组页</a></div>
                   </div>
                 </form>
               </section>
               <section class="setting-section" aria-labelledby="group-join-heading">
                 <h3 id="group-join-heading">加入已有组</h3>
-                <p>粘贴成员发来的 Annota 邀请链接。链接中的 token 会保存在此浏览器本地。</p>
+                <p>粘贴成员发来的 Annota 邀请链接。Git 仓库组的 token 会保存在此浏览器本地；云开发组需登录加入。</p>
                 <form class="open-form" id="group-join-form"><input id="group-invite" type="text" placeholder="annota://join?host=…#t=…" aria-label="组邀请链接" autocomplete="off" spellcheck="false"><button class="primary-button" type="submit">加入组</button></form>
                 <div id="group-join-feedback" class="group-feedback" role="status" aria-live="polite"></div>
               </section>
@@ -392,6 +405,8 @@
     </div>
   </div>
   <div id="page-toast" class="page-toast" role="status" aria-live="polite"></div>
+  <script src="./vendor/cloudbase.full.js"></script>
+  <script src="./cb-config.js"></script>
   <script src="../../src/identity.js"></script>
   <script src="../../src/group.js"></script>
   <script>
@@ -433,7 +448,6 @@
       if (route === 'groups') renderGroups();
     }
     window.addEventListener('hashchange', () => setRoute(location.hash.slice(1)));
-    setRoute(location.hash.slice(1));
 
     function platformName(media) {
       const name = (media && media.platform) || '';
@@ -617,6 +631,11 @@
     function groupApi() { return window.VAGroup && typeof window.VAGroup === 'object' ? window.VAGroup : null; }
     function groupPageUrl(rec) {
       const url = new URL('group.html', location.href);
+      if (rec.host === 'hub') {
+        url.search = new URLSearchParams({ host: 'hub', gid: rec.gid || '' }).toString();
+        url.hash = '';
+        return url.href;
+      }
       url.search = new URLSearchParams({ host: rec.host || 'github', repo: rec.repo || '', branch: rec.branch || 'main', gid: rec.gid || '' }).toString();
       url.hash = 't=' + encodeURIComponent(rec.token || '');
       return url.href;
@@ -636,7 +655,13 @@
         const card = document.createElement('article'); card.className = 'group-card';
         const copy = document.createElement('div'); copy.className = 'group-card-copy';
         const name = document.createElement('strong'); name.textContent = rec.name || rec.gid || '未命名组';
-        const meta = document.createElement('span'); meta.textContent = (rec.host === 'gitee' ? 'Gitee' : 'GitHub') + ' · ' + (rec.repo || '仓库未知') + ' · ' + (rec.branch || 'main') + ' · ' + (rec.role || '成员');
+        const meta = document.createElement('span');
+        if (rec.host === 'hub') {
+          const visibility = (rec.visibility || (rec.doc && rec.doc.visibility) || 'private') === 'public' ? '公开组' : '私有组';
+          meta.textContent = '云开发 · ' + visibility + ' · ' + (rec.role || '成员');
+        } else {
+          meta.textContent = (rec.host === 'gitee' ? 'Gitee' : 'GitHub') + ' · ' + (rec.repo || '仓库未知') + ' · ' + (rec.branch || 'main') + ' · ' + (rec.role || '成员');
+        }
         copy.append(name, meta);
         const actions = document.createElement('div'); actions.className = 'group-card-actions';
         const invite = document.createElement('button'); invite.type = 'button'; invite.className = 'secondary-button'; invite.textContent = '邀请链接'; invite.setAttribute('aria-label', '复制 ' + (rec.name || '组') + ' 邀请链接');
@@ -652,12 +677,22 @@
       });
     }
     let activeGroupStep = 1;
+    function selectedGroupMode() {
+      const selected = document.querySelector('input[name="group-mode"]:checked');
+      return selected ? selected.value : 'hub';
+    }
     function setGroupStep(step) {
       activeGroupStep = Math.min(3, Math.max(1, Number(step) || 1));
-      document.querySelectorAll('[data-group-step]').forEach((node) => { node.hidden = Number(node.dataset.groupStep) !== activeGroupStep; });
-      if (activeGroupStep === 2) document.getElementById('group-repo').focus();
-      if (activeGroupStep === 3) document.getElementById('group-first-url').focus();
+      const isHub = selectedGroupMode() === 'hub';
+      document.querySelectorAll('[data-group-step]').forEach((node) => { node.hidden = isHub ? Number(node.dataset.groupStep) !== 1 : Number(node.dataset.groupStep) !== activeGroupStep; });
+      document.querySelector('[data-group-next="1"]').hidden = isHub;
+      document.getElementById('group-hub-create-submit').hidden = !isHub;
+      document.getElementById('group-hub-first-url-field').hidden = !isHub;
+      document.getElementById('group-step-counter').hidden = isHub;
+      if (!isHub && activeGroupStep === 2) document.getElementById('group-repo').focus();
+      if (!isHub && activeGroupStep === 3) document.getElementById('group-first-url').focus();
     }
+    document.querySelectorAll('input[name="group-mode"]').forEach((input) => input.addEventListener('change', () => setGroupStep(1)));
     document.querySelectorAll('[data-group-next]').forEach((button) => button.addEventListener('click', () => {
       if (activeGroupStep === 1 && !document.getElementById('group-name').value.trim()) { document.getElementById('group-name').focus(); return; }
       if (activeGroupStep === 2) {
@@ -670,25 +705,40 @@
       }
       setGroupStep(Number(button.dataset.groupNext) + 1);
     }));
+    setGroupStep(1);
     document.querySelectorAll('[data-group-back]').forEach((button) => button.addEventListener('click', () => setGroupStep(Number(button.dataset.groupBack) - 1)));
     document.getElementById('group-create-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const api = groupApi();
       const feedback = document.getElementById('group-create-feedback');
-      const submit = document.getElementById('group-create-submit');
+      const host = selectedGroupMode() === 'hub' ? 'hub' : document.getElementById('group-host').value;
+      const submit = event.submitter || document.getElementById(host === 'hub' ? 'group-hub-create-submit' : 'group-create-submit');
+      // 复用向导校验：表单校验可能被 Enter 直接 submit 绕过
+      if (!document.getElementById('group-name').value.trim()) { setGroupStep(1); document.getElementById('group-name').focus(); return; }
+      if (host !== 'hub') {
+        const repo = document.getElementById('group-repo');
+        const token = document.getElementById('group-token');
+        if (!/^(?!\.)[A-Za-z0-9_.-]+\/(?!\.)[A-Za-z0-9_.-]+$/.test(repo.value.trim())) { setGroupStep(2); repo.setAttribute('aria-invalid', 'true'); repo.focus(); return; }
+        repo.removeAttribute('aria-invalid');
+        if (!token.value.trim()) { setGroupStep(2); token.focus(); return; }
+        if (!document.getElementById('group-branch').value.trim()) { setGroupStep(2); document.getElementById('group-branch').focus(); return; }
+      }
       if (!api || typeof api.createGroup !== 'function' || typeof api.inviteLink !== 'function') {
         feedback.dataset.state = 'error'; feedback.textContent = '组功能尚未连接。请由 Annota 内容端加载 VAGroup 后再创建。'; return;
       }
-      try { if (window.VAIdentity && typeof window.VAIdentity.ensure === 'function') await window.VAIdentity.ensure(); }
-      catch (_) { feedback.dataset.state = 'error'; feedback.textContent = '本地身份暂不可用，请刷新页面后重试。'; return; }
-      const host = document.getElementById('group-host').value;
+      if (host !== 'hub') {
+        try { if (window.VAIdentity && typeof window.VAIdentity.ensure === 'function') await window.VAIdentity.ensure(); }
+        catch (_) { feedback.dataset.state = 'error'; feedback.textContent = '本地身份暂不可用，请刷新页面后重试。'; return; }
+      }
       const repo = document.getElementById('group-repo').value.trim();
       const branch = document.getElementById('group-branch').value.trim() || 'main';
       const token = document.getElementById('group-token').value.trim();
       const name = document.getElementById('group-name').value.trim();
-      const firstUrl = safeUrl(document.getElementById('group-first-url').value.trim());
+      if (host === 'hub' && !await isHubLoggedIn(api)) { feedback.dataset.state = 'error'; feedback.textContent = '请先用 GitHub 登录'; return; }
+      const firstUrlInput = document.getElementById(host === 'hub' ? 'group-first-url-hub' : 'group-first-url');
+      const firstUrl = safeUrl(firstUrlInput.value.trim());
       if (!firstUrl) {
-        const rawUrl = document.getElementById('group-first-url').value.trim();
+        const rawUrl = firstUrlInput.value.trim();
         if (rawUrl) { feedback.dataset.state = 'error'; feedback.textContent = '首个片单链接须为有效的 http(s) URL。'; return; }
       }
       const items = [];
@@ -700,7 +750,7 @@
         try { addedBy = api.me ? api.me().id : ''; } catch (_) {}
         items.push({ media: { platform, videoId, url: firstUrl, title: parsed.hostname, type: 'video' }, note: '', addedBy, addedAt: new Date().toISOString() });
       }
-      submit.disabled = true; feedback.dataset.state = 'busy'; feedback.textContent = '正在写入空仓库…';
+      submit.disabled = true; feedback.dataset.state = 'busy'; feedback.textContent = host === 'hub' ? '正在创建云开发组…' : '正在写入空仓库…';
       try {
         const result = await api.createGroup({ host, repo, branch, token, name, contentItems: items, visibility: 'private' });
         const rec = result.rec;
@@ -708,11 +758,11 @@
         document.getElementById('group-created-invite').value = invitation;
         document.getElementById('group-create-result').hidden = false;
         const openLink = document.getElementById('open-created-group'); openLink.href = groupPageUrl(rec);
-        feedback.dataset.state = 'ready'; feedback.textContent = '已创建「' + (result.doc.name || name) + '」。PAT 仅保存在本地浏览器。';
-        document.getElementById('group-token').value = '';
+        feedback.dataset.state = 'ready'; feedback.textContent = host === 'hub' ? '已创建「' + (result.doc.name || name) + '」。' : '已创建「' + (result.doc.name || name) + '」。PAT 仅保存在本地浏览器。';
+        if (host !== 'hub') document.getElementById('group-token').value = '';
         renderGroups();
       } catch (_) {
-        feedback.dataset.state = 'error'; feedback.textContent = '创建失败。请确认仓库为空、分支正确，且 PAT 对该仓库有 contents:write 权限。';
+        feedback.dataset.state = 'error'; feedback.textContent = host === 'hub' ? '创建失败，请确认已登录且云开发服务可用。' : '创建失败。请确认仓库为空、分支正确，且 PAT 对该仓库有 contents:write 权限。';
       } finally { submit.disabled = false; }
     });
     document.getElementById('copy-created-invite').addEventListener('click', async () => {
@@ -729,13 +779,15 @@
       if (!api || typeof api.parseInvite !== 'function' || typeof api.joinGroup !== 'function') {
         feedback.dataset.state = 'error'; feedback.textContent = '组功能尚未连接。请稍后重试或从 Annota 内容页加入。'; return;
       }
-      if (!api.parseInvite(invite)) { feedback.dataset.state = 'error'; feedback.textContent = '邀请链接格式无效。'; return; }
+      const parsedInvite = api.parseInvite(invite);
+      if (!parsedInvite) { feedback.dataset.state = 'error'; feedback.textContent = '邀请链接格式无效。'; return; }
+      if (parsedInvite.host === 'hub' && !await isHubLoggedIn(api)) { feedback.dataset.state = 'error'; feedback.textContent = '请先用 GitHub 登录再加入云开发组'; return; }
       feedback.dataset.state = 'busy'; feedback.textContent = '正在读取组清单…';
       try {
         const result = await api.joinGroup(invite);
         feedback.dataset.state = 'ready'; feedback.textContent = '已加入「' + ((result.doc && result.doc.name) || result.rec.name || '组') + '」。';
         document.getElementById('group-invite').value = ''; renderGroups();
-      } catch (_) { feedback.dataset.state = 'error'; feedback.textContent = '加入失败。请确认仓库可读，且邀请口令有效。'; }
+      } catch (_) { feedback.dataset.state = 'error'; feedback.textContent = parsedInvite.host === 'hub' ? '加入失败，请确认云开发组存在且登录状态有效。' : '加入失败。请确认仓库可读，且邀请口令有效。'; }
     });
     async function saveEntries(item, entries, message) {
       const response = await fetch('/api/anno/' + encodeURIComponent(item.id), {
@@ -1002,6 +1054,42 @@
     const initialTheme = storedTheme || 'dark';
     document.documentElement.dataset.theme = initialTheme === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : initialTheme;
     document.querySelectorAll('[data-theme-choice]').forEach((item) => item.classList.toggle('is-active', item.dataset.themeChoice === initialTheme));
+    async function isHubLoggedIn(api) {
+      try {
+        const user = api && typeof api.currentUser === 'function' ? await api.currentUser() : null;
+        return !!user;
+      } catch (_) { return false; }
+    }
+    async function renderGroupLoginStatus() {
+      const bar = document.getElementById('group-login-status');
+      const api = groupApi();
+      bar.textContent = '';
+      let user = null;
+      try { if (api && typeof api.currentUser === 'function') user = await api.currentUser(); } catch (_) {}
+      const cached = api && typeof api.hubMe === 'function' ? api.hubMe() : null;
+      const signedIn = !!user;
+      const message = document.createElement('p');
+      if (signedIn) {
+        const name = (cached && cached.name) || (user && (user.name || user.username || user.id)) || 'GitHub 用户';
+        message.textContent = '已登录：' + name;
+        const signOut = document.createElement('button'); signOut.type = 'button'; signOut.className = 'secondary-button'; signOut.textContent = '退出登录';
+        signOut.addEventListener('click', async () => { if (api && typeof api.signOut === 'function') await api.signOut(); await renderGroupLoginStatus(); renderGroups(); });
+        bar.append(message, signOut);
+      } else {
+        message.textContent = '未登录 · 建组/加入需要先登录';
+        const login = document.createElement('button'); login.type = 'button'; login.className = 'secondary-button'; login.textContent = '用 GitHub 登录';
+        login.addEventListener('click', () => { if (api && typeof api.startLogin === 'function') api.startLogin(location.href); });
+        bar.append(message, login);
+      }
+    }
+    async function initializeGroupPage() {
+      const api = groupApi();
+      try { if (api && typeof api.handleTicket === 'function') await api.handleTicket(); }
+      catch (_) { /* 登录失败时仍展示可重试的未登录状态 */ }
+      await renderGroupLoginStatus();
+      setRoute(location.hash.slice(1));
+    }
+    initializeGroupPage();
     loadRuntimeSettings();
     loadAiStatus();
     loadRecords();

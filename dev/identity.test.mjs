@@ -21,6 +21,9 @@ function mkSandbox() {
   return s;
 }
 
+assert.ok(globalThis.crypto && globalThis.crypto.subtle && globalThis.crypto.subtle.generateKey,
+  'WebCrypto(subtle.generateKey) 不可用，无法测密码学身份路径');
+
 const s = mkSandbox();
 const id = s.VAIdentity;
 
@@ -48,5 +51,14 @@ const s3 = mkSandbox();
 const e = await s3.VAIdentity.ensure({ name: '   ' });
 assert.equal(e.name, '匿名标注者');
 
-console.log('identity.test  PASS · id=' + a.id.slice(0, 22) + '… · name 可变 · creator 形状 OK');
+// 无 WebCrypto 兜底：ensure 返回 id=null/degraded（不固化临时 id）；creatorSync 给 urn:local: 且不落盘
+const s4 = mkSandbox();
+s4.crypto = { subtle: undefined };   // 去掉 WebCrypto
+const f = await s4.VAIdentity.ensure({ name: 'nomore' });
+assert.ok(f.id === null && f.degraded === true, '无 WebCrypto 时 ensure 应 degraded、不产生伪 hash id');
+assert.equal(s4.localStorage.getItem('annota:identity'), null, '降级身份不应落盘（留待升级）');
+const g = s4.VAIdentity.creatorSync('nomore');
+assert.ok(String(g.id).startsWith('urn:local:'), '降级 creatorSync 用 urn:local: 前缀');
+
+console.log('identity.test  PASS · id=' + a.id.slice(0, 22) + '… · name 可变 · creator 形状 · 无 WebCrypto 降级 OK');
 process.exit(0);

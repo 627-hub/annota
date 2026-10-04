@@ -20,6 +20,7 @@
     list: '<path d="M8 6h12M8 12h12M8 18h12"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/>',
     sync: '<path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.6 9a7 7 0 0 1 11.7-2L20 12M4 12l2.7 5a7 7 0 0 0 11.7-2"/>',
     more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+    layers: '<path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m4 13 8 4.5 8-4.5"/>',
     close: '<path d="m6 6 12 12M18 6 6 18"/>',
     search: '<circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.2 4.2"/>',
     clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.3 2"/>',
@@ -146,7 +147,9 @@
   const GROUP_CACHE_PREFIX = 'va:group:';    // va:group:<gid>:<mediaId> → 组内该媒体的 pack
   function groupEntries() {
     const out = [];
+    const hid = hiddenSources();
     for (const g of (window.VAGroup ? window.VAGroup.listGroups() : [])) {
+      if (hid[g.gid]) continue;                  // 该来源被取消勾选 → 不渲染
       let pack = null;
       try { pack = JSON.parse(localStorage.getItem(GROUP_CACHE_PREFIX + g.gid + ':' + state.mediaId) || 'null'); } catch (e) {}
       if (!pack || !Array.isArray(pack.entries)) continue;
@@ -155,12 +158,6 @@
       }
     }
     return out;
-  }
-  function loadGroupCache(gid, mediaId) {
-    try { return JSON.parse(localStorage.getItem(GROUP_CACHE_PREFIX + gid + ':' + mediaId) || 'null'); } catch (e) { return null; }
-  }
-  function saveGroupCache(gid, mediaId, pack) {
-    try { localStorage.setItem(GROUP_CACHE_PREFIX + gid + ':' + mediaId, JSON.stringify(pack)); } catch (e) {}
   }
 
   function toggleHidden(e) {
@@ -249,6 +246,7 @@
   const btnPanel = mkAction('列表', 'list', () => togglePanel());
   const btnPick = mkAction('选对象', 'pick', () => togglePicker());
   const btnSync = mkAction('同步', 'sync', syncNow);
+  const btnSources = mkAction('来源', 'layers', () => toggleSources());
   const btnCfg = mkAction('更多', 'more', toggleMenu);
   const btnBridge = mkbtn('发给 AI 助手', copyContext);
   const btnDiag = mkbtn('诊断信息', toggleDiag);
@@ -256,7 +254,7 @@
   const statusDot = el('i'); statusDot.className = 'va-sync-dot';
   const statusText = el('span', null, '就绪');
   status.append(statusDot, statusText);
-  bar.append(brand, separator, btnAnno, btnAll, btnPanel, btnPick, btnSync, status, btnCfg);
+  bar.append(brand, separator, btnAnno, btnAll, btnPanel, btnPick, btnSync, status, btnSources, btnCfg);
 
   const sidePanel = el('aside'); sidePanel.className = 'va-panel';
   const panelHead = el('div'); panelHead.className = 'va-panel-head';
@@ -342,9 +340,114 @@
   function applyMode() {
     const v = isView();
     btnAnno.style.display = v ? 'none' : '';
-    if (v) toggleAnnotate(false);
+    // 观看态 = 纯看：隐藏编辑/发布/进阶入口，只留 显示 / 列表 / 来源（+ 品牌小标）。
+    btnPick.style.display = v ? 'none' : '';
+    btnSync.style.display = v ? 'none' : '';
+    btnCfg.style.display = v ? 'none' : '';
+    status.style.display = v ? 'none' : '';
+    separator.style.display = v ? 'none' : '';
+    btnSources.style.display = v ? '' : 'none';
+    bar.classList.toggle('va-dock--viewer', v);
+    // Only tear down an active annotation session. Calling this during initial
+    // viewer setup (before toast DOM initialization) would hit a TDZ via showToast.
+    if (v && state.annotate) toggleAnnotate(false);
+    updateListBadge();
   }
   applyMode();
+
+  /* ---------- 观看态：来源列表（同一视频多个标注来源，可勾选） ---------- */
+  // 来源 = 本地个人标注 + 每个「当前媒体所属组」的共享标注。勾选决定哪些来源参与渲染。
+  const HIDDEN_SRC_KEY = 'va:hiddenSources';   // { [sourceId]: true } 被取消勾选的来源
+  function hiddenSources() {
+    try { const o = JSON.parse(localStorage.getItem(HIDDEN_SRC_KEY) || '{}'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; }
+  }
+  function setSourceVisible(id, visible) {
+    const o = hiddenSources();
+    if (visible) delete o[id]; else o[id] = true;
+    try { localStorage.setItem(HIDDEN_SRC_KEY, JSON.stringify(o)); } catch (e) {}
+    render();
+  }
+  // 当前媒体关联的来源清单：[{id:'local',name,count}, {id:'grp_xxx',name,count,meta}]
+  function sourceList() {
+    const list = [];
+    const mine = state.entries.length;
+    list.push({ id: 'local', kind: 'local', name: '我的本地标注', count: mine, meta: '本机 · ' + mine + ' 条' });
+    let groups = [];
+    try { groups = (window.VAGroup && window.VAGroup.groupsForMedia) ? window.VAGroup.groupsForMedia(state.mediaId) : []; } catch (e) {}
+    for (const g of groups) {
+      let n = 0;
+      try { const pack = JSON.parse(localStorage.getItem(GROUP_CACHE_PREFIX + g.gid + ':' + state.mediaId) || 'null'); n = (pack && pack.entries && pack.entries.length) || 0; } catch (e) {}
+      list.push({ id: g.gid, kind: 'group', name: g.name || g.gid || '组', count: n, meta: (g.host === 'hub' ? '云开发' : (g.host || 'git')) + ' · ' + n + ' 条' });
+    }
+    return list;
+  }
+  function visibleEntryCount() {
+    const hid = hiddenSources();
+    let n = 0;
+    if (!hid.local) n += state.entries.length;
+    for (const s of sourceList()) { if (s.kind === 'group' && !hid[s.id]) n += s.count; }
+    return n;
+  }
+  function updateListBadge() {
+    const n = visibleEntryCount();
+    btnPanel.dataset.count = String(n);
+    const existing = btnPanel.querySelector('.va-count-badge');
+    if (n > 0) {
+      const b = existing || el('span', null, String(n));
+      b.className = 'va-count-badge'; b.textContent = String(n);
+      if (!existing) btnPanel.appendChild(b);
+    } else if (existing) { existing.remove(); }
+  }
+  const sourcesPanel = el('div'); sourcesPanel.className = 'va-sources';
+  sourcesPanel.style.display = 'none';
+  sourcesPanel.setAttribute('aria-label', '标注来源列表');
+  // 收起态下 dock 只露圆钮、.va-action 隐藏，误点「来源」会看不到弹层；
+  // 悬停 dock 直到展开菜单后再点。用户一旦打开过菜单就置 `1`，不再自动展开。
+  async function revealDock() {
+    if (!bar.classList.contains('va-dock--viewer')) return;
+    if (bar.dataset.open === '1' || bar.querySelector('.va-dock-fab')) return;   // 已展开 / 无收起态
+    if (bar.dataset.openAutoDone === '1') return;
+    bar.dataset.openAutoDone = '1';
+    bar.dataset.open = '1';
+    await new Promise((r) => setTimeout(r, 260));
+    document.dispatchEvent(new Event('pointermove'));   // 唤醒宿主页 hover 态（Firefox 等）
+  }
+  async function toggleSources(force) {
+    const open = force == null ? sourcesPanel.style.display === 'none' : !!force;
+    if (!open) { sourcesPanel.style.display = 'none'; btnSources.classList.remove('is-active'); sourcesPanel.remove(); return; }
+    await revealDock();
+    btnSources.classList.add('is-active');
+    renderSources();
+    if (!sourcesPanel.isConnected) uiRoot.appendChild(sourcesPanel);
+    sourcesPanel.style.display = '';
+  }
+  function renderSources() {
+    sourcesPanel.textContent = '';
+    const list = sourceList();
+    const head = el('div', null, '标注来源（本视频 ' + list.length + ' 个）'); head.className = 'va-sources-head';
+    sourcesPanel.appendChild(head);
+    const hid = hiddenSources();
+    list.forEach((s) => {
+      const on = !hid[s.id];
+      const row = el('button'); row.type = 'button'; row.className = 'va-src-item' + (on ? ' is-on' : '');
+      const chk = el('span', null, on ? '✓' : ''); chk.className = 'va-src-check';
+      const t = el('span'); t.className = 'va-src-text';
+      t.appendChild(el('b', null, s.name)); t.appendChild(el('small', null, s.meta));
+      row.append(chk, t);
+      row.addEventListener('click', () => {
+        const nowHidden = !hiddenSources()[s.id];
+        setSourceVisible(s.id, nowHidden ? false : true);
+        renderSources(); updateListBadge();
+      });
+      sourcesPanel.appendChild(row);
+    });
+  }
+  document.addEventListener('click', (ev) => {
+    if (sourcesPanel.style.display === 'none') return;
+    const path = ev.composedPath ? ev.composedPath() : [];
+    if (path.includes(sourcesPanel) || path.includes(btnSources)) return;
+    toggleSources(false);
+  });
 
   // 诊断面板（B站等实机上排查用）
   const diagPanel = el('pre', { display: 'none' });
@@ -918,7 +1021,7 @@
     await persistAppSettings();
     setSyncStatus('词典模板已保存');
   }
-  function toggleMenu() {
+  async function toggleMenu() {
     const on = menuPanel.style.display === 'none';
     if (!on) { menuPanel.style.display = 'none'; btnCfg.classList.remove('is-active'); menuPanel.remove(); return; }
     btnCfg.classList.add('is-active');
@@ -965,6 +1068,29 @@
       });
     };
     const joinRow = el('div', { display: 'flex', gap: '6px', marginTop: '5px' }); joinRow.className = 'va-menu-row';
+    // 云开发（hub）登录：进组前需登录以便云端署名/鉴权。GitHub OAuth → 云函数签 ticket → 回本页兑换会话。
+    const hubRow = el('div', { display: 'flex', gap: '6px', marginTop: '5px' }); hubRow.className = 'va-menu-row';
+    async function renderHubRow() {
+      hubRow.textContent = '';
+      const api = window.VAGroup;
+      const me = api && api.hubMe ? api.hubMe() : null;
+      let signedIn = false;
+      try { signedIn = !!(api && api.currentUser && (await api.currentUser())); } catch (e) {}
+      if (me || signedIn) {
+        hubRow.appendChild(el('span', { color: '#8bc98b', fontSize: '10px', flex: '1' }, '已登录：' + ((me && me.name) || 'GitHub 用户')));
+        hubRow.appendChild(mkbtn('退出', async () => { try { await api.signOut(); } catch (e) {} renderHubRow(); }));
+      } else {
+        hubRow.appendChild(mkbtn('用 GitHub 登录云开发', () => { try { api.startLogin(); } catch (e) { groupFeedback.textContent = '登录不可用'; } }));
+      }
+    }
+    // 若从 OAuth 回跳（?ticket=…）兑换会话，成功后刷新登录行
+    if (window.VAGroup && typeof window.VAGroup.handleTicket === 'function') {
+      try {
+        const u = await window.VAGroup.handleTicket();
+        if (u) { showToast('已登录云开发'); render(); }
+      } catch (e) { /* 无 ticket 或兑换失败：忽略 */ }
+    }
+    renderHubRow();
     const joinBtn = mkbtn('加入组', async () => {
       const api = window.VAGroup;
       if (!api || typeof api.parseInvite !== 'function' || typeof api.joinGroup !== 'function') { groupFeedback.textContent = '组功能暂不可用'; return; }
@@ -1000,7 +1126,7 @@
     pushBtn.style.width = 'auto'; pushBtn.style.flex = '1';
     joinRow.appendChild(pushBtn);
     groupInvite.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); joinBtn.click(); } });
-    groupPanel.append(groupHeading, groupInvite, joinRow, groupFeedback, groupList);
+    groupPanel.append(groupHeading, groupInvite, joinRow, hubRow, groupFeedback, groupList);
     renderDockGroups();
     menuPanel.textContent = '';
     const cands = (window.VA_SYNC_URLS || []).join('  ·  ');
@@ -1204,6 +1330,9 @@
     if (raf) cancelAnimationFrame(raf); raf = null;
     if (diagTimer) { clearInterval(diagTimer); diagTimer = null; }
     if (autoSyncTimer) { clearTimeout(autoSyncTimer); autoSyncTimer = null; }
+    if (groupPullTimer) { clearTimeout(groupPullTimer); groupPullTimer = null; }
+    if (groupPushTimer) { clearTimeout(groupPushTimer); groupPushTimer = null; }
+    groupPulledMedia = null;
     if (probeTimer) { clearInterval(probeTimer); probeTimer = null; }
     overlay.remove(); bar.remove(); sidePanel.remove(); diagPanel.remove(); toast.remove(); menuPanel.remove(); probe.remove();
     uiRoot.querySelectorAll('.va-popover').forEach((n) => n.remove());
@@ -1259,10 +1388,13 @@
     state.exportOnly = null;
     const binding = state.binding; if (!binding) return;
     const cr = state.cr; if (!cr) return;
-    for (const e of state.entries) {
-      if (isHidden(e)) continue;                       // 本地隐藏：画面上不渲染
-      if (!state.showAll && !binding.isVisible(e)) continue;
-      drawEntry(e);
+    const hid = hiddenSources();
+    if (!hid.local) {
+      for (const e of state.entries) {
+        if (isHidden(e)) continue;                       // 本地隐藏：画面上不渲染
+        if (!state.showAll && !binding.isVisible(e)) continue;
+        drawEntry(e);
+      }
     }
     // 组来源条目：叠加在个人条目之上（虚线 + 作者 chip），不污染 state.entries
     for (const e of groupEntries()) {
@@ -1270,6 +1402,7 @@
       if (!state.showAll && !binding.isVisible(e)) continue;
       drawEntry(e);
     }
+    updateListBadge();
   }
 
   function renderOnly(entry) {
@@ -1671,8 +1804,9 @@
     if (!entryTags(e).some(isLangTag)) dictionary.style.display = 'none';
     pop.appendChild(dictionary);
 
-    if (isView()) {
+    if (isView() || e.__group) {   // 只读 / 组来源（他人标注）：不可编辑删除（组条目是拷贝，改删会假成功）
       const actions = el('div'); actions.className = 'va-pop-actions';
+      if (e.__group) { const who = el('span', null, '组内标注 · ' + (e.__author || '成员')); who.className = 'va-src-name'; pop.append(who); }
       actions.append(mkbtn('跳转到画面', () => { if (state.binding) state.binding.locate(e); pop.remove(); }), mkbtn('关闭', () => pop.remove()));
       if (timed) pop.append(el('div', null, formatTime(e.t) + ' · 显示 ' + dur + ' 秒'), actions);
       else pop.append(actions);
@@ -2191,6 +2325,7 @@
   /* ---------- 启动 ---------- */
   loadAppSettings();
   try { if (window.VAIdentity) window.VAIdentity.warmup({ name: appSettings.profile && appSettings.profile.name }); } catch (e) {}
+  try { if (window.VAVersion) window.VAVersion.check(); } catch (e) {}   // 版本探测：落后则提示重装
   mountShell();   // 即使页面无可自动绑定的媒态，也保留 dock（含「选对象」）
   A.watch((v) => {
     if (v) {

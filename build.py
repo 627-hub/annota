@@ -3,12 +3,25 @@
 
 用法: python3 build.py
 """
+import json
 import os
+import re
+import hashlib
+from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(HERE, "src")
 DIST = os.path.join(HERE, "dist")
-VERSION = "0.1.0"
+VERSION_PATH = os.path.join(HERE, "VERSION")
+BUILD_TIME_PATH = os.path.join(DIST, ".buildtime")
+
+# 发布基址：脚本自更新（@updateURL/@downloadURL）与版本探测都指向它。
+# 默认 = CloudBase 静态托管域名；本地/分支发布可用 ANNOTA_DIST_BASE 覆盖。
+DIST_BASE = os.environ.get("ANNOTA_DIST_BASE", "https://tencentcloudtest-d2eg4lu85c76fb0-1414056833.tcloudbaseapp.com").rstrip("/")
+
+# US_VER（userscript 版本）每次构建递增：管理器据此判断「有新版」。
+# BUILD_VER（构建号）时间戳：内容真变了才 +1，供脚本内「版本探测」比对（避免无意义重建触发提示）。
+BASE_VERSION = "0.1.0"
 
 HEADER_BASE = """// ==UserScript==
 // @name         {name}
@@ -17,6 +30,8 @@ HEADER_BASE = """// ==UserScript==
 // @description  给视频和网页内容添加可共享标注（框选、时间锚点、词条与同步）
 // @author       Annota
 // @match        *://*/*
+// @updateURL    {base}/{file}
+// @downloadURL  {base}/{file}
 {grant}// @run-at       document-idle
 // @noframes
 // ==/UserScript==
@@ -32,12 +47,66 @@ VARIANTS = {
 }
 
 PARTS = ["geometry.js", "textquote.js", "adapter.js", "media.js", "identity.js"]
-TAIL = ["design-tokens.js", "overlay-theme.js", "group.js", "export.js", "core.js"]
+TAIL = ["design-tokens.js", "overlay-theme.js", "group.js", "export.js", "version-check.js", "core.js"]
 
 
 def read_src(p):
     with open(os.path.join(SRC, p), encoding="utf-8") as f:
         return f.read().rstrip()
+
+
+def read_pk():
+    """读取发布用 Publishable Key（公开值）并内联进 userscript。
+
+    优先级：环境变量 ANNOTA_CB_PK → app/service/cb-config.js（工作区/组页同一份来源）。
+    缺省留空字符串：注入态读不到 key，hub 组不可用，但不影响其它功能。
+    """
+    pk = os.environ.get("ANNOTA_CB_PK", "").strip()
+    if pk:
+        return pk
+    cfg = os.path.join(HERE, "app", "service", "cb-config.js")
+    if os.path.exists(cfg):
+        try:
+            txt = open(cfg, encoding="utf-8").read()
+            m = re.search(r'__ANNOTA_CB_PK__\s*=\s*["\']([^"\']*)["\']', txt)
+            if m:
+                return m.group(1).strip()
+        except OSError:
+            pass
+    return ""
+
+
+def bump_version():
+    """每次构建递增 US_VER（patch 位）；返回 "BASE.<n>"。"""
+    n = 0
+    if os.path.exists(VERSION_PATH):
+        try:
+            n = int(open(VERSION_PATH, encoding="utf-8").read().strip())
+        except (OSError, ValueError):
+            n = 0
+    n += 1
+    with open(VERSION_PATH, "w", encoding="utf-8") as f:
+        f.write("%d\n" % n)
+    return "%s.%d" % (BASE_VERSION, n)
+
+
+def build_number(body_text):
+    """内容指纹（构建号）。与上次不同才递增 dist/.buildtime，作为脚本内版本探测的基准。"""
+    digest = hashlib.sha1(body_text.encode("utf-8")).hexdigest()
+    state = {}
+    if os.path.exists(BUILD_TIME_PATH):
+        try:
+            state = json.load(open(BUILD_TIME_PATH, encoding="utf-8"))
+        except (OSError, ValueError):
+            state = {}
+    if not isinstance(state, dict):
+        state = {}
+    if state.get("hash") == digest and state.get("t"):
+        return int(state["t"])
+    stamp = int(datetime.now(timezone.utc).timestamp())
+    with open(BUILD_TIME_PATH, "w", encoding="utf-8") as f:
+        json.dump({"t": stamp, "hash": digest}, f)
+    return stamp
 
 
 def main():
@@ -55,24 +124,52 @@ def main():
         urls = "[]"
     body.append("/* ===== data: sync urls ===== */\nwindow.VA_SYNC_URLS=%s;\n" % urls)
 
+    # 注入态（B站/YouTube 等）没有宿主页的 window.__ANNOTA_CB_PK__，这里内联发布 PK，
+    # 使观看端/编辑端脚本在真站点也能用 hub 组。PK 是公开值，随脚本分发无碍。
+    pk = read_pk()
+    if pk:
+        body.append("/* ===== data: hub publishable key ===== */\nwindow.__ANNOTA_CB_PK__=%s;\n" % json.dumps(pk))
+
     for p in TAIL:
         body.append("/* ===== src/%s ===== */\n%s\n" % (p, read_src(p)))
 
+    body_text = "\n".join(body)
+
+    # 版本：US_VER 每次构建递增（管理器自动更新）、BUILD_VER=内容构建号（脚本内版本探测）。
+    us_ver = bump_version()
+    build_ver = build_number(body_text)
+    body_text = ("/* ===== data: build id ===== */\n"
+                 "window.VA_BUILD=%d;\nwindow.VA_US_VER=%s;\nwindow.VA_DIST_BASE=%s;\n"
+                 % (build_ver, json.dumps(us_ver), json.dumps(DIST_BASE))) + body_text
+
     for fn, meta in VARIANTS.items():
-        header = HEADER_BASE.format(name=meta["name"], version=VERSION, grant=meta["grant"]) + meta.get("config", "")
+        header = HEADER_BASE.format(name=meta["name"], version=us_ver, grant=meta["grant"], base=DIST_BASE, file=fn) + meta.get("config", "")
         out = os.path.join(DIST, fn)
         # 前置 UTF-8 BOM：无 charset 响应头时也按 UTF-8 解码，避免中文乱码
         with open(out, "w", encoding="utf-8") as f:
-            f.write("\ufeff" + header + "\n" + "\n".join(body))
-        print("built:", os.path.relpath(out, HERE), os.path.getsize(out), "bytes")
+            f.write("\ufeff" + header + "\n" + body_text)
+        print("built:", os.path.relpath(out, HERE), os.path.getsize(out), "bytes", "· us_ver=%s build=%d" % (us_ver, build_ver))
 
     # MV3 扩展 / 自建浏览器壳 的 core（与 userscript 共用同一份）
     for sub in ("extension", "browser"):
         d = os.path.join(HERE, "app", sub)
         if os.path.isdir(d):
             with open(os.path.join(d, "core.js"), "w", encoding="utf-8") as f:
-                f.write("\n".join(body))
+                f.write(body_text)
             print("built:", os.path.relpath(os.path.join(d, "core.js"), HERE))
+
+    # 版本探测顶标：脚本据此判断远端是否有新版（build 号更大）。
+    write_version_json(build_ver, us_ver)
+
+
+def write_version_json(build_ver, us_ver):
+    payloads = {
+        "version.json": {"build": build_ver, "usVersion": us_ver, "at": datetime.now(timezone.utc).isoformat()},
+    }
+    for name, obj in payloads.items():
+        with open(os.path.join(DIST, name), "w", encoding="utf-8") as f:
+            json.dump(obj, f, ensure_ascii=False)
+        print("built:", os.path.relpath(os.path.join(DIST, name), HERE), json.dumps(obj, ensure_ascii=False))
 
 
 if __name__ == "__main__":

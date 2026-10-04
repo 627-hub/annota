@@ -24,6 +24,8 @@ app/service/notes/
 app/service/exports/
 app/service/settings.json
 dist/.syncurl
+# 注意：dist/version.json 是版本探测顶标（入库，随发布上传）；dist/.buildtime 是本地构建状态，不入库
+dist/.buildtime
 dev/hub.html
 
 # 模型权重
@@ -39,3 +41,4 @@ models/
 
 # 本地运行产物
 nohup.out
+cloudbaserc.json

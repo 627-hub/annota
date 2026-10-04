@@ -1,0 +1,10 @@
+{
+  "name": "auth-github",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Annota · GitHub OAuth → CloudBase 自定义登录 ticket",
+  "main": "index.js",
+  "dependencies": {
+    "@cloudbase/node-sdk": "^3.16.0"
+  }
+}

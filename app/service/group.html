@@ -7,6 +7,9 @@
   <meta name="referrer" content="no-referrer">
   <title>Annota · 组页</title>
   <link rel="stylesheet" href="../annota/public/tokens.css">
+  <script src="./vendor/cloudbase.full.js"></script>
+  <script src="./cb-config.js"></script>
+  <script src="../../src/group.js"></script>
   <style>
     * { box-sizing:border-box; }
     body { min-height:100vh; margin:0; padding:32px 18px 60px; color:var(--va-page-ink); background:var(--va-page-bg); font:14px/1.6 var(--va-font-ui); -webkit-font-smoothing:antialiased; }
@@ -53,7 +56,7 @@
     </header>
     <p class="notice">这里只展示文字标注、作者和原内容链接，不嵌入视频、图片或缩略图。</p>
     <section id="page-state" class="state" role="status" aria-live="polite">
-      <strong id="state-title">正在读取组清单…</strong><span id="state-copy">正在连接仓库。</span><button id="retry-load" type="button" hidden>重试读取</button>
+      <strong id="state-title">正在读取组清单…</strong><span id="state-copy">正在连接仓库。</span><button id="hub-login" type="button" hidden>用 GitHub 登录</button><button id="retry-load" type="button" hidden>重试读取</button>
     </section>
     <section id="group-feed" class="feed" aria-label="按片单分组的标注流" hidden></section>
   </main>
@@ -64,17 +67,19 @@
       const repo = (params.get('repo') || '').trim();
       const branch = (params.get('branch') || 'main').trim() || 'main';
       const gid = (params.get('gid') || '').trim();
+      const isHub = params.get('host') === 'hub';
       const host = params.get('host') === 'gitee' || (!params.has('host') && /gitee\.io$/i.test(location.hostname)) ? 'gitee' : 'github';
       const token = new URLSearchParams(location.hash.replace(/^#/, '')).get('t') || '';
       const pageState = document.getElementById('page-state');
       const stateTitle = document.getElementById('state-title');
       const stateCopy = document.getElementById('state-copy');
       const retry = document.getElementById('retry-load');
+      const hubLogin = document.getElementById('hub-login');
       const feed = document.getElementById('group-feed');
-      const safeRepo = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo);
+      const safeRepo = /^(?!\.)[A-Za-z0-9_.-]+\/(?!\.)[A-Za-z0-9_.-]+$/.test(repo);   // 拒绝 . / .. 段
       function showState(title, copy, canRetry) {
         pageState.hidden = false; feed.hidden = true;
-        stateTitle.textContent = title; stateCopy.textContent = copy; retry.hidden = !canRetry;
+        stateTitle.textContent = title; stateCopy.textContent = copy; retry.hidden = !canRetry; hubLogin.hidden = true;
       }
       function rawBase() {
         return host === 'gitee'
@@ -113,8 +118,14 @@
         try {
           const target = new URL(url); if (!['http:', 'https:'].includes(target.protocol)) return '';
           if (Number.isFinite(Number(seconds)) && Number(seconds) >= 0) {
-            const current = target.hash.replace(/^#/, '');
-            target.hash = (current ? current + '&' : '') + 't=' + Math.floor(Number(seconds));
+            const t = Math.floor(Number(seconds));
+            // B站/抖音用 ?t= 秒做跳转；YouTube 用 #t=
+            if (/(^|\.)bilibili\.com$|(^|\.)douyin\.com$/i.test(target.hostname)) {
+              target.searchParams.set('t', String(t));
+            } else {
+              const current = target.hash.replace(/^#/, '');
+              target.hash = (current ? current + '&' : '') + 't=' + t;
+            }
           }
           return target.href;
         } catch (_) { return ''; }
@@ -173,6 +184,25 @@
         pageState.hidden = true; feed.hidden = false;
       }
       async function load() {
+        if (isHub) {
+          if (!gid) { showState('组链接不完整', '需要组 ID。请从 Annota 组列表重新打开。', false); return; }
+          showState('正在读取组清单…', '正在连接云开发。', false);
+          try {
+            const bind = { kind: 'hub', gid };
+            const doc = await VAGroup.HubStore.readGroup(bind);
+            if (!doc) throw new Error('group unavailable');
+            const items = doc.contentList && Array.isArray(doc.contentList.items) ? doc.contentList.items : [];
+            const pairs = await Promise.all(items.map(async (item) => {
+              const key = mediaKey(item);
+              return [key, await VAGroup.HubStore.readPack(bind, key)];
+            }));
+            render(doc, Object.fromEntries(pairs));
+          } catch (_) {
+            showState('组不可读', '可能是私有组，请先登录。', false);
+            hubLogin.hidden = false;
+          }
+          return;
+        }
         if (!safeRepo || !gid) { showState('组链接不完整', '需要仓库 owner/name 和组 ID。请从 Annota 组列表重新打开。', false); return; }
         showState('正在读取组清单…', '正在连接仓库。', false);
         try {
@@ -180,22 +210,40 @@
           if (!doc || (doc.id && doc.id !== gid)) throw new Error('group mismatch');
           const items = doc.contentList && Array.isArray(doc.contentList.items) ? doc.contentList.items : [];
           const index = doc.packIndex && typeof doc.packIndex === 'object' ? doc.packIndex : {};
-          const keys = new Set(items.map(mediaKey).filter(Boolean));
-          Object.keys(index).forEach((key) => keys.add(String(key).replace(/[^\w.-]+/g, '_')));
-          const pairs = await Promise.all(Array.from(keys).map(async (key) => {
-            const sourceKey = Object.keys(index).find((candidate) => String(candidate).replace(/[^\w.-]+/g, '_') === key) ||
-              (items.find((item) => mediaKey(item) === key) && items.find((item) => mediaKey(item) === key).media.videoId) || key;
-            const entry = index[sourceKey] || {};
-            const path = entry.path || 'packs/' + key + '.json';
-            try { return [key, await readJson(path)]; } catch (_) { return [key, { entries: [] }]; }
-          }));
-          render(doc, Object.fromEntries(pairs));
+          // 每个片单项 / 索引项各自独立取路径，避免两个 key 归一化后撞同一文件（会串标注）
+          const jobs = [];
+          const seenPath = new Set();
+          const push = (rawKey, mediaId) => {
+            const entry = index[rawKey] || {};
+            const path = entry.path || ('packs/' + String(rawKey).replace(/[^\w.-]+/g, '_') + '.json');
+            const cacheKey = mediaId || rawKey;
+            if (seenPath.has(path + '\u0000' + cacheKey)) return;
+            seenPath.add(path + '\u0000' + cacheKey);
+            jobs.push({ cacheKey, path });
+          };
+          items.forEach((it) => { if (it && it.media) push(it.media.videoId || it.media.mediaId || '', mediaKey(it)); });
+          Object.keys(index).forEach((rawKey) => push(rawKey, mediaKey(rawKey)));
+          // 并发上限 6，避免一次性打爆 API 限流；失败单独标记（不伪装成"空"）
+          const results = {};
+          for (let i = 0; i < jobs.length; i += 6) {
+            const batch = jobs.slice(i, i + 6);
+            await Promise.all(batch.map(async (job) => {
+              try { results[job.cacheKey] = await readJson(job.path); }
+              catch (_) { results[job.cacheKey] = { entries: [], __error: true }; }
+            }));
+          }
+          render(doc, results);
         } catch (_) {
           showState('组不可读', '仓库可能是私有的，或当前链接没有有效的仓库写口令。请确认邀请链接权限后重试。', true);
         }
       }
       retry.addEventListener('click', load);
-      load();
+      hubLogin.addEventListener('click', () => VAGroup.startLogin(location.href));
+      async function boot() {
+        try { await VAGroup.handleTicket(); } catch (_) { /* 兑换失败仍允许以只读访客方式加载公开组 */ }
+        await load();
+      }
+      boot();
     })();
   </script>
 </body>

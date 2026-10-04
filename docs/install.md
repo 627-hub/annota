@@ -53,3 +53,18 @@ python3 dev/serve.py
 
 ## 上线分发（后续）
 把 `dist/annotate.user.js` 放到任意静态 URL（GitHub Raw / Gist / 自建），用户访问该 `.user.js` 链接即可安装——与「去中心化、不做平台」的定位一致。
+
+## 自动更新（已启用）
+
+脚本元数据里带 `@updateURL` / `@downloadURL`，指向 CloudBase 静态托管上的**固定地址**：
+
+```
+https://tencentcloudtest-d2eg4lu85c76fb0-1414056833.tcloudbaseapp.com/annotate.view.user.js
+```
+
+- 用户**只需装一次**。之后管理器（Tampermonkey / Violentmonkey；iOS 的 Stay 一般也支持）按元数据里的 `@version` 比对，发现更大就自动拉新版。
+- 每次发布 `sh cloudbase/publish.sh`：构建会让 `@version` 自动 +1（`dist/` 里的 `VERSION` 计数），再上传脚本与 `version.json`。**版本号不变就不会触发更新**，所以请走这个脚本发布，别手改产物。
+- **兜底提示**：脚本内还有一层「版本探测」——启动时（6 小时最多一次）拉一次发布基址的 `version.json`，若线上 `build` 号比本地新，就在底栏上方弹一条「有新版本，建议更新 → 重装」的提示条。即便管理器不自动更新（如 iOS Userscripts 对 `@updateURL` 支持不稳），用户也能被提醒。
+- 发布基址默认写死在 `build.py` 的 `DIST_BASE`；换域名用环境变量覆盖：`ANNOTA_DIST_BASE=https://你的域名 python3 build.py`。
+
+> **iOS 备注**：Userscripts 对 `@updateURL` 的支持不稳定。若自动更新不生效，用户会看到上面的兜底提示条，点「重装」即可；或改用 Stay。

@@ -1,7 +1,8 @@
 # 进展 · 2026-10-03（R4a 小组共享落地）
 
 > 承接 [`r4-plan.md`](r4-plan.md) v0.2（GitStore 主路径）。R4a 六步全部完成，含**真实 Gitee API round-trip 实测**。
-> 状态：全量回归（JS×2 / identity·gitstore·group_sync / PY×4 / smoke×7 / cargo×8）全绿；**未提交**（本文件落盘后一并提交）。
+> 状态：全量回归（JS×2 / identity·gitstore·group_sync / PY×4 / smoke×7 / cargo×8）全绿；**已提交**（7597510，含本文件）。
+> 注：提交后工作区仍有后续改动未提交（src/core.js / group.js / identity.js 等 15 文件，及未跟踪的 cloudbase/、docs/r4b-plan.md），属 R4b 进行中工作，不在本批范围。
 
 ---
 
@@ -30,7 +31,7 @@
 
 **发现并修复的平台差异**：
 - **Gitee 新建文件必须用 `POST /contents`**（`PUT` 对不存在文件报 `sha is empty`）；更新用 `PUT + 非空 sha`。GitHub 是 `PUT` 统一处理（新建可省 sha）。
-- `GitStore.write` 改为：先 GET 判存在 → 不存在且 Gitee 走 POST、否则 PUT+sha；token 走 `access_token` query（Gitee 官方推荐）。
+- `GitStore.write` 改为：先 GET 判存在 → 不存在且 Gitee 走 POST、否则 PUT+sha。token 传输初版走 `access_token` query（Gitee 官方推荐），提交后已改为 `Authorization: token` header（避免 token 进 URL/日志/Referer，Gitee 同样支持）。
 - mock 测试补 Gitee 分支（POST 新建 + PUT 更新）。
 
 ## 4. 顺带修复（Rust）
@@ -42,7 +43,7 @@
 
 - 用户 PAT 由 UI 粘贴、存 localStorage，仅发往对应平台；**产品不经 CLI/`sec`/env**。
 - 开发者自测：token 走 `sec`（`gitee`），经 `secenv` 管道注入，**未回显明文、未进 history/仓库**。
-- 工作区 `AGENTS.md` 已补：禁 `echo $KEY`/导出 env 传密钥；产品不得要求用户用 `sec`/CLI/env。
+- 工作区 `AGENTS.md`（本机全局 `~/.config/opencode/AGENTS.md`，未入库）已补：禁 `echo $KEY`/导出 env 传密钥；产品不得要求用户用 `sec`/CLI/env。
 
 ## 6. 未做 / 待办
 

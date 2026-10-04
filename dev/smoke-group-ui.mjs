@@ -17,7 +17,7 @@ function makeNode(tag) {
       contains(c) { return n.className.split(/\s+/).includes(c); },
       add(c) { if (!this.contains(c)) n.className = (n.className + ' ' + c).trim(); },
       remove(c) { n.className = n.className.split(/\s+/).filter((x) => x && x !== c).join(' '); },
-      toggle(c, force) { const on = force == null ? !this.contains(c) : !!force; on ? this.add(c) : this.remove(c); return on; },
+      toggle(c, force) { const on = (force === null || force === undefined) ? !this.contains(c) : !!force; on ? this.add(c) : this.remove(c); return on; },
     },
     appendChild(c) { if (typeof c === 'string' || typeof c === 'number') c = { textContent: String(c), parentElement: null }; c.parentElement = n; n.children.push(c); return c; },
     append(...cs) { cs.forEach((c) => n.appendChild(c)); }, attachShadow() { n.shadowRoot = makeNode('shadow-root'); return n.shadowRoot; },
@@ -50,10 +50,13 @@ await new Promise((resolve) => setTimeout(resolve, 20));
 const host = document.body.children.find((node) => node.id === 'annota-shadow-host');
 assert.ok(host && host.shadowRoot, 'overlay Shadow DOM should mount');
 const root = host.shadowRoot.children.find((node) => node.className === 'va-ui-root');
+assert.ok(root, 'overlay ui root should mount');
 const dock = root.children.find((node) => node.className === 'va-dock');
+assert.ok(dock, 'dock should mount');
 const more = dock.children.find((node) => node.attributes && node.attributes['aria-label'] === '更多');
 assert.ok(more, 'dock more menu button exists');
 more.click();
+await new Promise((resolve) => setTimeout(resolve, 20));
 const descendants = [];
 function walk(node) { (node.children || []).forEach((child) => { descendants.push(child); walk(child); }); }
 walk(root);

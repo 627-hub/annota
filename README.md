@@ -77,6 +77,8 @@
 
 下载 `annotate.user.js`，装进任意用户脚本管理器（桌面 Tampermonkey / Violentmonkey；Apple 平台可用开源的 Userscripts）。观看端专用变体是 `annotate.view.user.js`。
 
+脚本带 `@updateURL`/`@downloadURL`，**装一次即可自动更新**（另有脚本内版本探测兜底提示）；发布用 `sh cloudbase/publish.sh`。
+
 安装细节与移动端用法见 [`docs/install.md`](docs/install.md)、[`docs/mobile.md`](docs/mobile.md)。
 
 ## 从源码运行

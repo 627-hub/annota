@@ -173,6 +173,39 @@ button { color: inherit; }
 }
 .va-dock[data-side="left"] { right: auto; left: 24px; }
 .va-dock[data-grow="1"] { animation: va-dock-grow 520ms var(--va-ease) both; }
+.va-brand { display:inline-flex; align-items:center; gap:8px; min-width:0; padding:0 5px; color:#e8e2d6; }
+.va-brand-mark { display:grid; place-items:center; width:30px; height:30px; flex:none; border:1px solid rgba(245,166,35,.28); border-radius:10px; background:rgba(245,166,35,.09); color:var(--va-accent); }
+.va-brand-mark svg { width:17px; height:17px; }
+.va-brand-copy { display:block; color:#f0d2a0; font-size:12px; font-weight:700; line-height:1.1; letter-spacing:.015em; white-space:nowrap; }
+.va-brand-copy small { display:block; margin-top:3px; color:#747c86; font-size:7px; font-weight:650; letter-spacing:.12em; }
+.va-separator { display:block; width:1px; height:26px; flex:none; background:rgba(255,255,255,.12); }
+.va-sync-indicator { display:inline-flex; align-items:center; gap:6px; flex:none; padding:0 7px; color:#8b949e; font-size:10px; white-space:nowrap; }
+.va-sync-dot { width:6px; height:6px; flex:none; border-radius:50%; background:var(--va-success); box-shadow:0 0 8px rgba(52,199,123,.45); }
+.va-dock--viewer { gap:5px; }
+.va-dock--viewer .va-separator { display:block !important; margin:0 2px; }
+.va-dock--viewer .va-brand { width:40px; height:40px; flex:none; justify-content:center; padding:0; }
+.va-dock--viewer .va-brand-mark { width:40px; height:40px; border-color:rgba(245,166,35,.48); border-radius:12px; background:rgba(245,166,35,.1); }
+.va-dock--viewer .va-brand-mark svg { width:21px; height:21px; }
+.va-dock--viewer .va-brand-copy { display:none; }
+.va-count-badge { display:inline-grid; place-items:center; min-width:18px; height:18px; margin-left:4px; padding:0 5px; border-radius:999px; background:#f5a623; color:#241707; font:700 11px/1 var(--va-font-ui); }
+.va-sources {
+  position:fixed; right:24px; bottom:88px; z-index:2147483003;
+  width:min(320px,calc(100vw - 32px)); max-height:60vh; overflow-y:auto; overscroll-behavior:contain;
+  padding:10px; pointer-events:auto; border:1px solid rgba(255,255,255,.105); border-radius:16px;
+  background:rgba(16,18,22,.96); -webkit-backdrop-filter:blur(22px) saturate(145%); backdrop-filter:blur(22px) saturate(145%);
+  box-shadow:0 18px 52px rgba(0,0,0,.5),inset 0 1px rgba(255,255,255,.055);
+  color:var(--va-text); font:12px/1.5 var(--va-font-ui);
+}
+.va-sources-head { padding:2px 6px 8px; color:#9b8260; font-size:11px; font-weight:700; letter-spacing:.08em; }
+.va-src-item { display:flex; align-items:center; gap:10px; width:100%; padding:10px; border:1px solid transparent; border-radius:10px; background:transparent; color:var(--va-text); text-align:left; cursor:pointer; }
+.va-src-item + .va-src-item { margin-top:2px; }
+.va-src-item:hover { background:rgba(255,255,255,.05); }
+.va-src-item.is-on { background:rgba(245,166,35,.1); }
+.va-src-check { display:grid; place-items:center; width:22px; height:22px; flex:none; border:1.5px solid #5a6068; border-radius:7px; color:transparent; }
+.va-src-item.is-on .va-src-check { border-color:#f5a623; background:rgba(245,166,35,.18); color:#f5a623; }
+.va-src-text { min-width:0; flex:1; }
+.va-src-text b { display:block; font-size:13px; font-weight:620; }
+.va-src-text small { display:block; margin-top:2px; color:#8b949e; font-size:11px; }
 .va-dock-fab {
   display: grid;
   place-items: center;
@@ -289,10 +322,10 @@ button { color: inherit; }
 .va-mark.is-stale { border-color:#ef7379; border-style:dashed; background:rgba(239,115,121,.08); }
 .va-mark.is-stale .va-mark-label { border-color:rgba(239,115,121,.4); color:#f0b0b4; }
 .va-mark.is-flash { animation: va-flash 160ms ease; }
-/* 组来源：虚线 + 来源色点（他人标注视觉语言） */
-.va-mark.is-group { border-style:dashed; border-color:#38BDF8; background:rgba(56,189,248,.09); }
+/* 组来源：虚线 + 来源色点（他人标注视觉语言；用 --va-comment 类型色） */
+.va-mark.is-group { border-style:dashed; border-color:var(--va-comment); background:rgba(56,189,248,.09); }
 .va-mark.is-group .va-mark-label { border-color:rgba(56,189,248,.28); color:#bfe6fb; }
-.va-mark.is-group .va-mark-label::before { background:#38BDF8; }
+.va-mark.is-group .va-mark-label::before { background:var(--va-comment); }
 .va-mark-author { position:absolute; right:-1px; top:-24px; transform:translateX(100%); padding:2px 6px; border-radius:7px; background:rgba(56,189,248,.16); color:#bfe6fb; font:600 9px/1.3 var(--va-font-ui); white-space:nowrap; }
 .va-mark-label { position:absolute; left:-1px; top:-24px; display:inline-flex; align-items:center; gap:5px; max-width:min(240px,70vw); overflow:hidden; padding:3px 8px; border:1px solid rgba(245,166,35,.28); border-radius:8px; background:rgba(18,20,24,.94); color:#f3d4a2; font:600 10px/1.35 var(--va-font-ui); text-overflow:ellipsis; white-space:nowrap; box-shadow:0 4px 12px rgba(0,0,0,.22); }
 .va-mark-label::before { content:""; width:5px; height:5px; flex:none; border-radius:50%; background:var(--va-word); }
@@ -490,6 +523,16 @@ button { color: inherit; }
   .va-action { width:38px; padding:0; justify-content:center; }
   .va-action-label { display:none; }
   .va-action-primary { width:auto; padding:0 11px; }
+  .va-dock--viewer { left:50%; right:auto; bottom:calc(16px + env(safe-area-inset-bottom)); width:max-content; max-width:calc(100vw - 24px); gap:5px; padding:6px; transform:translateX(-50%); }
+  .va-dock--viewer:hover, .va-dock--viewer[data-open="1"], .va-dock--viewer:focus-within { height:62px; padding:6px; }
+  .va-dock--viewer > .va-action { width:48px; height:48px; min-width:48px; flex:none; padding:0; }
+  .va-dock--viewer > .va-action[aria-label="列表"] { width:auto; min-width:0; padding:0 10px; }
+  .va-dock--viewer > .va-action[aria-label="列表"] .va-action-label { display:inline; }
+  .va-dock--viewer > .va-action[aria-label="显示"] { width:48px; min-width:48px; }
+  .va-dock--viewer > .va-brand { width:40px; }
+  .va-dock--viewer .va-separator { height:28px; margin:0 1px; }
+  .va-dock--viewer .va-count-badge { margin-left:2px; }
+  .va-sources { right:12px; bottom:calc(80px + env(safe-area-inset-bottom)); left:12px; width:auto; }
   .va-panel { top:auto; right:8px; bottom:8px; left:8px; width:auto; height:70vh; border-radius:18px; transform:translateY(calc(100% + 24px)); }
   .va-panel.is-open { transform:translateY(0); }
   .va-popover { left:12px !important; right:12px; bottom:76px; top:auto !important; width:auto; }
