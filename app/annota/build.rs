@@ -47,6 +47,10 @@ fn main() {
                     "agent_chat",
                     "agent_cancel",
                     "install_update",
+                    "tab_new",
+                    "tab_activate",
+                    "tab_close",
+                    "tab_move",
                 ]),
             ),
     )

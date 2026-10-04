@@ -72,15 +72,41 @@
     .engine-state[data-state="busy"] .engine-dot { background:var(--va-accent); box-shadow:0 0 8px rgba(245,166,35,.4); }
     .engine-state span:last-child { max-width:76px; overflow:hidden; text-overflow:ellipsis; }
     button:focus-visible { outline:2px solid var(--va-accent); outline-offset:2px; }
+    /* 标签条（M3 先行版；M4 会整体重排） */
+    .tabstrip {
+      display:flex; align-items:center; gap:5px; width:100%; height:38px; padding:0 10px;
+      border-bottom:1px solid rgba(255,255,255,.075); background:#0e0f12;
+    }
+    .tab {
+      display:flex; align-items:center; gap:7px; max-width:200px; min-width:96px; height:28px; padding:0 6px 0 10px;
+      border:1px solid transparent; border-radius:8px; background:rgba(255,255,255,.035); color:#a9aeb6;
+      font:12px var(--va-font-ui); cursor:pointer; white-space:nowrap;
+    }
+    .tab:hover { background:rgba(255,255,255,.07); }
+    .tab[data-active="1"] { background:#1b1c21; border-color:rgba(245,166,35,.32); color:#f0f1f3; }
+    .tab .tab-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+    .tab .tab-close { display:grid; place-items:center; width:16px; height:16px; flex:none; border-radius:5px; color:#7d838d; }
+    .tab .tab-close:hover { background:rgba(255,255,255,.14); color:#f1f2f3; }
+    .tab-new {
+      display:grid; place-items:center; width:26px; height:26px; flex:none; border:1px solid transparent; border-radius:7px;
+      background:transparent; color:#8b9099; cursor:pointer;
+    }
+    .tab-new:hover { background:rgba(255,255,255,.08); color:#f1f2f3; }
+    .tab-new svg { width:15px; height:15px; }
     @media (max-width:640px) {
       .toolbar { gap:8px; padding:0 9px; }
       .brand { width:34px; }
       .brand-copy, .nav .forward, .toolbar-separator, .engine-state { display:none; }
       .omnibox { height:34px; }
+      .tab { min-width:0; max-width:34px; padding:0; justify-content:center; }
+      .tab .tab-title, .tab .tab-close { display:none; }
     }
   </style>
 </head>
 <body>
+  <div class="tabstrip" id="tabstrip" role="tablist" aria-label="标签页">
+    <button class="tab-new" id="tab-new" type="button" aria-label="新建标签页" title="新建标签页"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
+  </div>
   <header class="toolbar" role="toolbar" aria-label="Annota 浏览器导航">
     <div class="brand" id="home-button" role="button" tabindex="0" aria-label="Annota 首页" title="打开 Annota 首页">
       <span class="brand-mark" aria-hidden="true">
@@ -162,8 +188,56 @@
       const t = window.__TAURI_INTERNALS__ || window.__TAURI__;
       if (t && t.event && t.event.listen) {
         t.event.listen('annota://update-available', (ev) => onUpdateAvailable(ev.payload));
+        // 标签页：列表变化 / 单条更新
+        t.event.listen('annota://tabs-changed', (ev) => renderTabs((ev.payload && ev.payload.tabs) || []));
+        t.event.listen('annota://tab-updated', (ev) => {
+          const p = ev.payload || {};
+          if (p.id) { tabUrlCache[p.id] = p.url || tabUrlCache[p.id] || ''; if (p.active) input.value = tabUrlCache[p.id]; }
+        });
       }
     })();
+    // ---- 标签页 UI（M3 先行版）----
+    const tabstrip = document.getElementById('tabstrip');
+    const tabNew = document.getElementById('tab-new');
+    const tabUrlCache = {};
+    let tabsState = [];
+    function hostOf(u) { try { return new URL(u).host.replace(/^www\./, '') || u; } catch (e) { return u || ''; } }
+    function renderTabs(tabs) {
+      tabsState = tabs || [];
+      // 清掉旧的 tab（保留 + 按钮）
+      Array.from(tabstrip.querySelectorAll('.tab')).forEach((n) => n.remove());
+      let activeUrl = '';
+      tabsState.forEach((t) => {
+        const el = document.createElement('div');
+        el.className = 'tab';
+        el.dataset.active = t.active ? '1' : '0';
+        el.setAttribute('role', 'tab');
+        el.title = t.url || '';
+        const title = document.createElement('span');
+        title.className = 'tab-title';
+        title.textContent = t.title || hostOf(t.url) || '新标签页';
+        const close = document.createElement('span');
+        close.className = 'tab-close';
+        close.setAttribute('role', 'button');
+        close.setAttribute('aria-label', '关闭标签页');
+        close.textContent = '×';
+        close.addEventListener('click', (e) => { e.stopPropagation(); invoke('tab_close', { id: t.id }).catch(() => {}); });
+        el.append(title, close);
+        el.addEventListener('click', () => invoke('tab_activate', { id: t.id }).catch(() => {}));
+        tabstrip.insertBefore(el, tabNew);
+        if (t.active) activeUrl = t.url || '';
+      });
+      if (activeUrl) { tabUrlCache.active = activeUrl; input.value = activeUrl; }
+      tabNew.style.display = tabsState.length >= 12 ? 'none' : '';
+    }
+    tabNew.addEventListener('click', () => invoke('tab_new', {}).catch(() => {}));
+    // 快捷键：Cmd/Ctrl+T 新标签，Cmd/Ctrl+W 关闭当前
+    document.addEventListener('keydown', (event) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const k = event.key.toLowerCase();
+      if (k === 't') { event.preventDefault(); invoke('tab_new', {}).catch(() => {}); }
+      else if (k === 'w') { event.preventDefault(); const a = tabsState.find((t) => t.active); if (a) invoke('tab_close', { id: a.id }).catch(() => {}); }
+    });
     document.addEventListener('keydown', (event) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'l') {
         event.preventDefault(); input.focus(); input.select();

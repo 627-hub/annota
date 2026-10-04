@@ -121,4 +121,19 @@
 - `dev/check-shell-drift.mjs`（6 断言）：core 引用次数/位置、shell 不直连内部、变体纯净度；已挂 release.yml CI。
 - 验证：Playwright 注入 mock `__ANNOTA__` 后 `data-va-shell="browser"`、shell 已 adopt；全量回归绿。
 
+### M3 标签页（已完成）
+
+- 新增 `app/annota/src/tabs.rs`：`TabManager`（`tabs`/`active`/`seq`）+ `TabState = Mutex<TabManager>`。
+  - `active_webview(app)` —— 所有「当前页」操作的**唯一入口**（取代硬编码 `get_webview("browser")`）。
+  - `create_tab/activate_tab/close_tab/move_tab/emit_tabs`；首个 tab id = `browser`（兼容 MCP），其后 `tab-<n>`。
+  - 切换 = 目标 `show()+set_focus()`、其余 `hide()`；最后一个 tab 禁止关闭；最多 12 个（前端隐藏 `+`）。
+- `main.rs`：
+  - `.manage(Mutex::new(TabManager::new()))`；`setup_webviews` 首个 tab 改走 `tabs::create_tab`。
+  - `run_tool` 5 处 + `navigate_browser`/`browser_action` 全改 `tabs::active_webview`。
+  - `apply_layout` 只摆激活 tab；新增命令 `tab_new/tab_activate/tab_close/tab_move`（+ build.rs 清单 + `permissions/tabs.toml` + capabilities `allow-tab-manage`）。
+  - 事件：`annota://tabs-changed`（全量）、`annota://tab-updated`（单条）。
+- `public/index.html`：标签条（M3 先行版）+ `annota://tabs-changed` 渲染 + `Cmd/Ctrl+T/W`；`TOOLBAR_HEIGHT` 56→94（两行）。
+- **运行验证**（`ANNOTA_TABS_TEST=1` debug 钩子）：建 3 tab → 切回首 tab → 关闭首 tab 自动激活相邻，且各 tab 独立真实导航；日志确认。`cargo check` 无警告。
+
+
 

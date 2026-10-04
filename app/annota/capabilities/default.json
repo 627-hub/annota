@@ -30,6 +30,7 @@
     "allow-agent-run",
     "allow-agent-chat",
     "allow-agent-cancel",
-    "allow-install-update"
+    "allow-install-update",
+    "allow-tab-manage"
   ]
 }

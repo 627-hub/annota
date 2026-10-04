@@ -225,6 +225,36 @@
           "markdownDescription": "Enables the navigate_browser command without any pre-configured scope."
         },
         {
+          "description": "Enables the tab_activate command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-tab-activate",
+          "markdownDescription": "Enables the tab_activate command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the tab_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-tab-close",
+          "markdownDescription": "Enables the tab_close command without any pre-configured scope."
+        },
+        {
+          "description": "Allows the toolbar to create, activate, close and reorder browser tabs.",
+          "type": "string",
+          "const": "allow-tab-manage",
+          "markdownDescription": "Allows the toolbar to create, activate, close and reorder browser tabs."
+        },
+        {
+          "description": "Enables the tab_move command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-tab-move",
+          "markdownDescription": "Enables the tab_move command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the tab_new command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-tab-new",
+          "markdownDescription": "Enables the tab_new command without any pre-configured scope."
+        },
+        {
           "description": "Enables the va_fetch command without any pre-configured scope.",
           "type": "string",
           "const": "allow-va-fetch",
@@ -277,6 +307,30 @@
           "type": "string",
           "const": "deny-navigate-browser",
           "markdownDescription": "Denies the navigate_browser command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the tab_activate command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-tab-activate",
+          "markdownDescription": "Denies the tab_activate command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the tab_close command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-tab-close",
+          "markdownDescription": "Denies the tab_close command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the tab_move command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-tab-move",
+          "markdownDescription": "Denies the tab_move command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the tab_new command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-tab-new",
+          "markdownDescription": "Denies the tab_new command without any pre-configured scope."
         },
         {
           "description": "Denies the va_fetch command without any pre-configured scope.",

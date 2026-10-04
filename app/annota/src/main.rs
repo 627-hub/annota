@@ -2,7 +2,7 @@
 
 use base64::Engine;
 use serde_json::{json, Value};
-use std::{fs, io::Cursor, path::PathBuf, sync::OnceLock};
+use std::{fs, io::Cursor, path::PathBuf, sync::OnceLock, sync::Mutex};
 use tauri::{
   AppHandle, Emitter, Listener, Manager, PhysicalPosition, PhysicalSize, WebviewUrl,
 };
@@ -14,7 +14,9 @@ use tauri_plugin_updater::UpdaterExt;
 mod sync_server;
 mod agent;
 mod apkg;
+mod tabs;
 use agent::{agent_cancel, agent_chat, agent_run};
+use tabs::TabManager;
 
 // 启动自动更新检查：延迟后查一次；有新版则 emit 给 toolbar（「更多」菜单出角标），
 // 用户确认后由前端调 `install_update` 下载并重启安装。24h 后再查一次。
@@ -49,8 +51,8 @@ fn spawn_update_check(app: &AppHandle) {
 // 全局 AppHandle，供 MCP tool handler 使用（clipboard 等需要后端状态）
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
-// 工具栏高度（逻辑像素）
-const TOOLBAR_HEIGHT: f64 = 56.0;
+// 工具栏高度（逻辑像素）：标签条 38 + 导航条 56。child webview 按此高度摆放。
+const TOOLBAR_HEIGHT: f64 = 94.0;
 // 本地同步服务地址（va_fetch 只允许它，防 SSRF）
 const SYNC_HOSTS: &[&str] = &["127.0.0.1", "localhost", "::1"];
 const SYNC_PORT: u16 = 8793;
@@ -253,9 +255,7 @@ fn resolve_nav_url(raw: &str) -> Result<String, String> {
 async fn navigate_browser(app: tauri::AppHandle, url: String) -> Result<(), String> {
     let target = resolve_nav_url(&url)?;
     let parsed = url::Url::parse(&target).map_err(|e| e.to_string())?;
-    let webview = app
-        .get_webview("browser")
-        .ok_or_else(|| "未找到 browser webview".to_string())?;
+    let webview = tabs::active_webview(&app)?;
     webview.navigate(parsed).map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -268,8 +268,51 @@ fn browser_action(app: tauri::AppHandle, action: String) -> Result<(), String> {
         "reload" => "location.reload()",
         _ => return Err("不支持的浏览器操作".to_string()),
     };
-    let webview = app.get_webview("browser").ok_or_else(|| "未找到 browser webview".to_string())?;
+    let webview = tabs::active_webview(&app)?;
     webview.eval(script).map_err(|e| e.to_string())
+}
+
+// ---------- 标签页命令（M3） ----------
+#[tauri::command]
+fn tab_new(app: tauri::AppHandle, url: Option<String>) -> Result<String, String> {
+    let window = app.get_window("main").ok_or_else(|| "主窗口不存在".to_string())?;
+    let size = window.inner_size().map_err(|e| e.to_string())?;
+    let sf = window.scale_factor().map_err(|e| e.to_string())?;
+    let top_inset = titlebar_inset(&window, sf);
+    let browser_top = top_inset.saturating_add((TOOLBAR_HEIGHT * sf) as u32);
+    let target = match url.as_deref() {
+        Some(u) if !u.trim().is_empty() => resolve_nav_url(u)?,
+        _ => "http://127.0.0.1:8793/".to_string(),
+    };
+    tabs::create_tab(
+        &app,
+        &window,
+        target,
+        Vec::new(),
+        BRIDGE_JS,
+        ANNOTATE_JS,
+        PhysicalPosition::new(0, browser_top as i32),
+        PhysicalSize::new(size.width, size.height.saturating_sub(browser_top)),
+    )
+}
+
+#[tauri::command]
+fn tab_activate(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    tabs::activate_tab(&app, &id)?;
+    let _ = apply_layout(&app);
+    Ok(())
+}
+
+#[tauri::command]
+fn tab_close(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    tabs::close_tab(&app, &id)?;
+    let _ = apply_layout(&app);
+    Ok(())
+}
+
+#[tauri::command]
+fn tab_move(app: tauri::AppHandle, id: String, to_index: usize) -> Result<(), String> {
+    tabs::move_tab(&app, &id, to_index)
 }
 
 #[tauri::command]
@@ -321,7 +364,8 @@ fn apply_layout(app: &AppHandle) -> Result<(), String> {
             .set_size(PhysicalSize::new(size.width, toolbar_h))
             .map_err(|e| e.to_string())?;
     }
-    if let Some(browser) = app.get_webview("browser") {
+    // 仅摆激活 tab（隐藏的 tab 无需摆，激活前 activate_tab 会再触发一次布局）
+    if let Ok(browser) = tabs::active_webview(app) {
         browser
             .set_position(PhysicalPosition::new(0, browser_top as i32))
             .map_err(|e| e.to_string())?;
@@ -342,7 +386,7 @@ fn setup_webviews(window: &tauri::Window, app: &AppHandle) -> Result<(), String>
     let toolbar_h = (TOOLBAR_HEIGHT * sf) as u32;
     let browser_top = top_inset.saturating_add(toolbar_h);
 
-    // 工具栏 webview：加载本地 index.html（地址栏）
+    // 工具栏 webview：加载本地 index.html（地址栏 + 标签条）
     let toolbar = WebviewBuilder::new("toolbar", WebviewUrl::App("index.html".into()))
         .initialization_script(BRIDGE_JS)
         .auto_resize();
@@ -354,33 +398,19 @@ fn setup_webviews(window: &tauri::Window, app: &AppHandle) -> Result<(), String>
         )
         .map_err(|e| e.to_string())?;
 
-    // 浏览器 webview：默认打开 Annota 本地工作区，注入桥 + annotate.user.js
-    let start_url = url::Url::parse("http://127.0.0.1:8793/")
-        .map_err(|e| e.to_string())?;
-    let toolbar_handle = app.clone();
-    let browser = WebviewBuilder::new("browser", WebviewUrl::External(start_url))
-        .initialization_script(BRIDGE_JS)
-        .initialization_script(ANNOTATE_JS)
-        .auto_resize()
-        .on_navigation(|url| {
-            println!("[annota] browser navigation request: {}", url);
-            true
-        })
-        .on_page_load(move |_webview, payload| {
-            println!("[annota] browser page load: {:?} - {}", payload.event(), payload.url());
-            let url = serde_json::to_string(&payload.url().to_string()).unwrap_or_else(|_| "\"\"".to_string());
-            if let Some(toolbar) = toolbar_handle.get_webview("toolbar") {
-                let _ = toolbar.eval(&format!("window.__ANNOTA_SET_URL__&&window.__ANNOTA_SET_URL__({url})"));
-            }
-        });
-    let browser_wv = window
-        .add_child(
-            browser,
-            PhysicalPosition::new(0, browser_top as i32),
-            PhysicalSize::new(size.width, size.height.saturating_sub(browser_top)),
-        )
-        .map_err(|e| e.to_string())?;
-    println!("[annota] browser webview created, url={}", browser_wv.url().map(|u| u.to_string()).unwrap_or_default());
+    // 首个标签：默认打开 Annota 本地工作区，注入桥 + 浏览器壳标注层
+    let start_url = "http://127.0.0.1:8793/".to_string();
+    let id = tabs::create_tab(
+        app,
+        window,
+        start_url,
+        Vec::new(),
+        BRIDGE_JS,
+        ANNOTATE_JS,
+        PhysicalPosition::new(0, browser_top as i32),
+        PhysicalSize::new(size.width, size.height.saturating_sub(browser_top)),
+    )?;
+    println!("[annota] first tab created: {id}");
 
     Ok(())
 }
@@ -508,27 +538,27 @@ pub fn run_tool(name: &str, params: &Value) -> Result<String, String> {
             let raw = params.get("url").and_then(|v| v.as_str()).ok_or("缺少 url 参数")?;
             let target = resolve_nav_url(raw)?;
             let parsed = url::Url::parse(&target).map_err(|e| e.to_string())?;
-            let webview = app.get_webview("browser").ok_or("browser webview 不存在")?;
+            let webview = tabs::active_webview(app)?;
             webview.navigate(parsed).map_err(|e| e.to_string())?;
             Ok(format!("navigating to {target}"))
         }
         "open_annotations" => {
             let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
-            let webview = app.get_webview("browser").ok_or("browser webview 不存在")?;
+            let webview = tabs::active_webview(app)?;
             webview.eval(r#"(function(){const h=document.querySelector('#annota-shadow-host');const b=h&&h.shadowRoot&&h.shadowRoot.querySelector('button[aria-label="列表"]');if(b)b.click()})()"#)
                 .map_err(|e| e.to_string())?;
             Ok("标注侧栏已打开".to_string())
         }
         "start_annotation" => {
             let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
-            let webview = app.get_webview("browser").ok_or("browser webview 不存在")?;
+            let webview = tabs::active_webview(app)?;
             webview.eval(r#"(function(){const h=document.querySelector('#annota-shadow-host');const b=h&&h.shadowRoot&&h.shadowRoot.querySelector('button[aria-label="标注"]');if(b)b.click()})()"#)
                 .map_err(|e| e.to_string())?;
             Ok("已请求进入标注模式".to_string())
         }
         "propose_annotation" => {
             let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
-            let webview = app.get_webview("browser").ok_or("browser webview 不存在")?;
+            let webview = tabs::active_webview(app)?;
             let payload = serde_json::to_string(params).map_err(|e| e.to_string())?;
             let script = format!(
                 "(function(p){{const ui=window.__ANNOTA_UI__;const ok=!!(ui&&ui.proposeAnnotation(p));window.__TAURI_INTERNALS__.invoke('bridge_probe_reply',{{keys:['proposal',String(ok)]}})}})({payload})"
@@ -541,8 +571,8 @@ pub fn run_tool(name: &str, params: &Value) -> Result<String, String> {
             let t = params.get("t").and_then(|v| v.as_f64()).ok_or("缺少 t 参数")?;
             let radius = params.get("radius").and_then(|v| v.as_f64()).unwrap_or(0.5);
             let explicit = params.get("media_id").and_then(|v| v.as_str()).map(String::from);
-            let page_url = app
-                .get_webview("browser")
+            let page_url = tabs::active_webview(app)
+                .ok()
                 .and_then(|w| w.url().ok())
                 .map(|u| u.to_string());
             let derived = page_url.as_deref().map(media_id_from_url);
@@ -603,7 +633,7 @@ pub fn run_tool(name: &str, params: &Value) -> Result<String, String> {
         }
         "probe_bridge" => {
             let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
-            let webview = app.get_webview("browser").ok_or("browser webview 不存在")?;
+            let webview = tabs::active_webview(app)?;
             webview
                 .eval(r#"(function(){ const send=function(keys){try{window.__TAURI_INTERNALS__.invoke('bridge_probe_reply',{keys:keys})}catch(e){}};send(['bridge',typeof window.__ANNOTA__,typeof window.vaFetch]);if(typeof window.vaFetch==='function'){window.vaFetch('GET','http://127.0.0.1:8793/api/health').then(function(r){send(['va_fetch_ok',String(r.status),String(!!(r.json&&r.json.ok))])}).catch(function(e){send(['va_fetch_error',String(e&&e.message||e).slice(0,180)])})}})()"#)
                 .map_err(|e| e.to_string())?;
@@ -737,6 +767,7 @@ pub fn main() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(make_mcp_tools().build())
+        .manage(Mutex::new(TabManager::new()))
         .invoke_handler(tauri::generate_handler![
             capture_frame,
             write_clipboard,
@@ -747,7 +778,11 @@ pub fn main() {
             agent_run,
             agent_chat,
             agent_cancel,
-            install_update
+            install_update,
+            tab_new,
+            tab_activate,
+            tab_close,
+            tab_move
         ])
         .setup(|app| {
             let _ = APP_HANDLE.set(app.handle().clone());
@@ -799,6 +834,39 @@ pub fn main() {
                         Ok(res) => println!("[annota][agent-test] OK {}", res),
                         Err(e) => println!("[annota][agent-test] ERR {e}"),
                     }
+                });
+            }
+
+            // 测试钩子：ANNOTA_TABS_TEST=1 时自动新建/切换/关闭标签，打印结果（仅 debug）
+            #[cfg(debug_assertions)]
+            if std::env::var("ANNOTA_TABS_TEST").is_ok() {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    use tauri::Manager;
+                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                    let snap = |h: &AppHandle| {
+                        let st = h.state::<tabs::TabState>();
+                        let m = st.lock().unwrap();
+                        (m.tabs.iter().map(|t| t.id.clone()).collect::<Vec<_>>(), m.active_id())
+                    };
+                    println!("[annota][tabs-test] start {:?}", snap(&handle));
+                    // 新建两个 tab
+                    for u in ["https://example.com/", "https://www.bilibili.com/"] {
+                        match tab_new(handle.clone(), Some(u.to_string())) {
+                            Ok(id) => println!("[annota][tabs-test] created {id} -> {:?}", snap(&handle)),
+                            Err(e) => println!("[annota][tabs-test] tab_new ERR {e}"),
+                        }
+                    }
+                    // 切回第一个
+                    if let Err(e) = tab_activate(handle.clone(), tabs::FIRST_TAB_ID.to_string()) {
+                        println!("[annota][tabs-test] activate ERR {e}");
+                    } else { println!("[annota][tabs-test] activated first {:?}", snap(&handle)); }
+                    // 关闭第一个
+                    match tab_close(handle.clone(), tabs::FIRST_TAB_ID.to_string()) {
+                        Ok(_) => println!("[annota][tabs-test] closed first -> {:?}", snap(&handle)),
+                        Err(e) => println!("[annota][tabs-test] tab_close ERR {e}"),
+                    }
+                    println!("[annota][tabs-test] done");
                 });
             }
 
