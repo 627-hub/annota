@@ -135,5 +135,22 @@
 - `public/index.html`：标签条（M3 先行版）+ `annota://tabs-changed` 渲染 + `Cmd/Ctrl+T/W`；`TOOLBAR_HEIGHT` 56→94（两行）。
 - **运行验证**（`ANNOTA_TABS_TEST=1` debug 钩子）：建 3 tab → 切回首 tab → 关闭首 tab 自动激活相邻，且各 tab 独立真实导航；日志确认。`cargo check` 无警告。
 
+### M4 工具栏重设计（已完成）
+
+- `public/index.html` 重写为**两行式**：
+  - Row1 标签条：可横向滚动 `.tabs-scroll` + `+`（≥12 隐藏）。
+  - Row2 导航条：品牌 / `← → ⟳`（disabled 态）/ omnibox（站点图标+URL 回显+打开）/
+    `★收藏` / `编辑`（态切换）/ `⋯更多` 菜单 / 引擎状态。
+- 新增命令 `set_shell_mode(mode)`（Rust → `active_webview.eval("VA_BROWSER_SHELL.setMode(...)")`）：
+  toolbar 的「编辑」按钮切换浏览器 webview 的观看/编辑态；`Cmd/Ctrl+E` 同效；态记 localStorage。
+- omnibox 随激活 tab 回显（`annota://tab-updated`/`tabs-changed`）；新 tab 自动同步编辑态。
+- ⋯ 菜单：历史 / 下载（M6 接口）/ 打开工作区 / 诊断。`Cmd/Ctrl+T/W/L` 快捷键。
+- 验证：Playwright 载入 toolbar（mock 桥）→ 标签渲染/omnibox 回显/编辑切换（实发 `set_shell_mode`）/菜单展开，无 JS 报错；截图 `docs/assets/annota-browser-toolbar.png`。`cargo check` 无警告。
+
+### 产品方向备忘
+
+- `docs/ideas-training-data.md`：标注数据用于 AI 训练的 opt-in 公共数据集方向（授权/隐私/格式/激励），**暂不实现**。
+
+
 
 

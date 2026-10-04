@@ -201,10 +201,10 @@
           "markdownDescription": "Enables the bridge_probe_reply command without any pre-configured scope."
         },
         {
-          "description": "Allows the Annota toolbar to navigate browser history and reload the active page.",
+          "description": "Allows the Annota toolbar to navigate browser history, reload the active page, and toggle the browser-shell view/edit mode.",
           "type": "string",
           "const": "allow-browser-action",
-          "markdownDescription": "Allows the Annota toolbar to navigate browser history and reload the active page."
+          "markdownDescription": "Allows the Annota toolbar to navigate browser history, reload the active page, and toggle the browser-shell view/edit mode."
         },
         {
           "description": "Enables the capture_frame command without any pre-configured scope.",
@@ -223,6 +223,12 @@
           "type": "string",
           "const": "allow-navigate-browser",
           "markdownDescription": "Enables the navigate_browser command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the set_shell_mode command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-shell-mode",
+          "markdownDescription": "Enables the set_shell_mode command without any pre-configured scope."
         },
         {
           "description": "Enables the tab_activate command without any pre-configured scope.",
@@ -307,6 +313,12 @@
           "type": "string",
           "const": "deny-navigate-browser",
           "markdownDescription": "Denies the navigate_browser command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_shell_mode command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-shell-mode",
+          "markdownDescription": "Denies the set_shell_mode command without any pre-configured scope."
         },
         {
           "description": "Denies the tab_activate command without any pre-configured scope.",

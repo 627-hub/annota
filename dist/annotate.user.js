@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         Annota（编辑）
 // @namespace    https://video-annotate.local/
-// @version      0.1.0.11
+// @version      0.1.0.12
 // @description  给视频和网页内容添加可共享标注（框选、时间锚点、词条与同步）
 // @author       Annota
 // @match        *://*/*
@@ -16,7 +16,7 @@
 
 /* ===== data: build id ===== */
 window.VA_BUILD=1791085284;
-window.VA_US_VER="0.1.0.11";
+window.VA_US_VER="0.1.0.12";
 window.VA_DIST_BASE="https://tencentcloudtest-d2eg4lu85c76fb0-1414056833.tcloudbaseapp.com";
 /* ===== src/geometry.js ===== */
 /* video-annotate · geometry

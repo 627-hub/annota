@@ -1,4 +1,4 @@
 [[permission]]
 identifier = "allow-browser-action"
-description = "Allows the Annota toolbar to navigate browser history and reload the active page."
-commands.allow = ["browser_action"]
+description = "Allows the Annota toolbar to navigate browser history, reload the active page, and toggle the browser-shell view/edit mode."
+commands.allow = ["browser_action", "set_shell_mode"]

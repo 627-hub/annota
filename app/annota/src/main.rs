@@ -272,6 +272,18 @@ fn browser_action(app: tauri::AppHandle, action: String) -> Result<(), String> {
     webview.eval(script).map_err(|e| e.to_string())
 }
 
+// 工具栏 → 浏览器 webview 的浏览器壳：切换「观看 ↔ 编辑」态（M4）。
+// 注入的 browser-shell.js 暴露 window.VA_BROWSER_SHELL.setMode；未注入时静默无操作。
+#[tauri::command]
+fn set_shell_mode(app: tauri::AppHandle, mode: String) -> Result<(), String> {
+    let m = if mode == "edit" { "edit" } else { "view" };
+    let webview = tabs::active_webview(&app)?;
+    let script = format!(
+        "(function(){{try{{var s=window.VA_BROWSER_SHELL;if(s&&s.setMode)s.setMode('{m}');}}catch(e){{}}}})()"
+    );
+    webview.eval(script).map_err(|e| e.to_string())
+}
+
 // ---------- 标签页命令（M3） ----------
 #[tauri::command]
 fn tab_new(app: tauri::AppHandle, url: Option<String>) -> Result<String, String> {
@@ -775,6 +787,7 @@ pub fn main() {
             navigate_browser,
             browser_action,
             va_fetch,
+            set_shell_mode,
             agent_run,
             agent_chat,
             agent_cancel,
