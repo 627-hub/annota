@@ -1,6 +1,6 @@
 /* ===== data: build id ===== */
-window.VA_BUILD=1791085284;
-window.VA_US_VER="0.1.0.12";
+window.VA_BUILD=1791088668;
+window.VA_US_VER="0.1.0.18";
 window.VA_DIST_BASE="https://tencentcloudtest-d2eg4lu85c76fb0-1414056833.tcloudbaseapp.com";
 /* ===== src/geometry.js ===== */
 /* video-annotate · geometry
@@ -1363,6 +1363,45 @@ button { color: inherit; }
   transition: transform 230ms var(--va-ease), opacity 180ms ease, visibility 230ms;
 }
 .va-panel.is-open { transform: translateX(0); opacity: 1; visibility: visible; }
+/* ---------- 浏览器壳：常驻编辑抽屉（M5，仅 .va-panel--docked 生效） ---------- */
+.va-panel--docked {
+  top: 0; right: 0; bottom: 0;
+  width: min(400px, 40vw);
+  min-width: 312px;
+  border-radius: 0;
+  border-top: 0; border-right: 0; border-bottom: 0; border-left: 1px solid rgba(255,255,255,.12);
+  background: rgba(17,19,23,.985);
+  transform: translateX(0); opacity: 1; visibility: visible;
+  box-shadow: -18px 0 48px rgba(0,0,0,.46), inset 1px 0 rgba(255,255,255,.025);
+}
+.va-panel--docked.is-open { transform: translateX(0); }
+/* 抽屉内的浏览器壳编辑头（对象信息 + 标注/选对象/同步/来源） */
+.va-shell-editbar { flex:none; padding:17px 17px 14px; border-bottom:1px solid rgba(255,255,255,.075); background:linear-gradient(180deg,rgba(255,255,255,.025),transparent); }
+.va-shell-object { position:relative; min-width:0; padding:0 0 12px 13px; }
+.va-shell-object::before { content:""; position:absolute; top:3px; bottom:14px; left:0; width:2px; border-radius:2px; background:var(--va-accent); box-shadow:0 0 12px rgba(245,166,35,.28); }
+.va-shell-eyebrow { display:block; color:#8d7757; font:700 9px/1.3 var(--va-font-ui); letter-spacing:.14em; text-transform:uppercase; }
+.va-shell-object-title { display:block; overflow:hidden; margin-top:4px; color:#f0eee9; font-size:14px; font-weight:650; letter-spacing:-.02em; text-overflow:ellipsis; white-space:nowrap; }
+.va-shell-object-type { display:block; overflow:hidden; margin-top:3px; color:#818993; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.va-shell-hint { display:flex; min-height:30px; align-items:center; gap:8px; margin-bottom:9px; padding:6px 9px; border:1px solid rgba(255,255,255,.06); border-radius:8px; background:rgba(0,0,0,.16); color:#9aa1aa; font-size:10px; line-height:1.35; }
+.va-shell-hint::before { content:""; width:5px; height:5px; flex:none; border-radius:50%; background:#6f7781; }
+.va-shell-editbar.is-active .va-shell-hint::before { background:var(--va-accent); box-shadow:0 0 8px rgba(245,166,35,.55); }
+.va-shell-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; }
+.va-shell-editbar .va-shell-btn {
+  display:inline-flex; min-width:0; min-height:36px; align-items:center; justify-content:center; gap:6px; padding:0 10px;
+  border:1px solid rgba(255,255,255,.095); border-radius:9px; background:rgba(255,255,255,.04);
+  color:#d3d7dd; font:600 11px var(--va-font-ui); cursor:pointer;
+  transition:background 120ms ease,border-color 120ms ease,color 120ms ease,transform 120ms ease;
+}
+.va-shell-editbar .va-shell-btn:hover { background:rgba(255,255,255,.1); color:#fff; }
+.va-shell-editbar .va-shell-btn:active { transform:scale(.98); }
+.va-shell-editbar .va-shell-btn.is-primary { border-color:rgba(245,166,35,.4); background:rgba(245,166,35,.14); color:#f6c977; }
+.va-shell-editbar .va-shell-btn.is-active { border-color:rgba(245,166,35,.62); background:rgba(245,166,35,.22); color:#ffdda8; box-shadow:inset 0 0 0 1px rgba(245,166,35,.09); }
+.va-shell-editbar .va-shell-btn:focus-visible { outline:2px solid var(--va-accent); outline-offset:2px; }
+/* 直接标记 Shadow DOM 内的 dock，不依赖跨越 shadow 边界的祖先选择器。 */
+.va-dock.va-shell-hidden-dock { display:none !important; }
+/* 源列表弹层停靠在抽屉左侧，避免被抽屉本身遮住。 */
+.va-ui-root[data-va-docked="1"] .va-sources { right:calc(min(400px, 40vw) + 12px); }
+/* 退出按钮保持可见；浏览器壳将关闭动作映射为退回观看态。 */
 .va-panel-head { display:flex; align-items:center; gap:12px; padding:18px 18px 13px; border-bottom:1px solid rgba(255,255,255,.075); }
 .va-panel-title { min-width:0; flex:1; }
 .va-panel-title strong { display:block; font-size:15px; font-weight:650; letter-spacing:-.02em; }
@@ -1546,6 +1585,25 @@ button { color: inherit; }
   .va-popover { left:12px !important; right:12px; bottom:76px; top:auto !important; width:auto; }
   .va-onb { width:calc(100vw - 24px); }
   .va-probe { right:10px; bottom:10px; }
+}
+@media (max-width: 720px) {
+  .va-panel--docked {
+    top:auto; right:0; bottom:0; left:0; width:100%; min-width:0;
+    height:min(56vh, 520px); max-height:calc(100dvh - env(safe-area-inset-top) - 12px);
+    padding-bottom:env(safe-area-inset-bottom);
+    border:1px solid rgba(255,255,255,.12); border-bottom:0; border-radius:17px 17px 0 0;
+    transform:translateY(calc(100% + 12px));
+    box-shadow:0 -18px 48px rgba(0,0,0,.5),inset 0 1px rgba(255,255,255,.035);
+  }
+  .va-panel--docked.is-open { transform:translateY(0); }
+  .va-panel--docked .va-panel-head { padding-top:14px; }
+  .va-shell-editbar { display:grid; grid-template-columns:minmax(0,1fr) minmax(170px,.9fr); align-items:center; column-gap:12px; padding:10px 14px 11px; }
+  .va-shell-object { padding-bottom:0; }
+  .va-shell-object::before { bottom:2px; }
+  .va-shell-hint { grid-column:1 / -1; grid-row:2; min-height:26px; margin:7px 0 0; }
+  .va-shell-actions { grid-column:2; grid-row:1; gap:5px; }
+  .va-shell-editbar .va-shell-btn { min-height:32px; padding:0 6px; font-size:10px; }
+  .va-ui-root[data-va-docked="1"] .va-sources { right:10px; bottom:calc(56vh + 10px + env(safe-area-inset-bottom)); left:10px; width:auto; max-height:36vh; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior:auto !important; animation-duration:.01ms !important; transition-duration:.01ms !important; }
@@ -2620,50 +2678,198 @@ button { color: inherit; }
 })(typeof self !== 'undefined' ? self : this);
 
 /* ===== src/browser-shell.js ===== */
-/* video-annotate · browser-shell（M2 接缝骨架）
- * 仅「Annota 浏览器」（Tauri 壳）注入的浏览器专用壳。通过 window.VA_BROWSER_SHELL
- * 接管 core 的 dock/panel 容器与「观看/编辑」态，**不改**标注状态机、popover 与数据层。
+/* video-annotate · browser-shell（M5：常驻编辑抽屉）
+ * 「Annota 浏览器」（Tauri 壳）专用壳：通过 window.VA_BROWSER_SHELL 接管 core 的
+ * dock/panel 容器与「观看/编辑」态，**不改**标注状态机、popover 与数据层。
  *
- * M2 阶段：只做最小 pass-through（接管时不改变任何默认行为），用于验证接缝稳定。
- * 真正的常驻右侧编辑抽屉在 M5 实现（docs/progress-2026-10-04-shell-plan.md §4）。
+ * 三态：
+ *   观看（默认）—— 零干扰：隐藏 dock，编辑抽屉关闭；热力框照常渲染。
+ *   编辑        —— 右侧常驻抽屉（复用 core 的 .va-panel）：头部=对象信息 + 标注/选对象/同步/来源，
+ *                 主体=复用 core 的 renderPanel（时间轴/词汇/来源/助手）。
+ *   框选进行中  —— 复用 core 的 toggleAnnotate 流程（popover 原样）。
  *
- * 契约（勿破）：本文件只能操作 core 通过 adopt() 交出的 dock/panel/uiRoot 与其 api；
- * 禁止直接调用 core 内部函数或改标注数据。
+ * 契约（勿破）：只操作 adopt() 交出的 dock/panel/uiRoot 与 api；禁止直连 core 内部状态。
  */
 (function (root) {
   'use strict';
 
-  // 判定「浏览器壳模式」：Tauri 注入桥（window.__ANNOTA__）存在时启用。
   const IN_BROWSER = !!(root.__ANNOTA__ || root.__TAURI_INTERNALS__ || root.__TAURI__);
+  const SHELL_MODE_KEY = 'va:shellMode';   // 'view' | 'edit'
 
-  let adopted = null;   // { dock, panel, overlay, toast, uiRoot, api }
-
-  const SHELL_MODE_KEY = 'va:shellMode';   // 'view' | 'edit'（仅浏览器壳用；与 userscript 的 va:viewOnly 语义分开）
+  let ctx = null;        // adopt() 交出的 { dock, panel, overlay, toast, uiRoot, api }
+  let editbar = null;
+  let refreshTimer = null;
 
   function mode() {
     try { return localStorage.getItem(SHELL_MODE_KEY) === 'edit' ? 'edit' : 'view'; } catch (e) { return 'view'; }
   }
-  function setMode(next) {
+  function setModeStored(next) {
     try { localStorage.setItem(SHELL_MODE_KEY, next === 'edit' ? 'edit' : 'view'); } catch (e) {}
   }
 
+  function mkBtn(label, opts = {}) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'va-shell-btn' + (opts.primary ? ' is-primary' : '');
+    b.textContent = label;
+    b.setAttribute('aria-pressed', 'false');
+    b.onclick = (e) => { e.stopPropagation(); opts.onClick && opts.onClick(b); };
+    return b;
+  }
+
+  function updateEditBar() {
+    if (!ctx || !editbar) return;
+    const state = ctx.api.getState();
+    const binding = state && state.binding;
+    const meta = binding && typeof binding.mediaMeta === 'function' ? binding.mediaMeta() : null;
+    const title = String((meta && (meta.title || meta.videoTitle)) || document.title || '当前页面').trim();
+    const annotate = !!(state && state.annotate);
+    const picking = !!(state && state.picking);
+    editbar.el.classList.toggle('is-active', annotate || picking);
+    editbar.objectTitle.textContent = title || '当前页面';
+    editbar.objectTitle.title = title || '当前页面';
+    editbar.objectType.textContent = binding ? (meta && meta.type === 'article' ? '正文标注' : '视频 / 图片标注') : '尚未选择标注对象';
+    editbar.btnAnno.textContent = annotate ? '结束标注' : '开始标注';
+    editbar.btnAnno.classList.toggle('is-active', annotate);
+    editbar.btnAnno.setAttribute('aria-pressed', String(annotate));
+    editbar.btnAnno.setAttribute('aria-label', annotate ? '结束标注模式' : '开始标注');
+    editbar.btnPick.classList.toggle('is-active', picking);
+    editbar.btnPick.setAttribute('aria-pressed', String(picking));
+    editbar.btnPick.textContent = picking ? '取消选对象' : '选对象';
+    editbar.btnPick.setAttribute('aria-label', picking ? '取消选择对象' : '选择标注对象');
+    editbar.hint.textContent = picking
+      ? '点选页面中的视频、图片或正文'
+      : annotate ? '拖动框选画面，松开后创建标注' : binding ? '准备就绪 · 可开始框选或切换内容' : '选择页面对象后即可开始标注';
+  }
+
+  // 构建抽屉顶部的编辑操作条（对象信息 + 标注/选对象/同步/来源）
+  function buildEditBar() {
+    if (!ctx) return null;
+    const bar = document.createElement('div');
+    bar.className = 'va-shell-editbar';
+    const api = ctx.api;
+
+    const object = document.createElement('div');
+    object.className = 'va-shell-object';
+    const eyebrow = document.createElement('span');
+    eyebrow.className = 'va-shell-eyebrow';
+    eyebrow.textContent = '当前内容';
+    const objectTitle = document.createElement('strong');
+    objectTitle.className = 'va-shell-object-title';
+    const objectType = document.createElement('span');
+    objectType.className = 'va-shell-object-type';
+    object.append(eyebrow, objectTitle, objectType);
+
+    const hint = document.createElement('div');
+    hint.className = 'va-shell-hint';
+    hint.setAttribute('role', 'status');
+    hint.setAttribute('aria-live', 'polite');
+
+    const btnAnno = mkBtn('开始标注', { primary: true, onClick: () => api.toggleAnnotate(!api.getState().annotate) });
+    const btnPick = mkBtn('选对象', { onClick: () => api.togglePicker(!api.getState().picking) });
+    const btnSync = mkBtn('同步', { onClick: () => api.syncNow() });
+    const btnSrc = mkBtn('来源', { onClick: () => api.toggleSources() });
+    btnAnno.title = '开始或结束框选标注';
+    btnPick.title = '从当前页面选择视频、图片或正文';
+    btnSync.title = '立即同步标注';
+    btnSrc.title = '管理标注来源';
+    const actions = document.createElement('div');
+    actions.className = 'va-shell-actions';
+    actions.append(btnAnno, btnPick, btnSync, btnSrc);
+    bar.append(object, hint, actions);
+    return { el: bar, objectTitle, objectType, hint, btnAnno, btnPick, btnSync, btnSrc };
+  }
+
+  function applyShellMode() {
+    // 非 Annota/Tauri 浏览器必须是完全 pass-through：core 仍按原方式控制 dock/panel。
+    if (!IN_BROWSER || !ctx) return;
+    const m = mode();
+    const editing = m === 'edit';
+    try { document.documentElement.setAttribute('data-va-mode', editing ? 'edit' : 'view'); } catch (e) {}
+
+    // core 每帧会重设 dock 的 inline display；类选择器 + !important 稳定隐藏它。
+    ctx.dock.classList.add('va-shell-hidden-dock');
+
+    // 抽屉：编辑态 = docked 常驻；观看态 = 关闭并移除 docked
+    if (editing) {
+      ctx.panel.classList.add('va-panel--docked');
+      if (!editbar) editbar = buildEditBar();
+      if (editbar && editbar.el.parentElement !== ctx.panel) ctx.panel.insertBefore(editbar.el, ctx.panel.firstChild);
+      ctx.api.togglePanel(true);
+      try { ctx.uiRoot.dataset.vaDocked = '1'; } catch (e) {}
+      const close = ctx.panel.querySelector('.va-close');
+      if (close) {
+        close.setAttribute('aria-label', '退出编辑模式');
+        close.title = '退出编辑模式（E）';
+      }
+      updateEditBar();
+    } else {
+      const state = ctx.api.getState();
+      if (state && state.annotate) ctx.api.toggleAnnotate(false);
+      if (state && state.picking) ctx.api.togglePicker(false);
+      ctx.panel.classList.remove('va-panel--docked');
+      ctx.api.togglePanel(false);
+      try { delete ctx.uiRoot.dataset.vaDocked; } catch (e) {}
+      const close = ctx.panel.querySelector('.va-close');
+      if (close) {
+        close.setAttribute('aria-label', '关闭标注面板');
+        close.removeAttribute('title');
+      }
+    }
+  }
+
+  function editableTarget(event) {
+    const target = event.composedPath ? event.composedPath()[0] : event.target;
+    const tag = target && target.tagName ? target.tagName.toLowerCase() : '';
+    return tag === 'input' || tag === 'textarea' || tag === 'select' || !!(target && target.isContentEditable);
+  }
+
+  function onKeyDown(event) {
+    if (!IN_BROWSER || editableTarget(event) || event.altKey) return;
+    const key = String(event.key || '').toLowerCase();
+    if ((event.metaKey || event.ctrlKey) && key === 'e') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      root.VA_BROWSER_SHELL.setMode('edit');
+    } else if (!event.metaKey && !event.ctrlKey && key === 'e' && mode() === 'edit') {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      root.VA_BROWSER_SHELL.setMode('view');
+    }
+  }
+
   root.VA_BROWSER_SHELL = {
-    // core 在 mountShell 时调用：交出容器与受控 api。
-    adopt(ctx) {
-      adopted = ctx;
-      // M2：不改行为。仅在 body 上打标，供后续（M5）样式/逻辑区分浏览器壳。
-      try { document.documentElement.setAttribute('data-va-shell', IN_BROWSER ? 'browser' : 'none'); } catch (e) {}
-      console.log('[annota][shell] adopted (M2 pass-through), browser=%s', IN_BROWSER);
+    adopt(c) {
+      if (!IN_BROWSER) return; // userscript/viewer: no DOM writes and no core UI takeover
+      ctx = c;
+      try { document.documentElement.setAttribute('data-va-shell', 'browser'); } catch (e) {}
+      try { applyShellMode(); } catch (e) { console.log('[annota][shell] applyShellMode failed', e); }
+      if (!refreshTimer) refreshTimer = root.setInterval(updateEditBar, 250);
+      const close = ctx.panel.querySelector('.va-close');
+      if (close) close.addEventListener('click', () => root.VA_BROWSER_SHELL.setMode('view'), true);
+      console.log('[annota][shell] adopted (M5 drawer), browser=%s mode=%s', IN_BROWSER, mode());
     },
-    // core 在 applyMode 时调用：通知观看/编辑态变化。
+    // core 在 applyMode 时调用
     onModeChange(m) {
-      try { document.documentElement.setAttribute('data-va-mode', m); } catch (e) {}
+      if (!IN_BROWSER) return;
+      // core 的 view/edit 与壳模式独立；这里只记属性，避免与 core 互相覆盖。
+      try { document.documentElement.setAttribute('data-va-core-mode', m); } catch (e) {}
     },
-    // 供工具栏（Tauri 侧）调用：切换观看/编辑态。M2 仅记录；M5 接抽屉。
-    setMode(next) { setMode(next); if (adopted) adopted.api.applyMode(); },
+    // 工具栏「编辑」按钮 → set_shell_mode 命令 → 此处切换
+    setMode(next) {
+      if (!IN_BROWSER) return;
+      setModeStored(next);
+      try { applyShellMode(); } catch (e) {}
+    },
     getMode: mode,
     _inBrowser: () => IN_BROWSER,
   };
+  if (IN_BROWSER) {
+    root.addEventListener('keydown', onKeyDown, true);
+    root.addEventListener('storage', (event) => {
+      if (event.key === SHELL_MODE_KEY && ctx) applyShellMode();
+    });
+  }
 })(typeof self !== 'undefined' ? self : this);
 
 /* ===== src/core.js ===== */

@@ -355,6 +355,45 @@ button { color: inherit; }
   transition: transform 230ms var(--va-ease), opacity 180ms ease, visibility 230ms;
 }
 .va-panel.is-open { transform: translateX(0); opacity: 1; visibility: visible; }
+/* ---------- 浏览器壳：常驻编辑抽屉（M5，仅 .va-panel--docked 生效） ---------- */
+.va-panel--docked {
+  top: 0; right: 0; bottom: 0;
+  width: min(400px, 40vw);
+  min-width: 312px;
+  border-radius: 0;
+  border-top: 0; border-right: 0; border-bottom: 0; border-left: 1px solid rgba(255,255,255,.12);
+  background: rgba(17,19,23,.985);
+  transform: translateX(0); opacity: 1; visibility: visible;
+  box-shadow: -18px 0 48px rgba(0,0,0,.46), inset 1px 0 rgba(255,255,255,.025);
+}
+.va-panel--docked.is-open { transform: translateX(0); }
+/* 抽屉内的浏览器壳编辑头（对象信息 + 标注/选对象/同步/来源） */
+.va-shell-editbar { flex:none; padding:17px 17px 14px; border-bottom:1px solid rgba(255,255,255,.075); background:linear-gradient(180deg,rgba(255,255,255,.025),transparent); }
+.va-shell-object { position:relative; min-width:0; padding:0 0 12px 13px; }
+.va-shell-object::before { content:""; position:absolute; top:3px; bottom:14px; left:0; width:2px; border-radius:2px; background:var(--va-accent); box-shadow:0 0 12px rgba(245,166,35,.28); }
+.va-shell-eyebrow { display:block; color:#8d7757; font:700 9px/1.3 var(--va-font-ui); letter-spacing:.14em; text-transform:uppercase; }
+.va-shell-object-title { display:block; overflow:hidden; margin-top:4px; color:#f0eee9; font-size:14px; font-weight:650; letter-spacing:-.02em; text-overflow:ellipsis; white-space:nowrap; }
+.va-shell-object-type { display:block; overflow:hidden; margin-top:3px; color:#818993; font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+.va-shell-hint { display:flex; min-height:30px; align-items:center; gap:8px; margin-bottom:9px; padding:6px 9px; border:1px solid rgba(255,255,255,.06); border-radius:8px; background:rgba(0,0,0,.16); color:#9aa1aa; font-size:10px; line-height:1.35; }
+.va-shell-hint::before { content:""; width:5px; height:5px; flex:none; border-radius:50%; background:#6f7781; }
+.va-shell-editbar.is-active .va-shell-hint::before { background:var(--va-accent); box-shadow:0 0 8px rgba(245,166,35,.55); }
+.va-shell-actions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:7px; }
+.va-shell-editbar .va-shell-btn {
+  display:inline-flex; min-width:0; min-height:36px; align-items:center; justify-content:center; gap:6px; padding:0 10px;
+  border:1px solid rgba(255,255,255,.095); border-radius:9px; background:rgba(255,255,255,.04);
+  color:#d3d7dd; font:600 11px var(--va-font-ui); cursor:pointer;
+  transition:background 120ms ease,border-color 120ms ease,color 120ms ease,transform 120ms ease;
+}
+.va-shell-editbar .va-shell-btn:hover { background:rgba(255,255,255,.1); color:#fff; }
+.va-shell-editbar .va-shell-btn:active { transform:scale(.98); }
+.va-shell-editbar .va-shell-btn.is-primary { border-color:rgba(245,166,35,.4); background:rgba(245,166,35,.14); color:#f6c977; }
+.va-shell-editbar .va-shell-btn.is-active { border-color:rgba(245,166,35,.62); background:rgba(245,166,35,.22); color:#ffdda8; box-shadow:inset 0 0 0 1px rgba(245,166,35,.09); }
+.va-shell-editbar .va-shell-btn:focus-visible { outline:2px solid var(--va-accent); outline-offset:2px; }
+/* 直接标记 Shadow DOM 内的 dock，不依赖跨越 shadow 边界的祖先选择器。 */
+.va-dock.va-shell-hidden-dock { display:none !important; }
+/* 源列表弹层停靠在抽屉左侧，避免被抽屉本身遮住。 */
+.va-ui-root[data-va-docked="1"] .va-sources { right:calc(min(400px, 40vw) + 12px); }
+/* 退出按钮保持可见；浏览器壳将关闭动作映射为退回观看态。 */
 .va-panel-head { display:flex; align-items:center; gap:12px; padding:18px 18px 13px; border-bottom:1px solid rgba(255,255,255,.075); }
 .va-panel-title { min-width:0; flex:1; }
 .va-panel-title strong { display:block; font-size:15px; font-weight:650; letter-spacing:-.02em; }
@@ -538,6 +577,25 @@ button { color: inherit; }
   .va-popover { left:12px !important; right:12px; bottom:76px; top:auto !important; width:auto; }
   .va-onb { width:calc(100vw - 24px); }
   .va-probe { right:10px; bottom:10px; }
+}
+@media (max-width: 720px) {
+  .va-panel--docked {
+    top:auto; right:0; bottom:0; left:0; width:100%; min-width:0;
+    height:min(56vh, 520px); max-height:calc(100dvh - env(safe-area-inset-top) - 12px);
+    padding-bottom:env(safe-area-inset-bottom);
+    border:1px solid rgba(255,255,255,.12); border-bottom:0; border-radius:17px 17px 0 0;
+    transform:translateY(calc(100% + 12px));
+    box-shadow:0 -18px 48px rgba(0,0,0,.5),inset 0 1px rgba(255,255,255,.035);
+  }
+  .va-panel--docked.is-open { transform:translateY(0); }
+  .va-panel--docked .va-panel-head { padding-top:14px; }
+  .va-shell-editbar { display:grid; grid-template-columns:minmax(0,1fr) minmax(170px,.9fr); align-items:center; column-gap:12px; padding:10px 14px 11px; }
+  .va-shell-object { padding-bottom:0; }
+  .va-shell-object::before { bottom:2px; }
+  .va-shell-hint { grid-column:1 / -1; grid-row:2; min-height:26px; margin:7px 0 0; }
+  .va-shell-actions { grid-column:2; grid-row:1; gap:5px; }
+  .va-shell-editbar .va-shell-btn { min-height:32px; padding:0 6px; font-size:10px; }
+  .va-ui-root[data-va-docked="1"] .va-sources { right:10px; bottom:calc(56vh + 10px + env(safe-area-inset-bottom)); left:10px; width:auto; max-height:36vh; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior:auto !important; animation-duration:.01ms !important; transition-duration:.01ms !important; }

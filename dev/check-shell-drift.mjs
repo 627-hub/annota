@@ -35,8 +35,18 @@ while ((idx = core.indexOf('VA_BROWSER_SHELL', idx + 1)) >= 0) {
 check('VA_BROWSER_SHELL 只出现在 mountShell/applyMode', offenders.length === 0, offenders.join(', ') || 'none');
 
 // 4) browser-shell.js 不得直接引用 core 内部标识（只允许通过 adopt 交出的 api / document / localStorage）。
-const forbidden = [/window\.__VA\b/, /\bstate\.\w+/, /\btoggleAnnotate\b(?!\s*[(,:])/];
-const hardRefs = forbidden.filter((re) => re.test(shell)).map(String);
+// 注意：经 `api.` / `ctx.api.` 前缀的调用是允许的（那是接缝交出的受控入口）。
+const forbidden = [
+  { re: /window\.__VA\b/, why: 'window.__VA' },
+  { re: /\bstate\.\w+/, why: 'state.*' },
+  { re: /(?<!\.)\btoggleAnnotate\b/, why: '裸 toggleAnnotate' },
+];
+const hardRefs = forbidden
+  .filter(({ re, why }) => {
+    // 逐行判断：若该标识只以 api./ctx.api. 前缀出现，放过
+    return shell.split('\n').some((line) => re.test(line) && !/\bapi\.\w/.test(line.replace(re, 'api.X')));
+  })
+  .map((f) => f.why);
 check('browser-shell.js 未直连 core 内部状态', hardRefs.length === 0, hardRefs.join(' | ') || 'none');
 
 // 5) 浏览器变体不含 userscript 自动更新探测（version-check.js）

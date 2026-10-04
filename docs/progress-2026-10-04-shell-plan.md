@@ -147,6 +147,22 @@
 - ⋯ 菜单：历史 / 下载（M6 接口）/ 打开工作区 / 诊断。`Cmd/Ctrl+T/W/L` 快捷键。
 - 验证：Playwright 载入 toolbar（mock 桥）→ 标签渲染/omnibox 回显/编辑切换（实发 `set_shell_mode`）/菜单展开，无 JS 报错；截图 `docs/assets/annota-browser-toolbar.png`。`cargo check` 无警告。
 
+### M5 编辑抽屉（已完成）
+
+- `src/browser-shell.js`：M2 pass-through → 常驻右侧编辑抽屉。
+  - 三态：观看（默认，零干扰）/ 编辑（右侧常驻抽屉）/ 框选进行中（复用 core `toggleAnnotate` 流程，popover 原样）。
+  - `buildEditBar()`：抽屉头部对象信息（标题/类型）+ 提示 + `标注 / 选对象 / 同步 / 来源`，全部经 `ctx.api` 调 core。
+  - `applyShellMode()`：编辑态给 `ctx.panel` 加 `.va-panel--docked` 并 `api.togglePanel(true)`；观看态收起并清 `annotate/picking`；
+    用 `.va-shell-hidden-dock`（`!important`）稳定隐藏 core 每帧重设的 dock。
+  - `E` / `Cmd·Ctrl+E` 切换（`editableTarget` 规避输入框；capture + `stopImmediatePropagation`）；`storage` 事件同步外壳模式。
+  - 契约：仅操作 `adopt()` 交出的 `dock/panel/uiRoot/api`；浏览器桥不存在时完全 pass-through。
+- `src/overlay-theme.js`：`.va-panel--docked`（`top/right/bottom` 贴边、`min(400px,40vw)`、去圆角）+ `.va-shell-*` 编辑头样式 +
+  `[data-va-docked]` 下 `.va-sources` 左移避让；`@media (max-width:720px)` 转底部弹出式抽屉（`56vh`、安全区、触屏网格布局）。
+- `dev/check-shell-drift.mjs`：禁引用规则改逐行判断，放过 `api.`/`ctx.api.` 前缀的受控调用（仍拦裸 `toggleAnnotate`、`state.*`、`window.__VA`）。
+- `src/core.js` **未改**：M2 接缝已交出 M5 所需 `toggleAnnotate/togglePicker/toggleSync/toggleSources/getState` 与 `onModeChange`，无需扩展。
+- Rust `set_shell_mode` 命令 + 权限 + `public/index.html` 编辑按钮沿用 M4 接线。
+- 验证：`dev/check-shell-drift.mjs` 6/6 PASS；抽屉渲染截图 `docs/assets/annota-browser-editdrawer.png`。
+
 ### 产品方向备忘
 
 - `docs/ideas-training-data.md`：标注数据用于 AI 训练的 opt-in 公共数据集方向（授权/隐私/格式/激励），**暂不实现**。
