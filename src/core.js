@@ -25,6 +25,7 @@
     search: '<circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.2 4.2"/>',
     clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.3 2"/>',
     dots: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+    chevronDown: '<path d="m6 9 6 6 6-6"/>',
     arrow: '<path d="M7 17 17 7M7 7h10v10"/>',
     play: '<path d="m8 5 11 7-11 7V5Z"/>',
     box: '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h5"/>',
@@ -508,6 +509,9 @@
   let diagTimer = null;
   function toggleDiag() {
     const on = diagPanel.style.display === 'none';
+    // 点菜单项后应关闭菜单（与其他菜单项一致）；否则菜单会与诊断面板同屏，
+    // 既挡住内容、也让「更多」按钮变成只能关不能开。
+    if (on && menuPanel.style.display !== 'none') toggleMenu();
     diagPanel.style.display = on ? 'block' : 'none';
     btnDiag.classList.toggle('va-btn-primary', on);
     if (on) { uiRoot.appendChild(diagPanel); diagTimer = setInterval(renderDiag, 800); renderDiag(); }
@@ -1026,6 +1030,29 @@
     await persistAppSettings();
     setSyncStatus('词典模板已保存');
   }
+  // 可折叠分组（「更多」菜单用）：默认收起，把低频/调试项从首屏移走。
+  // 首屏只留高频动作，避免 20+ 个平铺按钮造成的认知负担。
+  function mkFold(label, hint) {
+    const fold = el('div'); fold.className = 'va-fold';
+    const head = el('button'); head.type = 'button';
+    head.className = 'va-fold-head';
+    head.setAttribute('aria-expanded', 'false');
+    if (hint) head.title = hint;
+    const text = el('span', null, label); text.className = 'va-fold-label';
+    // 右侧 chevron：明确「这是个可展开的分组」，而不是又一个动作按钮
+    const chev = svgIcon('chevronDown'); chev.classList.add('va-fold-chevron');
+    head.append(text, chev);
+    const body = el('div'); body.className = 'va-fold-body';
+    head.onclick = (e) => {
+      e.stopPropagation();
+      const open = fold.dataset.open === '1';
+      fold.dataset.open = open ? '0' : '1';
+      head.setAttribute('aria-expanded', open ? 'false' : 'true');
+    };
+    fold.append(head, body);
+    return { fold, body };
+  }
+
   async function toggleMenu() {
     const on = menuPanel.style.display === 'none';
     if (!on) { menuPanel.style.display = 'none'; btnCfg.classList.remove('is-active'); menuPanel.remove(); return; }
@@ -1037,11 +1064,21 @@
       applyMode();
       viewBtn.textContent = isView() ? '只读模式 · 已开启' : '只读模式';
     });
+    // 「仅上传」已删：它只是 syncNow 的别名（syncNow 本身就是拉取→合并→回传），
+    //  留一个同功能按钮会让人误以为上传与同步是两种不同操作。
+    // 「仅下载」改名并标危险色：它会用服务器版**丢弃本地改动**，属破坏性操作，
+    //  原名「仅下载」看不出这个风险。
     const rowDir = el('div', { display: 'flex', gap: '5px', marginTop: '5px' }); rowDir.className = 'va-menu-row';
-    rowDir.append(mkbtn('仅上传', uploadSync), mkbtn('仅下载', downloadSync), viewBtn);
+    const overwriteBtn = mkbtn('以服务器覆盖本地', downloadSync);
+    overwriteBtn.classList.add('is-danger');
+    overwriteBtn.title = '丢弃本视频的本地改动，用服务器上的版本覆盖';
+    rowDir.append(overwriteBtn, viewBtn);
     const row = el('div', { display: 'flex', gap: '5px', marginTop: '5px', flexWrap: 'wrap' }); row.className = 'va-menu-row';
-    row.append(mkbtn('导出 Pack', exportJSON), mkbtn('导入 Pack', importJSON), mkbtn('清空当前', clearAll));
-    const groupPanel = el('section');
+    const clearBtn = mkbtn('清空当前', clearAll);
+    clearBtn.classList.add('is-danger');
+    row.append(mkbtn('导出 Pack', exportJSON), mkbtn('导入 Pack', importJSON), clearBtn);
+    const groupFold = mkFold('组管理', '加入组 / 推送到组 / 云开发登录');
+    const groupPanel = groupFold.body;
     groupPanel.setAttribute('aria-label', '组管理菜单');
     const groupHeading = el('div', { color: '#9b8260', fontSize: '9px', fontWeight: '700', letterSpacing: '.1em', padding: '0 9px 3px' }, '组');
     const groupInvite = el('input'); groupInvite.className = 'va-input';
@@ -1132,19 +1169,21 @@
     joinRow.appendChild(pushBtn);
     groupInvite.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); joinBtn.click(); } });
     groupPanel.append(groupHeading, groupInvite, joinRow, hubRow, groupFeedback, groupList);
+    groupFold.body.append(el('div', { color: '#89919b', fontSize: '10px', padding: '0 2px' }, '与伙伴共享标注：加入组后可在同一片单里互看。'));
     renderDockGroups();
     menuPanel.textContent = '';
     const cands = (window.VA_SYNC_URLS || []).join('  ·  ');
-    menuPanel.append(
-      el('div', { color: '#9b8260', fontSize: '9px', fontWeight: '700', letterSpacing: '.1em', padding: '0 9px 3px' }, 'ANNOTATION TOOLS'),
-      mkbtn('查看全部标注', () => togglePanel(true)),
-      btnBridge,
-      mkbtn('截图到剪贴板', shotOnly),
-      mkbtn('保存为笔记', saveNote),
-      btnDiag,
-      el('div', { height: '1px', background: 'rgba(255,255,255,.08)', margin: '5px 3px' }),
-      el('div', { color: '#9b8260', fontSize: '9px', fontWeight: '700', letterSpacing: '.1em', padding: '0 9px 3px' }, 'SYNC & FILES'),
-      el('div', { color: '#89919b', fontSize: '10px', padding: '0 9px' }, '同步地址（留空=自动探测）'),
+    const section = (label) => el('div', { color: '#9b8260', fontSize: '9px', fontWeight: '700', letterSpacing: '.1em', padding: '6px 9px 3px' }, label);
+    const sep = () => el('div', { height: '1px', background: 'rgba(255,255,255,.08)', margin: '5px 3px' });
+
+    // 首屏：只放高频动作（AI 上下文三件套 + 诊断）。其余收进折叠区。
+    const toolsRow = el('div', { display: 'flex', gap: '5px', flexWrap: 'wrap' }); toolsRow.className = 'va-menu-row';
+    toolsRow.append(btnBridge, mkbtn('截图', shotOnly), mkbtn('存笔记', saveNote));
+
+    // 高级设置：同步地址（自动探测已覆盖日常，这里只是手动兜底）+ 方向控制 + 导入导出 + 词典模板
+    const adv = mkFold('高级设置', '同步地址、导入导出、词典模板等低频项');
+    adv.body.append(
+      el('div', { color: '#89919b', fontSize: '10px', padding: '4px 9px 0' }, '同步地址（留空=自动探测）'),
       syncBox,
       el('div', { display: 'flex', gap: '6px', marginTop: '6px' },
         mkbtn('保存地址', async () => {
@@ -1163,16 +1202,23 @@
         mkbtn('测试', testSync)),
       rowDir,
       row,
-      el('div', { height: '1px', background: 'rgba(255,255,255,.08)', margin: '5px 3px' }),
-      groupPanel,
-      el('div', { color: '#66717d', fontSize: '9px', padding: '2px 9px 0', overflowWrap: 'anywhere' }, cands ? '备选：' + cands : '默认 http://127.0.0.1:8793'),
-      el('div', { height: '1px', background: 'rgba(255,255,255,.08)', margin: '5px 3px' }),
-      el('div', { color: '#9b8260', fontSize: '9px', fontWeight: '700', letterSpacing: '.1em', padding: '0 9px 3px' }, 'DICTIONARY'),
+      sep(),
       el('div', { color: '#89919b', fontSize: '10px', padding: '0 9px' }, '默认查词链接（用 {word} 占位）'),
       dictBox,
       el('div', { display: 'flex', gap: '6px', marginTop: '6px' },
         mkbtn('保存模板', saveDictTemplate),
         mkbtn('恢复默认', () => { dictBox.value = ''; try { localStorage.removeItem('annota:dictUrlTemplate'); } catch (e) {} setSyncStatus('词典已恢复默认'); })),
+      el('div', { color: '#66717d', fontSize: '9px', padding: '6px 9px 0', overflowWrap: 'anywhere' }, cands ? '备选：' + cands : '默认 http://127.0.0.1:8793'),
+    );
+
+    menuPanel.append(
+      section('ANNOTATION TOOLS'),
+      toolsRow,
+      btnDiag,
+      sep(),
+      adv.fold,
+      sep(),
+      groupFold.fold,
     );
     menuPanel.style.display = 'block';
     uiRoot.appendChild(menuPanel);
@@ -2244,7 +2290,6 @@
     }
   }
 
-  async function uploadSync() { await syncNow(); }
   async function downloadSync() {
     if (!state.mediaId) return;
     setSyncStatus('下载中…');

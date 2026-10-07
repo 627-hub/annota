@@ -1,0 +1,6 @@
+[[permission]]
+identifier = "allow-find"
+description = "Allows in-page find and zoom control for the active browser tab."
+# 注意：set_toolbar_height 归 toolbar.toml 的 allow-set-toolbar-height，
+# 不在此重复授权 —— 一个命令应只有一个权威 owner，否则两处会各自漂移。
+commands.allow = ["find_in_page", "set_zoom"]

@@ -283,6 +283,57 @@ impl Db {
             Ok(())
         })
     }
+
+    // ---------- omnibox 智能搜索 ----------
+    /// 搜索历史与收藏，返回 {history: [...], bookmarks: [...]}，各限 5 条。
+    pub fn search_omnibox(&self, q: &str) -> Result<Value, String> {
+        let q = q.trim();
+        if q.is_empty() {
+            return Ok(json!({ "history": [], "bookmarks": [] }));
+        }
+        let pattern = format!("%{}%", q);
+        self.with_conn(|c| {
+            let mut stmt = c
+                .prepare(
+                    "SELECT url,title,visit_at FROM history
+                     WHERE url LIKE ?1 OR title LIKE ?1
+                     ORDER BY visit_at DESC LIMIT 5",
+                )
+                .map_err(|e| e.to_string())?;
+            let history = stmt
+                .query_map(params![pattern], |r| {
+                    Ok(json!({
+                        "url": r.get::<_, String>(0)?,
+                        "title": r.get::<_, String>(1)?,
+                        "visit_at": r.get::<_, i64>(2)?,
+                    }))
+                })
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+
+            let mut stmt = c
+                .prepare(
+                    "SELECT url,title,favicon FROM bookmarks
+                     WHERE url LIKE ?1 OR title LIKE ?1
+                     ORDER BY created_at DESC LIMIT 5",
+                )
+                .map_err(|e| e.to_string())?;
+            let bookmarks = stmt
+                .query_map(params![pattern], |r| {
+                    Ok(json!({
+                        "url": r.get::<_, String>(0)?,
+                        "title": r.get::<_, String>(1)?,
+                        "favicon": r.get::<_, Option<String>>(2)?,
+                    }))
+                })
+                .map_err(|e| e.to_string())?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| e.to_string())?;
+
+            Ok(json!({ "history": history, "bookmarks": bookmarks }))
+        })
+    }
 }
 
 #[cfg(test)]
@@ -322,6 +373,35 @@ mod tests {
         assert_eq!(list[0]["tab_id"], "tab-2");
         db.clear_history().unwrap();
         assert_eq!(db.list_history(10).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn omnibox_searches_history_and_bookmarks() {
+        let db = tmp_db();
+        db.add_bookmark("https://www.bilibili.com/video/BV1xx", "BBC 纪录片", None)
+            .unwrap();
+        db.add_history("https://www.bilibili.com/video/BV1yy", "BBC 纪录片 第二集", None)
+            .unwrap();
+        db.add_history("https://youtube.com/watch?v=z", "别的站", None)
+            .unwrap();
+
+        let r = db.search_omnibox("bilibili").unwrap();
+        assert_eq!(r["bookmarks"].as_array().unwrap().len(), 1);
+        assert_eq!(r["history"].as_array().unwrap().len(), 1);
+
+        // 标题匹配也要能命中
+        let r = db.search_omnibox("BBC").unwrap();
+        assert_eq!(r["bookmarks"].as_array().unwrap().len(), 1);
+        assert_eq!(r["history"].as_array().unwrap().len(), 1);
+
+        // 无匹配返回空数组
+        let r = db.search_omnibox("不存在的站").unwrap();
+        assert!(r["bookmarks"].as_array().unwrap().is_empty());
+        assert!(r["history"].as_array().unwrap().is_empty());
+
+        // 空查询不查库
+        let r = db.search_omnibox("   ").unwrap();
+        assert!(r["bookmarks"].as_array().unwrap().is_empty());
     }
 
     #[test]

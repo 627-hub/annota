@@ -20,7 +20,7 @@ function makeEl(tag) {
   return n;
 }
 
-function makeEnv({ fetchImpl, gmImpl, build, distBase, lastCheck }) {
+function makeEnv({ fetchImpl, gmImpl, build, distBase, lastCheck, viewOnly }) {
   const created = [];
   const store = { [lastCheck == null ? '__none' : 'va:lastVersionCheck']: lastCheck == null ? undefined : String(lastCheck) };
   const document = {
@@ -38,6 +38,7 @@ function makeEnv({ fetchImpl, gmImpl, build, distBase, lastCheck }) {
     console, JSON, Promise, Number, Date,
     fetch: fetchImpl, GM_xmlhttpRequest: gmImpl,
   };
+  if (viewOnly) sandbox.VA_VIEW_ONLY = true;
   sandbox.self = sandbox;
   const ctx = vm.createContext(sandbox);
   vm.runInContext(code, ctx, { filename: 'version-check.js' });
@@ -46,8 +47,15 @@ function makeEnv({ fetchImpl, gmImpl, build, distBase, lastCheck }) {
 
 const resp = (text) => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve(text) });
 
+// GM 通道 mock：必须真的调用 onload，否则 corsFetch 的 promise 永不 resolve，
+// 整个 async 测试体会静默挂起（只跑完第一个用例就停，且 exit=0 极具迷惑性）。
+const gmResponder = (body) => (opts) => {
+  if (opts && typeof opts.onload === 'function') opts.onload({ responseText: body });
+};
+
 (async () => {
-  // 1) 远端更新 → 出现提示条
+  // 1) 远端更新 → 出现提示条，且重装链接指向**当前变体**
+  // 回归：曾硬编码指向 annotate.view.user.js，导致编辑版用户被引导去装只读观看端（降级）。
   {
     const { ctx } = makeEnv({ fetchImpl: () => resp('{"build":2000}'), build: 1000, distBase: 'https://x.test', lastCheck: 0 });
     await ctx.VAVersion.check();
@@ -55,8 +63,41 @@ const resp = (text) => Promise.resolve({ ok: true, status: 200, text: () => Prom
     check('远端更新 → 显示提示条', !!host);
     if (host) {
       const link = host.children.find((c) => c.href);
-      check('提示条链接指向观看端脚本', !!link && link.href === 'https://x.test/annotate.view.user.js', link && link.href);
+      check('编辑版重装链接指向 annotate.user.js（非观看端）',
+        !!link && link.href === 'https://x.test/annotate.user.js', link && link.href);
+      const text = host.children.find((c) => c.tagName === 'SPAN');
+      check('提示语标明变体「编辑版」', !!text && /编辑版/.test(text.textContent), text && text.textContent);
     }
+  }
+
+  // 1b) GM 版 → 指向 gm 变体
+  {
+    const { ctx } = makeEnv({
+      fetchImpl: () => resp('{"build":2000}'), build: 1000, distBase: 'https://x.test',
+      lastCheck: 0, gmImpl: gmResponder('{"build":2000}'),
+    });
+    await ctx.VAVersion.check();
+    const host = ctx.document.getElementById('annota-version-nudge');
+    const link = host && host.children.find((c) => c.href);
+    check('GM 版重装链接指向 annotate.gm.user.js',
+      !!link && link.href === 'https://x.test/annotate.gm.user.js', link && link.href);
+    const text = host && host.children.find((c) => c.tagName === 'SPAN');
+    check('GM 版提示语标明「GM 编辑版」', !!text && /GM 编辑版/.test(text.textContent), text && text.textContent);
+  }
+
+  // 1c) 观看端 → 指向 view 变体
+  {
+    const { ctx } = makeEnv({
+      fetchImpl: () => resp('{"build":2000}'), build: 1000, distBase: 'https://x.test',
+      lastCheck: 0, viewOnly: true,
+    });
+    await ctx.VAVersion.check();
+    const host = ctx.document.getElementById('annota-version-nudge');
+    const link = host && host.children.find((c) => c.href);
+    check('观看端重装链接指向 annotate.view.user.js',
+      !!link && link.href === 'https://x.test/annotate.view.user.js', link && link.href);
+    const text = host && host.children.find((c) => c.tagName === 'SPAN');
+    check('观看端提示语标明「观看端」', !!text && /观看端/.test(text.textContent), text && text.textContent);
   }
   // 2) 已是最新 → 不提示
   {

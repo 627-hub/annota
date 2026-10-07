@@ -1,0 +1,4 @@
+[[permission]]
+identifier = "allow-devtools"
+description = "Allows opening the developer tools for the active browser tab."
+commands.allow = ["open_devtools"]

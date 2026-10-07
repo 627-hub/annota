@@ -100,7 +100,9 @@ button { color: inherit; }
   position: fixed;
   right: 24px;
   bottom: 88px;
-  z-index: 2147483003;
+  /* 必须高于 .va-diag（2147483004）：否则打开诊断后点「更多」，菜单会被诊断面板整块盖住。
+     菜单是「当前正在交互」的层，理应压过只读的信息面板。 */
+  z-index: 2147483005;
   width: min(320px, calc(100vw - 32px));
   max-height: min(70vh, 560px);
   overflow-y: auto;
@@ -314,6 +316,30 @@ button { color: inherit; }
 .va-menu-pop > .va-btn { justify-content: flex-start; width: 100%; padding-left: 10px; }
 .va-menu-row { display: flex; gap: 5px; margin-top: 5px; }
 .va-menu-row > .va-btn { min-width: 0; flex: 1; padding: 0 5px; font-size: 10px; }
+
+/* ---------- 可折叠分组（「更多」菜单精简用） ---------- */
+/* 默认收起：把同步地址/导入导出/词典模板/组管理等低频项移出首屏，
+   避免 20+ 个平铺按钮堆在一起。点标题展开。 */
+.va-fold { margin-top: 4px; }
+.va-fold-head {
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border: 1px solid rgba(255,255,255,.07); border-radius: 7px;
+  background: rgba(255,255,255,.025); color: #b9bec6;
+  font: 600 11px var(--va-font-ui); cursor: pointer; text-align: left;
+}
+.va-fold-head:hover { background: rgba(255,255,255,.06); color: #e8eaed; }
+.va-fold-label { flex: 1; min-width: 0; }
+.va-fold-chevron { width: 13px; height: 13px; flex: none; opacity: .5; transition: transform 180ms var(--va-ease), opacity 140ms ease; }
+.va-fold-head:hover .va-fold-chevron { opacity: .85; }
+.va-fold[data-open="1"] .va-fold-head { border-color: rgba(245,166,35,.28); background: rgba(245,166,35,.08); color: #f0d6ac; }
+.va-fold[data-open="1"] .va-fold-chevron { transform: rotate(180deg); opacity: .9; }
+/* 展开后给内容区一点内缩与分隔，避免与折叠头糊在一起 */
+.va-fold-body { display: none; padding: 7px 2px 2px; }
+.va-fold[data-open="1"] .va-fold-body { display: block; }
+
+/* 危险操作（清空当前）单独着色，不与日常按钮混为一谈 */
+.va-btn.is-danger { color: #d98a8a; border-color: rgba(217,138,138,.22); }
+.va-btn.is-danger:hover { background: rgba(217,138,138,.14) !important; color: #f0a8a8 !important; border-color: rgba(217,138,138,.4); }
 
 /* ---------- 标注框（§6.1） ---------- */
 .va-mark { border:1.5px solid var(--va-word); border-radius:5px; background:rgba(245,166,35,.105); pointer-events:auto; cursor:pointer; transition:background 120ms ease, box-shadow 120ms ease; }

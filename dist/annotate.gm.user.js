@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         Annota（编辑 · GM）
 // @namespace    https://video-annotate.local/
-// @version      0.1.0.19
+// @version      0.1.0.45
 // @description  给视频和网页内容添加可共享标注（框选、时间锚点、词条与同步）
 // @author       Annota
 // @match        *://*/*
@@ -16,8 +16,8 @@
 // 构建 build.py ｜ 自测 dev/demo.html ｜ 文档 README.md、docs/spec.md
 
 /* ===== data: build id ===== */
-window.VA_BUILD=1791347940;
-window.VA_US_VER="0.1.0.19";
+window.VA_BUILD=1791372221;
+window.VA_US_VER="0.1.0.45";
 window.VA_DIST_BASE="https://tencentcloudtest-d2eg4lu85c76fb0-1414056833.tcloudbaseapp.com";
 /* ===== src/geometry.js ===== */
 /* video-annotate · geometry
@@ -1125,7 +1125,9 @@ button { color: inherit; }
   position: fixed;
   right: 24px;
   bottom: 88px;
-  z-index: 2147483003;
+  /* 必须高于 .va-diag（2147483004）：否则打开诊断后点「更多」，菜单会被诊断面板整块盖住。
+     菜单是「当前正在交互」的层，理应压过只读的信息面板。 */
+  z-index: 2147483005;
   width: min(320px, calc(100vw - 32px));
   max-height: min(70vh, 560px);
   overflow-y: auto;
@@ -1339,6 +1341,30 @@ button { color: inherit; }
 .va-menu-pop > .va-btn { justify-content: flex-start; width: 100%; padding-left: 10px; }
 .va-menu-row { display: flex; gap: 5px; margin-top: 5px; }
 .va-menu-row > .va-btn { min-width: 0; flex: 1; padding: 0 5px; font-size: 10px; }
+
+/* ---------- 可折叠分组（「更多」菜单精简用） ---------- */
+/* 默认收起：把同步地址/导入导出/词典模板/组管理等低频项移出首屏，
+   避免 20+ 个平铺按钮堆在一起。点标题展开。 */
+.va-fold { margin-top: 4px; }
+.va-fold-head {
+  width: 100%; display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border: 1px solid rgba(255,255,255,.07); border-radius: 7px;
+  background: rgba(255,255,255,.025); color: #b9bec6;
+  font: 600 11px var(--va-font-ui); cursor: pointer; text-align: left;
+}
+.va-fold-head:hover { background: rgba(255,255,255,.06); color: #e8eaed; }
+.va-fold-label { flex: 1; min-width: 0; }
+.va-fold-chevron { width: 13px; height: 13px; flex: none; opacity: .5; transition: transform 180ms var(--va-ease), opacity 140ms ease; }
+.va-fold-head:hover .va-fold-chevron { opacity: .85; }
+.va-fold[data-open="1"] .va-fold-head { border-color: rgba(245,166,35,.28); background: rgba(245,166,35,.08); color: #f0d6ac; }
+.va-fold[data-open="1"] .va-fold-chevron { transform: rotate(180deg); opacity: .9; }
+/* 展开后给内容区一点内缩与分隔，避免与折叠头糊在一起 */
+.va-fold-body { display: none; padding: 7px 2px 2px; }
+.va-fold[data-open="1"] .va-fold-body { display: block; }
+
+/* 危险操作（清空当前）单独着色，不与日常按钮混为一谈 */
+.va-btn.is-danger { color: #d98a8a; border-color: rgba(217,138,138,.22); }
+.va-btn.is-danger:hover { background: rgba(217,138,138,.14) !important; color: #f0a8a8 !important; border-color: rgba(217,138,138,.4); }
 
 /* ---------- 标注框（§6.1） ---------- */
 .va-mark { border:1.5px solid var(--va-word); border-radius:5px; background:rgba(245,166,35,.105); pointer-events:auto; cursor:pointer; transition:background 120ms ease, box-shadow 120ms ease; }
@@ -2652,6 +2678,25 @@ button { color: inherit; }
     return fetch(url, { cache: 'no-store' }).then((r) => (r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status))));
   }
 
+  // 重装链接必须指向「用户当前装的那个变体」，不能一律给 view 版：
+  // 否则编辑版/GM 版用户会被引导去装只读观看端，等于降级。
+  // 用 VA_VIEW_ONLY 判定观看端；GM 版与编辑版共用同一份代码，仅 fetch 通道不同，
+  // 故按是否声明 GM_xmlhttpRequest 特权区分。
+  function relinkHref() {
+    const base = root.VA_DIST_BASE || '';
+    if (root.VA_VIEW_ONLY) return base + '/annotate.view.user.js';
+    var isGM = false;
+    try { isGM = !!(root.GM_xmlhttpRequest || (root.GM && root.GM.xmlHttpRequest)); } catch (e) { isGM = false; }
+    return base + (isGM ? '/annotate.gm.user.js' : '/annotate.user.js');
+  }
+
+  function variantLabel() {
+    if (root.VA_VIEW_ONLY) return '观看端';
+    var isGM = false;
+    try { isGM = !!(root.GM_xmlhttpRequest || (root.GM && root.GM.xmlHttpRequest)); } catch (e) { isGM = false; }
+    return isGM ? 'GM 编辑版' : '编辑版';
+  }
+
   function nudge(latest, local) {
     try {
       if (document.getElementById('annota-version-nudge')) return;
@@ -2662,10 +2707,10 @@ button { color: inherit; }
         'border-radius:12px;background:rgba(18,20,24,.96);color:#f3d4a2;font:13px/1.4 -apple-system,"PingFang SC",sans-serif;' +
         'box-shadow:0 12px 40px rgba(0,0,0,.5);';
       const text = document.createElement('span');
-      text.textContent = 'Annota 有新版本，建议更新';
+      text.textContent = 'Annota 有新版本（' + variantLabel() + '），建议更新';
       const a = document.createElement('a');
       a.textContent = '重装';
-      a.href = (root.VA_DIST_BASE || '') + '/annotate.view.user.js';
+      a.href = relinkHref();
       a.target = '_blank';
       a.rel = 'noopener';
       a.style.cssText = 'color:#f5a623;font-weight:700;text-decoration:none;white-space:nowrap;';
@@ -2691,7 +2736,7 @@ button { color: inherit; }
     } catch (e) { /* 探测失败：静默 */ }
   }
 
-  root.VAVersion = { check, _nudge: nudge };
+  root.VAVersion = { check, _nudge: nudge, _relinkHref: relinkHref, _variantLabel: variantLabel };
 })(typeof self !== 'undefined' ? self : this);
 
 /* ===== src/browser-shell.js ===== */
@@ -2934,6 +2979,7 @@ button { color: inherit; }
     search: '<circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.2 4.2"/>',
     clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.3 2"/>',
     dots: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+    chevronDown: '<path d="m6 9 6 6 6-6"/>',
     arrow: '<path d="M7 17 17 7M7 7h10v10"/>',
     play: '<path d="m8 5 11 7-11 7V5Z"/>',
     box: '<rect x="4" y="4" width="16" height="16" rx="3"/><path d="M8 9h8M8 13h5"/>',
@@ -3417,6 +3463,9 @@ button { color: inherit; }
   let diagTimer = null;
   function toggleDiag() {
     const on = diagPanel.style.display === 'none';
+    // 点菜单项后应关闭菜单（与其他菜单项一致）；否则菜单会与诊断面板同屏，
+    // 既挡住内容、也让「更多」按钮变成只能关不能开。
+    if (on && menuPanel.style.display !== 'none') toggleMenu();
     diagPanel.style.display = on ? 'block' : 'none';
     btnDiag.classList.toggle('va-btn-primary', on);
     if (on) { uiRoot.appendChild(diagPanel); diagTimer = setInterval(renderDiag, 800); renderDiag(); }
@@ -3935,6 +3984,29 @@ button { color: inherit; }
     await persistAppSettings();
     setSyncStatus('词典模板已保存');
   }
+  // 可折叠分组（「更多」菜单用）：默认收起，把低频/调试项从首屏移走。
+  // 首屏只留高频动作，避免 20+ 个平铺按钮造成的认知负担。
+  function mkFold(label, hint) {
+    const fold = el('div'); fold.className = 'va-fold';
+    const head = el('button'); head.type = 'button';
+    head.className = 'va-fold-head';
+    head.setAttribute('aria-expanded', 'false');
+    if (hint) head.title = hint;
+    const text = el('span', null, label); text.className = 'va-fold-label';
+    // 右侧 chevron：明确「这是个可展开的分组」，而不是又一个动作按钮
+    const chev = svgIcon('chevronDown'); chev.classList.add('va-fold-chevron');
+    head.append(text, chev);
+    const body = el('div'); body.className = 'va-fold-body';
+    head.onclick = (e) => {
+      e.stopPropagation();
+      const open = fold.dataset.open === '1';
+      fold.dataset.open = open ? '0' : '1';
+      head.setAttribute('aria-expanded', open ? 'false' : 'true');
+    };
+    fold.append(head, body);
+    return { fold, body };
+  }
+
   async function toggleMenu() {
     const on = menuPanel.style.display === 'none';
     if (!on) { menuPanel.style.display = 'none'; btnCfg.classList.remove('is-active'); menuPanel.remove(); return; }
@@ -3946,11 +4018,21 @@ button { color: inherit; }
       applyMode();
       viewBtn.textContent = isView() ? '只读模式 · 已开启' : '只读模式';
     });
+    // 「仅上传」已删：它只是 syncNow 的别名（syncNow 本身就是拉取→合并→回传），
+    //  留一个同功能按钮会让人误以为上传与同步是两种不同操作。
+    // 「仅下载」改名并标危险色：它会用服务器版**丢弃本地改动**，属破坏性操作，
+    //  原名「仅下载」看不出这个风险。
     const rowDir = el('div', { display: 'flex', gap: '5px', marginTop: '5px' }); rowDir.className = 'va-menu-row';
-    rowDir.append(mkbtn('仅上传', uploadSync), mkbtn('仅下载', downloadSync), viewBtn);
+    const overwriteBtn = mkbtn('以服务器覆盖本地', downloadSync);
+    overwriteBtn.classList.add('is-danger');
+    overwriteBtn.title = '丢弃本视频的本地改动，用服务器上的版本覆盖';
+    rowDir.append(overwriteBtn, viewBtn);
     const row = el('div', { display: 'flex', gap: '5px', marginTop: '5px', flexWrap: 'wrap' }); row.className = 'va-menu-row';
-    row.append(mkbtn('导出 Pack', exportJSON), mkbtn('导入 Pack', importJSON), mkbtn('清空当前', clearAll));
-    const groupPanel = el('section');
+    const clearBtn = mkbtn('清空当前', clearAll);
+    clearBtn.classList.add('is-danger');
+    row.append(mkbtn('导出 Pack', exportJSON), mkbtn('导入 Pack', importJSON), clearBtn);
+    const groupFold = mkFold('组管理', '加入组 / 推送到组 / 云开发登录');
+    const groupPanel = groupFold.body;
     groupPanel.setAttribute('aria-label', '组管理菜单');
     const groupHeading = el('div', { color: '#9b8260', fontSize: '9px', fontWeight: '700', letterSpacing: '.1em', padding: '0 9px 3px' }, '组');
     const groupInvite = el('input'); groupInvite.className = 'va-input';
@@ -4041,19 +4123,21 @@ button { color: inherit; }
     joinRow.appendChild(pushBtn);
     groupInvite.addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); joinBtn.click(); } });
     groupPanel.append(groupHeading, groupInvite, joinRow, hubRow, groupFeedback, groupList);
+    groupFold.body.append(el('div', { color: '#89919b', fontSize: '10px', padding: '0 2px' }, '与伙伴共享标注：加入组后可在同一片单里互看。'));
     renderDockGroups();
     menuPanel.textContent = '';
     const cands = (window.VA_SYNC_URLS || []).join('  ·  ');
-    menuPanel.append(
-      el('div', { color: '#9b8260', fontSize: '9px', fontWeight: '700', letterSpacing: '.1em', padding: '0 9px 3px' }, 'ANNOTATION TOOLS'),
-      mkbtn('查看全部标注', () => togglePanel(true)),
-      btnBridge,
-      mkbtn('截图到剪贴板', shotOnly),
-      mkbtn('保存为笔记', saveNote),
-      btnDiag,
-      el('div', { height: '1px', background: 'rgba(255,255,255,.08)', margin: '5px 3px' }),
-      el('div', { color: '#9b8260', fontSize: '9px', fontWeight: '700', letterSpacing: '.1em', padding: '0 9px 3px' }, 'SYNC & FILES'),
-      el('div', { color: '#89919b', fontSize: '10px', padding: '0 9px' }, '同步地址（留空=自动探测）'),
+    const section = (label) => el('div', { color: '#9b8260', fontSize: '9px', fontWeight: '700', letterSpacing: '.1em', padding: '6px 9px 3px' }, label);
+    const sep = () => el('div', { height: '1px', background: 'rgba(255,255,255,.08)', margin: '5px 3px' });
+
+    // 首屏：只放高频动作（AI 上下文三件套 + 诊断）。其余收进折叠区。
+    const toolsRow = el('div', { display: 'flex', gap: '5px', flexWrap: 'wrap' }); toolsRow.className = 'va-menu-row';
+    toolsRow.append(btnBridge, mkbtn('截图', shotOnly), mkbtn('存笔记', saveNote));
+
+    // 高级设置：同步地址（自动探测已覆盖日常，这里只是手动兜底）+ 方向控制 + 导入导出 + 词典模板
+    const adv = mkFold('高级设置', '同步地址、导入导出、词典模板等低频项');
+    adv.body.append(
+      el('div', { color: '#89919b', fontSize: '10px', padding: '4px 9px 0' }, '同步地址（留空=自动探测）'),
       syncBox,
       el('div', { display: 'flex', gap: '6px', marginTop: '6px' },
         mkbtn('保存地址', async () => {
@@ -4072,16 +4156,23 @@ button { color: inherit; }
         mkbtn('测试', testSync)),
       rowDir,
       row,
-      el('div', { height: '1px', background: 'rgba(255,255,255,.08)', margin: '5px 3px' }),
-      groupPanel,
-      el('div', { color: '#66717d', fontSize: '9px', padding: '2px 9px 0', overflowWrap: 'anywhere' }, cands ? '备选：' + cands : '默认 http://127.0.0.1:8793'),
-      el('div', { height: '1px', background: 'rgba(255,255,255,.08)', margin: '5px 3px' }),
-      el('div', { color: '#9b8260', fontSize: '9px', fontWeight: '700', letterSpacing: '.1em', padding: '0 9px 3px' }, 'DICTIONARY'),
+      sep(),
       el('div', { color: '#89919b', fontSize: '10px', padding: '0 9px' }, '默认查词链接（用 {word} 占位）'),
       dictBox,
       el('div', { display: 'flex', gap: '6px', marginTop: '6px' },
         mkbtn('保存模板', saveDictTemplate),
         mkbtn('恢复默认', () => { dictBox.value = ''; try { localStorage.removeItem('annota:dictUrlTemplate'); } catch (e) {} setSyncStatus('词典已恢复默认'); })),
+      el('div', { color: '#66717d', fontSize: '9px', padding: '6px 9px 0', overflowWrap: 'anywhere' }, cands ? '备选：' + cands : '默认 http://127.0.0.1:8793'),
+    );
+
+    menuPanel.append(
+      section('ANNOTATION TOOLS'),
+      toolsRow,
+      btnDiag,
+      sep(),
+      adv.fold,
+      sep(),
+      groupFold.fold,
     );
     menuPanel.style.display = 'block';
     uiRoot.appendChild(menuPanel);
@@ -5153,7 +5244,6 @@ button { color: inherit; }
     }
   }
 
-  async function uploadSync() { await syncNow(); }
   async function downloadSync() {
     if (!state.mediaId) return;
     setSyncStatus('下载中…');

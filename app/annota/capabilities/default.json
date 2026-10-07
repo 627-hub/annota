@@ -2,8 +2,14 @@
   "$schema": "https://schema.tauri.app/config/v2",
   "identifier": "default",
   "description": "Default capabilities for the Annota spike",
-  "windows": ["main"],
-  "webviews": ["toolbar", "browser"],
+  "windows": [
+    "main"
+  ],
+  "webviews": [
+    "toolbar",
+    "browser",
+    "overlay"
+  ],
   "remote": {
     "urls": [
       "http://127.0.0.1:8793/*",
@@ -31,6 +37,11 @@
     "allow-agent-chat",
     "allow-agent-cancel",
     "allow-install-update",
-    "allow-tab-manage"
+    "allow-tab-manage",
+    "core:webview:allow-internal-toggle-devtools",
+    "allow-devtools",
+    "allow-find",
+    "allow-overlay",
+    "allow-set-toolbar-height"
   ]
 }

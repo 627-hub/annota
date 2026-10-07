@@ -1,12 +1,16 @@
-/* video-annotate · tabs（标签页管理，M3）
+/* video-annotate · tabs（标签页管理，M3；会话恢复 M6a）
  * 多 child webview 单窗口叠放：每个 tab 一个 webview，激活 show+focus、其余 hide。
  * 所有「当前页」操作（navigate/browser_action/run_tool）经 TabManager::active_webview 寻址。
  *
  * 约定：
  * - tab webview 的 label 即 Tab.id；首个 tab 用 "browser"（兼容既有 MCP/工具），其后 "tab-<n>"。
  * - TabManager 存于 tauri::State(Mutex<TabManager>)。
+ * - M6a 会话恢复：emit_tabs 每次全量快照后标脏，后台线程防抖 400ms 落盘 tabs.json；
+ *   启动时 restore_tabs 按快照重建（仅 http/https），失败/无记录则回落到单个工作区 tab。
  */
-use serde_json::json;
+use serde_json::{json, Value};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Webview, WebviewUrl};
 use tauri::webview::{DownloadEvent, WebviewBuilder};
@@ -14,6 +18,8 @@ use tauri::webview::{DownloadEvent, WebviewBuilder};
 use crate::store::DbState;
 
 pub const FIRST_TAB_ID: &str = "browser";
+/// 单次会话最多恢复的 tab 数（与前端 12 tab 上限对齐）。
+pub const MAX_RESTORE: usize = 12;
 
 pub struct Tab {
     pub id: String,
@@ -67,6 +73,10 @@ pub fn create_tab(
     position: PhysicalPosition<i32>,
     size: PhysicalSize<u32>,
 ) -> Result<String, String> {
+    // 后建的 webview 盖在先建的上面：新 tab 会遮住已打开的浮层（菜单/面板）。
+    // 代数 +1，让 overlay 下次打开时重建；这里同时把浮层关掉，避免它悬在旧位置。
+    crate::bump_tab_gen();
+    let _ = app.get_webview(crate::OVERLAY_ID).map(|w| w.close());
     let (id, _seq) = {
         let state = app.state::<TabState>();
         let mut mgr = state.lock().map_err(|_| "标签状态锁中毒".to_string())?;
@@ -293,9 +303,15 @@ pub fn move_tab(app: &AppHandle, id: &str, to_index: usize) -> Result<(), String
 
 /// 向工具栏广播标签列表（全量）。
 pub fn emit_tabs(app: &AppHandle) {
-    // 先在锁内取 id 列表与激活 id，释放锁后再查询各 webview 的 URL
-    // （get_webview().url() 可能派发到 UI 线程，持锁调用有争用/死锁风险）。
-    let (ids, active) = {
+    let (list, _active) = snapshot(app);
+    let _ = app.emit("annota://tabs-changed", json!({ "tabs": list }));
+    // M6a：任何 tab 变更都标脏，防抖线程稍后落盘会话。
+    mark_session_dirty();
+}
+
+/// tab 快照：`(列表, 激活下标)`。取 URL 会派发到 UI 线程，故必须先释放锁再查。
+fn snapshot(app: &AppHandle) -> (Vec<Value>, Option<usize>) {
+    let (ids, active_id) = {
         let state = app.state::<TabState>();
         let locked = state.lock();
         match locked {
@@ -306,7 +322,8 @@ pub fn emit_tabs(app: &AppHandle) {
             Err(_) => (Vec::new(), None),
         }
     };
-    let list: Vec<serde_json::Value> = ids
+    let active = active_id.as_deref().and_then(|id| ids.iter().position(|x| x == id));
+    let list: Vec<Value> = ids
         .iter()
         .map(|id| {
             let url = app
@@ -318,11 +335,237 @@ pub fn emit_tabs(app: &AppHandle) {
                 "id": id,
                 "url": url,
                 "title": "",
-                "active": active.as_deref() == Some(id.as_str()),
+                "active": active_id.as_deref() == Some(id.as_str()),
             })
         })
         .collect();
-    let _ = app.emit("annota://tabs-changed", json!({ "tabs": list }));
+    (list, active)
+}
+
+// ---------- M6a · 会话恢复 ----------
+
+/// 会话文件路径（与 store.rs 的 db 路径规则一致：env 优先 → debug 落项目内 → app data dir）。
+fn session_path(app: &AppHandle) -> PathBuf {
+    if let Ok(p) = std::env::var("ANNOTA_SESSION") {
+        return PathBuf::from(p);
+    }
+    if cfg!(debug_assertions) {
+        if let Ok(manifest) = std::env::var("CARGO_MANIFEST_DIR") {
+            let manifest = PathBuf::from(manifest);
+            if let Some(root) = manifest.parent().and_then(|p| p.parent()) {
+                return root.join("app/service/tabs.json");
+            }
+        }
+    }
+    app.path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::env::temp_dir().join("Annota"))
+        .join("tabs.json")
+}
+
+/// 标脏时间戳（ms，0 = 干净）。emit_tabs 每次调用都会置值。
+static SESSION_DIRTY_AT: AtomicI64 = AtomicI64::new(0);
+/// 用户主动选择「不恢复上次会话」：内存标志让防抖线程停写，文件里的 disabled 让下次启动也不恢复。
+static SESSION_DISABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+fn mark_session_dirty() {
+    if SESSION_DISABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    SESSION_DIRTY_AT.store(now_millis(), Ordering::Relaxed);
+}
+
+fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// 把当前 tab 快照写到会话文件（同步、best-effort；失败只记日志）。
+fn persist_session(app: &AppHandle) {
+    // 写盘前必须再查一次 DISABLED：用户点「不恢复上次会话」后，防抖线程可能刚好已通过
+    // dirty 检查进入这里，若不复查会用完整快照覆盖 disabled 标记，导致下次启动又恢复。
+    if SESSION_DISABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    let (list, active) = snapshot(app);
+    // 只持久化 id + url；title 每次加载后才有，存了也是陈旧值。
+    let tabs: Vec<Value> = list
+        .iter()
+        .map(|t| {
+            json!({
+                "id": t.get("id").cloned().unwrap_or(Value::Null),
+                "url": t.get("url").cloned().unwrap_or(Value::Null),
+            })
+        })
+        .collect();
+    let payload = json!({ "version": 1, "active": active, "tabs": tabs });
+
+    let path = session_path(app);
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("[annota] 创建会话目录失败 {parent:?}: {e}");
+            return;
+        }
+    }
+    // 先写临时文件再 rename：断电/崩溃时不留半个 JSON（下次启动解析失败会回落单 tab）。
+    let tmp = path.with_extension("json.tmp");
+    let write = || -> std::io::Result<()> {
+        std::fs::write(&tmp, serde_json::to_vec_pretty(&payload).map_err(std::io::Error::other)?)?;
+        std::fs::rename(&tmp, &path)
+    };
+    if let Err(e) = write() {
+        eprintln!("[annota] 写会话文件失败 {path:?}: {e}");
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+/// 启动后台防抖落盘线程：`emit_tabs` 标脏后静默 400ms 再写，连续操作只落一次。
+/// 在 setup 里启动一次即可（线程随进程退出）。
+pub fn spawn_session_persister(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        let dirty_at = SESSION_DIRTY_AT.load(Ordering::Relaxed);
+        if dirty_at == 0 {
+            continue;
+        }
+        if now_millis() - dirty_at < 400 {
+            continue; // 距上次变更不足，继续等
+        }
+        SESSION_DIRTY_AT.store(0, Ordering::Relaxed);
+        persist_session(&app);
+    });
+}
+
+/// 会话文件读取结果。
+enum Session {
+    /// 有效会话：tab URL 列表（按原顺序）+ 激活下标。
+    Restore(Vec<String>, Option<usize>),
+    /// 用户此前一次性作废过本次会话：本次跳过恢复，随后清除标记。
+    SkipOnce,
+    /// 无会话 / 解析失败 / 全部 URL 非法。
+    None,
+}
+
+/// 读取会话文件。任何异常都视为「无会话」。
+fn read_session(app: &AppHandle) -> Session {
+    match std::fs::read_to_string(session_path(app)) {
+        Ok(raw) => parse_session(&raw),
+        Err(_) => Session::None,
+    }
+}
+
+/// 解析会话 JSON（与文件 IO 分离，便于单测）。
+fn parse_session(raw: &str) -> Session {
+    let Ok(v) = serde_json::from_str::<Value>(raw) else {
+        return Session::None;
+    };
+    // 用户此前选过「不恢复上次会话」→ 本次跳过，并让标记失效（一次性语义）。
+    if v.get("disabled").and_then(Value::as_bool).unwrap_or(false) {
+        return Session::SkipOnce;
+    }
+    let Some(arr) = v.get("tabs").and_then(Value::as_array) else {
+        return Session::None;
+    };
+    let mut urls: Vec<String> = Vec::new();
+    // 原始下标 → 过滤后下标。跳过非 http(s) 条目会让下标错位，
+    // 必须记录映射再把 active 翻译过去，否则激活的可能是另一个 tab。
+    let mut index_map: Vec<usize> = Vec::new();
+    for (orig, t) in arr.iter().take(MAX_RESTORE).enumerate() {
+        let url = t.get("url").and_then(Value::as_str).unwrap_or("").trim().to_string();
+        // 只恢复 http(s)；其余（about:blank / 空 / file:）跳过。
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            continue;
+        }
+        index_map.push(orig);
+        urls.push(url);
+    }
+    if urls.is_empty() {
+        return Session::None;
+    }
+    let active = v
+        .get("active")
+        .and_then(Value::as_u64)
+        .map(|n| n as usize)
+        .and_then(|orig| index_map.iter().position(|o| *o == orig));
+    Session::Restore(urls, active)
+}
+
+/// 启动时恢复上次会话。返回恢复的 tab 数（0 = 无会话/全部失效，调用方应回落）。
+#[allow(clippy::too_many_arguments)]
+pub fn restore_tabs(
+    app: &AppHandle,
+    window: &tauri::Window,
+    bridge_js: &str,
+    annotate_js: &str,
+    position: PhysicalPosition<i32>,
+    size: PhysicalSize<u32>,
+) -> Result<usize, String> {
+    let (entries, active) = match read_session(app) {
+        Session::Restore(entries, active) => (entries, active),
+        Session::SkipOnce => {
+            // 一次性作废：本次跳过恢复，删掉标记文件，之后恢复常规持久化。
+            SESSION_DISABLED.store(false, Ordering::Relaxed);
+            let path = session_path(app);
+            let _ = std::fs::remove_file(&path);
+            println!("[annota] 会话：已按上次请求跳过恢复（此后重新启用）");
+            return Ok(0);
+        }
+        Session::None => return Ok(0),
+    };
+    let mut restored = 0usize;
+    for url in entries {
+        // 单个 tab 恢复失败（如 URL 已失效）不阻断其余 tab。
+        match create_tab(app, window, url, Vec::new(), bridge_js, annotate_js, position, size) {
+            Ok(_) => restored += 1,
+            Err(e) => eprintln!("[annota] 恢复 tab 失败（跳过）：{e}"),
+        }
+    }
+    if restored == 0 {
+        return Ok(0);
+    }
+    // create_tab 会把每个新 tab 都置为激活；最后切回原来激活的那个。
+    if let Some(idx) = active {
+        let target = {
+            let state = app.state::<TabState>();
+            let mgr = state.lock().map_err(|_| "标签状态锁中毒".to_string())?;
+            mgr.tabs.get(idx.min(mgr.tabs.len().saturating_sub(1))).map(|t| t.id.clone())
+        };
+        if let Some(id) = target {
+            let _ = activate_tab(app, &id);
+        }
+    }
+    println!("[annota] 会话恢复：{restored} 个 tab（来自 {}）", session_path(app).display());
+    Ok(restored)
+}
+
+/// 一次性作废当前会话（「⋯更多 → 不恢复上次会话」用）。
+///
+/// 语义是「下次启动干净开场」，不是永久关闭：写入 `disabled` 标记后，本次运行内防抖线程停止落盘；
+/// 下次启动 `restore_tabs` 消费掉该标记并清除，此后恢复常规持久化（避免用户被永久卡在「无法恢复」）。
+pub fn clear_session(app: &AppHandle) {
+    SESSION_DIRTY_AT.store(0, Ordering::Relaxed);
+    SESSION_DISABLED.store(true, Ordering::Relaxed);
+    let path = session_path(app);
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("[annota] 创建会话目录失败 {parent:?}: {e}");
+            return;
+        }
+    }
+    let payload = json!({ "version": 1, "disabled": true });
+    let bytes = match serde_json::to_vec_pretty(&payload) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("[annota] 序列化会话禁用标记失败: {e}");
+            return;
+        }
+    };
+    if let Err(e) = std::fs::write(&path, bytes) {
+        eprintln!("[annota] 写会话禁用标记失败 {path:?}: {e}");
+    }
 }
 
 /// 从下载 URL 推导文件名（去查询串、清洗路径非法字符、避开 Windows 保留名）。
@@ -373,4 +616,128 @@ fn unique_path(dir: &std::path::Path, filename: &str) -> std::path::PathBuf {
         }
     }
     candidate
+}
+
+#[cfg(test)]
+mod session_tests {
+    use super::*;
+
+    #[test]
+    fn parses_valid_session_in_order_with_active() {
+        let raw = r#"{"version":1,"active":1,"tabs":[
+            {"id":"browser","url":"https://a.com/"},
+            {"id":"tab-2","url":"http://127.0.0.1:8793/"},
+            {"id":"tab-3","url":"https://c.com/x"}
+        ]}"#;
+        match parse_session(raw) {
+            Session::Restore(urls, active) => {
+                assert_eq!(urls, vec!["https://a.com/", "http://127.0.0.1:8793/", "https://c.com/x"]);
+                assert_eq!(active, Some(1));
+            }
+            _ => panic!("应解析为 Restore"),
+        }
+    }
+
+    #[test]
+    fn skips_non_http_urls_but_keeps_valid_ones() {
+        let raw = r#"{"active":0,"tabs":[
+            {"id":"browser","url":"about:blank"},
+            {"id":"tab-2","url":"file:///etc/passwd"},
+            {"id":"tab-3","url":"https://ok.com/"}
+        ]}"#;
+        match parse_session(raw) {
+            Session::Restore(urls, active) => {
+                assert_eq!(urls, vec!["https://ok.com/"], "只保留 http(s)");
+                // active=0 原指向 about:blank（被跳过），故无对应过滤后下标 → None。
+                // 旧实现「越界回落最后一个」会误得 Some(0) 并激活 ok.com（碰巧对，但不是语义）。
+                // None 时 restore_tabs 会激活最后一个 tab，即 ok.com —— 最终表现一致但语义正确。
+                assert_eq!(active, None, "active 指向被跳过的条目 → None");
+            }
+            _ => panic!("应解析为 Restore"),
+        }
+    }
+
+    #[test]
+    fn all_non_http_is_no_session() {
+        let raw = r#"{"active":0,"tabs":[{"id":"browser","url":"about:blank"}]}"#;
+        assert!(matches!(parse_session(raw), Session::None));
+    }
+
+    #[test]
+    fn disabled_flag_yields_skip_once() {
+        let raw = r#"{"version":1,"disabled":true}"#;
+        assert!(matches!(parse_session(raw), Session::SkipOnce));
+    }
+
+    #[test]
+    fn active_index_out_of_range_is_dropped() {
+        let raw = r#"{"active":99,"tabs":[{"id":"browser","url":"https://a.com/"}]}"#;
+        match parse_session(raw) {
+            Session::Restore(_, active) => assert_eq!(active, None, "越界激活下标应丢弃而非 panic"),
+            _ => panic!("应解析为 Restore"),
+        }
+    }
+
+    #[test]
+    fn caps_at_max_restore() {
+        let tabs: Vec<String> = (0..(MAX_RESTORE + 5))
+            .map(|i| format!(r#"{{"id":"tab-{i}","url":"https://s{i}.com/"}}"#))
+            .collect();
+        let raw = format!(r#"{{"active":0,"tabs":[{}]}}"#, tabs.join(","));
+        match parse_session(&raw) {
+            Session::Restore(urls, _) => assert_eq!(urls.len(), MAX_RESTORE),
+            _ => panic!("应解析为 Restore"),
+        }
+    }
+
+    #[test]
+    fn active_index_is_translated_when_entries_are_skipped() {
+        // 原始列表：0=about:blank(跳过) 1=https 2=file:(跳过) 3=https
+        // active=3 必须翻译成过滤后的下标 1，而不是沿用 3（越界）。
+        let raw = r#"{"active":3,"tabs":[
+            {"id":"tab-0","url":"about:blank"},
+            {"id":"tab-1","url":"https://a.com/"},
+            {"id":"tab-2","url":"file:///etc/passwd"},
+            {"id":"tab-3","url":"https://b.com/"}
+        ]}"#;
+        match parse_session(raw) {
+            Session::Restore(urls, active) => {
+                assert_eq!(urls, vec!["https://a.com/", "https://b.com/"]);
+                assert_eq!(active, Some(1), "active 应翻译为过滤后下标 1");
+            }
+            _ => panic!("应解析为 Restore"),
+        }
+    }
+
+    #[test]
+    fn active_pointing_to_skipped_entry_becomes_none() {
+        // active 指向一个被跳过的条目 → 无对应下标，不应误指到别的 tab
+        let raw = r#"{"active":0,"tabs":[
+            {"id":"tab-0","url":"about:blank"},
+            {"id":"tab-1","url":"https://a.com/"}
+        ]}"#;
+        match parse_session(raw) {
+            Session::Restore(urls, active) => {
+                assert_eq!(urls.len(), 1);
+                assert_eq!(active, None, "指向被跳过条目时应为 None");
+            }
+            _ => panic!("应解析为 Restore"),
+        }
+    }
+
+    #[test]
+    fn malformed_json_is_no_session() {
+        assert!(matches!(parse_session("{not json"), Session::None));
+        assert!(matches!(parse_session("{}"), Session::None));
+        assert!(matches!(parse_session(r#"{"tabs":"notarray"}"#), Session::None));
+    }
+
+    #[test]
+    fn trims_whitespace_around_url() {
+        let raw = r#"{"tabs":[{"id":"browser","url":"  https://a.com/  "}]}"#;
+        match parse_session(raw) {
+            Session::Restore(urls, _) => assert_eq!(urls, vec!["https://a.com/"]),
+            _ => panic!("应解析为 Restore"),
+        }
+    }
 }

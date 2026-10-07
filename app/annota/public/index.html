@@ -16,27 +16,64 @@
 
     /* ============ Row 1 · 标签条 ============ */
     .tabstrip {
-      display:flex; align-items:center; gap:5px; width:100%; height:38px; padding:0 10px;
+      display:flex; align-items:flex-end; gap:2px; width:100%; height:40px; padding:6px 10px 0;
       border-bottom:1px solid rgba(255,255,255,.075); background:#0e0f12;
     }
-    .tabs-scroll { display:flex; align-items:center; gap:5px; flex:1; min-width:0; overflow-x:auto; scrollbar-width:none; }
+    .tabs-scroll {
+      display:flex; align-items:flex-end; gap:2px; flex:1; min-width:0;
+      overflow-x:auto; scrollbar-width:none;
+    }
     .tabs-scroll::-webkit-scrollbar { display:none; }
+
+    /* tab：非激活为「斜切」形（同色系一档底），激活为抬起的实心卡片 + 顶部强调条 */
     .tab {
-      display:flex; align-items:center; gap:7px; max-width:210px; min-width:104px; height:28px; padding:0 6px 0 10px;
-      border:1px solid transparent; border-radius:8px; background:rgba(255,255,255,.035); color:#a9aeb6;
+      position:relative; display:flex; align-items:center; gap:7px;
+      width:180px; min-width:56px; height:30px; padding:0 7px 0 9px;
+      border:1px solid transparent; border-bottom:none; border-radius:9px 9px 0 0;
+      background:#16171b; color:#8b9099;
       font:12px var(--va-font-ui); cursor:pointer; white-space:nowrap; flex:none;
+      transition:background 140ms var(--va-ease), color 140ms var(--va-ease);
     }
-    .tab:hover { background:rgba(255,255,255,.07); }
-    .tab[data-active="1"] { background:#1b1c21; border-color:rgba(245,166,35,.32); color:#f0f1f3; }
+    .tab:hover { background:#1d1e23; color:#c3c7cd; }
+    .tab[data-active="1"] {
+      background:#22242a; color:#f2f3f5;
+      box-shadow:0 -1px 0 rgba(255,255,255,.06) inset;
+    }
+    /* 激活态：顶部 2px 强调条（贴合标签条上沿，指向导航条，形成"这一页是当前页"的连续感） */
+    .tab[data-active="1"]::before {
+      content:""; position:absolute; top:0; left:8px; right:8px; height:2px;
+      border-radius:0 0 2px 2px; background:var(--va-accent);
+    }
+    /* 站点色块（无 favicon 时的 fallback） */
+    .tab .tab-fav {
+      display:grid; place-items:center; width:16px; height:16px; flex:none;
+      border-radius:5px; font:700 9px/1 var(--va-font-ui); color:rgba(0,0,0,.62);
+      text-transform:uppercase; letter-spacing:0;
+    }
     .tab .tab-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; }
-    .tab .tab-close { display:grid; place-items:center; width:16px; height:16px; flex:none; border-radius:5px; color:#7d838d; }
-    .tab .tab-close:hover { background:rgba(255,255,255,.14); color:#f1f2f3; }
-    .tab-new {
-      display:grid; place-items:center; width:26px; height:26px; flex:none; border:1px solid transparent; border-radius:7px;
-      background:transparent; color:#8b9099; cursor:pointer;
+    .tab .tab-close {
+      display:grid; place-items:center; width:17px; height:17px; flex:none;
+      border:none; padding:0; border-radius:5px; background:transparent;
+      color:#6b7078; cursor:pointer; font:400 13px/1 var(--va-font-ui);
+      opacity:.55; transition:opacity 120ms ease, background 120ms ease, color 120ms ease;
     }
-    .tab-new:hover { background:rgba(255,255,255,.08); color:#f1f2f3; }
-    .tab-new svg { width:15px; height:15px; }
+    .tab:hover .tab-close { opacity:1; }
+    .tab .tab-close:hover { background:rgba(255,255,255,.14); color:#f1f2f3; }
+    .tab[data-active="1"] .tab-close { color:#9aa0a8; opacity:.9; }
+
+    /* + 号紧贴 tab 群末尾：给它左分隔线，形成"新建"独立分组感 */
+    .tab-new {
+      display:grid; place-items:center; width:28px; height:30px; flex:none;
+      border:1px solid transparent; border-bottom:none; border-radius:9px 9px 0 0;
+      background:transparent; color:#8b9099; cursor:pointer; align-self:flex-end;
+      margin-left:4px; padding-left:4px; position:relative;
+    }
+    .tab-new::before {
+      content:""; position:absolute; left:0; top:7px; bottom:6px; width:1px;
+      background:rgba(255,255,255,.08);
+    }
+    .tab-new:hover { background:rgba(255,255,255,.06); color:#f1f2f3; }
+    .tab-new svg { width:14px; height:14px; }
 
     /* ============ Row 2 · 导航条 ============ */
     .toolbar {
@@ -97,58 +134,90 @@
     .update-pill .dot { width:6px; height:6px; border-radius:50%; background:var(--va-accent); }
     .update-pill[data-state="busy"] { opacity:.7; pointer-events:none; }
 
-    .engine-state { display:flex; align-items:center; gap:7px; min-width:54px; color:#7c828b; font-size:9px; font-weight:600; letter-spacing:.09em; white-space:nowrap; }
+    /* flex:none：状态灯是固定信息位，不能被 omnibox 挤压（否则窄窗口下被裁成半个字母） */
+    .engine-state { display:flex; align-items:center; gap:7px; flex:none; min-width:54px; color:#7c828b; font-size:9px; font-weight:600; letter-spacing:.09em; white-space:nowrap; }
     .engine-dot { width:6px; height:6px; border-radius:50%; background:#49bc86; box-shadow:0 0 8px rgba(73,188,134,.35); }
     .engine-state[data-state="error"] .engine-dot { background:#ef7379; box-shadow:0 0 8px rgba(239,115,121,.35); }
     .engine-state[data-state="busy"] .engine-dot { background:var(--va-accent); box-shadow:0 0 8px rgba(245,166,35,.4); }
     .engine-state span:last-child { max-width:76px; overflow:hidden; text-overflow:ellipsis; }
 
-    /* ⋯ 更多菜单 */
-    .menu-wrap { position:relative; flex:none; }
-    .menu {
-      position:absolute; top:38px; right:0; z-index:50; min-width:196px; padding:6px;
-      border:1px solid rgba(255,255,255,.1); border-radius:12px; background:#1a1b1f;
-      box-shadow:0 16px 44px rgba(0,0,0,.5); display:none; flex-direction:column; gap:1px;
-    }
-    .menu[data-open="1"] { display:flex; }
-    .menu button {
-      display:flex; align-items:center; gap:9px; width:100%; padding:8px 10px; border:0; border-radius:8px;
-      background:transparent; color:#cfd3d9; font:12px var(--va-font-ui); text-align:left; cursor:pointer;
-    }
-    .menu button:hover { background:rgba(255,255,255,.07); }
-    .menu .menu-sep { height:1px; margin:5px 4px; background:rgba(255,255,255,.08); }
-    .menu .menu-hint { padding:4px 10px 2px; color:#727781; font-size:9px; font-weight:700; letter-spacing:.1em; }
 
-    /* ============ Chrome 面板（历史 / 下载，M6） ============ */
-    .chrome-panel {
-      position:absolute; top:94px; left:0; right:0; bottom:0; z-index:40;
-      display:none; flex-direction:column; background:#17181c;
-      border-bottom:1px solid rgba(255,255,255,.09); box-shadow:0 18px 44px rgba(0,0,0,.42);
+    /* ============ 书签栏（M7） ============ */
+    .bookmark-bar {
+      display:none; align-items:center; gap:3px; width:100%; height:36px; padding:0 10px;
+      border-bottom:1px solid rgba(255,255,255,.06); background:#0f1013;
+      overflow-x:auto; scrollbar-width:none;
     }
-    .chrome-panel[data-open="1"] { display:flex; }
-    .chrome-panel-head { display:flex; align-items:center; gap:10px; flex:none; padding:12px 16px; border-bottom:1px solid rgba(255,255,255,.07); }
-    .chrome-panel-title { color:#f0f1f3; font-size:13px; font-weight:680; }
-    .chrome-panel-count { color:#727781; font-size:11px; }
-    .chrome-panel-spacer { flex:1; }
-    .chrome-panel-btn {
-      display:inline-flex; align-items:center; height:28px; padding:0 11px; border:1px solid rgba(255,255,255,.1);
-      border-radius:8px; background:rgba(255,255,255,.03); color:#cfd3d9; font:12px var(--va-font-ui); cursor:pointer;
+    .bookmark-bar[data-open="1"] { display:flex; }
+    .bookmark-bar::-webkit-scrollbar { display:none; }
+    /* 宽度上限 + 单行省略：长标题不再撑爆整行。flex:0 1 auto + max-width，
+       使「按内容宽度」与「超长时收缩」同时成立（不用 auto 会让末项拉伸占满剩余空间）。 */
+    .bookmark-item {
+      display:flex; align-items:center; gap:7px; flex:0 1 auto;
+      width:auto; max-width:190px; min-width:0; height:26px; padding:0 10px 0 7px;
+      border:1px solid transparent; border-radius:8px;
+      background:transparent; color:#a9aeb6;
+      font:11.5px var(--va-font-ui); cursor:pointer; white-space:nowrap;
+      transition:background 120ms ease, color 120ms ease, border-color 120ms ease;
     }
-    .chrome-panel-btn:hover { background:rgba(255,255,255,.08); color:#f1f2f3; }
-    .chrome-panel-btn.danger:hover { border-color:rgba(239,115,121,.5); color:#ef7379; }
-    .chrome-panel-list { flex:1; overflow:auto; padding:6px; }
-    .chrome-item { display:flex; align-items:center; gap:11px; padding:9px 12px; border-radius:9px; cursor:pointer; }
-    .chrome-item:hover { background:rgba(255,255,255,.06); }
-    .chrome-item-main { flex:1; min-width:0; }
-    .chrome-item-title { color:#e7e9ec; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .chrome-item-sub { margin-top:2px; color:#7c828b; font-size:10.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-    .chrome-item-time { flex:none; color:#727781; font-size:10.5px; }
-    .chrome-badge { display:inline-flex; align-items:center; flex:none; height:20px; padding:0 8px; border-radius:999px; font:600 10px var(--va-font-ui); }
-    .chrome-badge.done { color:#7fe0b0; background:rgba(73,188,134,.14); }
-    .chrome-badge.downloading { color:#f5c66a; background:rgba(245,166,35,.14); }
-    .chrome-badge.failed { color:#ef9a9e; background:rgba(239,115,121,.14); }
-    .chrome-empty { padding:46px 16px; text-align:center; color:#727781; font-size:12px; }
-    .chrome-dot { display:none; position:absolute; top:6px; right:6px; width:7px; height:7px; border-radius:50%; background:var(--va-accent); box-shadow:0 0 6px rgba(245,166,35,.6); }
+    .bookmark-item:hover {
+      background:rgba(255,255,255,.06); border-color:rgba(255,255,255,.08); color:#f0f1f3;
+    }
+    .bookmark-item .bm-text {
+      flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    }
+    /* 站点色块：按域名 hash 取色，比统一图标更有辨识度 */
+    .bookmark-item .bm-fav {
+      display:grid; place-items:center; width:18px; height:18px; flex:none;
+      border-radius:5px; font:700 9px/1 var(--va-font-ui);
+      color:rgba(0,0,0,.6); text-transform:uppercase;
+    }
+    .bookmark-empty {
+      display:flex; align-items:center; gap:6px; color:#5a5f68;
+      font-size:11.5px; padding:0 8px;
+    }
+
+    /* ============ 查找条（M7） ============ */
+    .find-bar {
+      display:none; align-items:center; gap:8px; position:absolute; top:100px; right:12px; z-index:60;
+      height:36px; padding:0 10px; border:1px solid rgba(255,255,255,.12); border-radius:10px;
+      background:#1e1f24; box-shadow:0 8px 24px rgba(0,0,0,.4);
+    }
+    .find-bar[data-open="1"] { display:flex; }
+    .find-bar input {
+      width:180px; height:28px; padding:0 6px; border:0; outline:0; background:transparent;
+      color:#e7e9ec; font:12px var(--va-font-ui);
+    }
+    .find-bar .find-btn {
+      display:grid; place-items:center; width:24px; height:24px; border:0; border-radius:6px;
+      background:transparent; color:#8b9099; cursor:pointer;
+    }
+    .find-bar .find-btn:hover { background:rgba(255,255,255,.08); color:#f1f2f3; }
+    .find-bar .find-count { min-width:36px; text-align:center; color:#727781; font:10px var(--va-font-mono); }
+
+    /* ============ omnibox 建议下拉（M6c） ============ */
+    .omnibox-wrap { position:relative; flex:1; min-width:100px; max-width:860px; }
+    .omnibox-suggestions {
+      position:absolute; top:40px; left:0; right:0; z-index:55; display:none; flex-direction:column;
+      border:1px solid rgba(255,255,255,.1); border-radius:12px; background:#1a1b1f;
+      box-shadow:0 16px 44px rgba(0,0,0,.5); overflow:hidden;
+    }
+    .omnibox-suggestions[data-open="1"] { display:flex; }
+    .omnibox-suggestions .os-item {
+      display:flex; align-items:center; gap:9px; padding:9px 12px; cursor:pointer;
+      color:#cfd3d9; font:12px var(--va-font-ui);
+    }
+    .omnibox-suggestions .os-item:hover, .omnibox-suggestions .os-item[data-active="1"] { background:rgba(255,255,255,.07); }
+    .omnibox-suggestions .os-icon { width:14px; height:14px; flex:none; color:#7d838d; }
+    .omnibox-suggestions .os-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .omnibox-suggestions .os-url { color:#727781; font-size:10px; max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .omnibox-suggestions .os-search { padding:9px 12px; color:#a9aeb6; font:12px var(--va-font-ui); cursor:pointer; }
+    .omnibox-suggestions .os-search:hover { background:rgba(255,255,255,.07); }
+    .omnibox-suggestions .os-sep { height:1px; margin:4px 8px; background:rgba(255,255,255,.07); }
+
+
+    /* 下载提示角标（浮层搬到 overlay.html 后，这里只留「更多」按钮上的小红点） */
+    .chrome-dot { display:none; position:absolute; top:6px; right:6px; width:7px; height:7px; border-radius:50%; background:var(--va-accent); box-shadow:0 0 6px rgba(245,166,35,.6); pointer-events:none; }
 
     button:focus-visible { outline:2px solid var(--va-accent); outline-offset:2px; }
 
@@ -168,6 +237,9 @@
     <button class="tab-new" id="tab-new" type="button" aria-label="新建标签页" title="新建标签页 (⌘T)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></button>
   </div>
 
+  <!-- 书签栏（M7） -->
+  <div class="bookmark-bar" id="bookmark-bar" data-open="0"></div>
+
   <!-- Row 2 · 导航条 -->
   <header class="toolbar" role="toolbar" aria-label="Annota 浏览器导航">
     <div class="brand" id="home-button" role="button" tabindex="0" aria-label="Annota 首页" title="打开 Annota 首页">
@@ -181,32 +253,36 @@
       <button class="tool-button" id="btn-forward" type="button" aria-label="前进" title="前进" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m9.5 5 7 7-7 7"/></svg></button>
       <button class="tool-button" id="btn-reload" type="button" aria-label="刷新" title="刷新"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.8 9a7 7 0 0 1 11.7-2L20 12M4 12l2.5 5a7 7 0 0 0 11.7-2"/></svg></button>
     </nav>
-    <form class="omnibox" id="nav-form">
-      <span class="site-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></span>
-      <input id="url" type="text" spellcheck="false" autocomplete="off" placeholder="搜索或输入网址" aria-label="搜索或输入网址" />
-      <button class="go-button" type="submit" aria-label="打开网址" title="打开"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
-    </form>
+    <div class="omnibox-wrap">
+      <form class="omnibox" id="nav-form">
+        <span class="site-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></span>
+        <input id="url" type="text" spellcheck="false" autocomplete="off" placeholder="搜索或输入网址" aria-label="搜索或输入网址" />
+        <button class="go-button" type="submit" aria-label="打开网址" title="打开"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 5l7 7-7 7"/></svg></button>
+      </form>
+      <div class="omnibox-suggestions" id="omnibox-suggestions" data-open="0"></div>
+    </div>
     <button class="tool-button" id="btn-bookmark" type="button" aria-label="收藏" title="收藏此页"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.6l2.6 5.3 5.9.9-4.3 4.1 1 5.8-5.2-2.7-5.2 2.7 1-5.8L3.5 9.8l5.9-.9z"/></svg></button>
+    <button class="tool-button" id="btn-bookmark-bar" type="button" aria-label="书签栏" title="切换书签栏 (⌘⇧B)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>
+    <button class="tool-button" id="btn-find" type="button" aria-label="查找" title="页面内查找 (⌘F)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.35-4.35"/></svg></button>
     <button class="tool-button" id="btn-edit" type="button" aria-label="编辑" title="进入编辑（侧栏）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M14 5l4 4"/></svg></button>
     <button class="update-pill" id="update-pill" type="button" title="" aria-label="安装更新"><i class="dot"></i><span id="update-label">有新版本</span></button>
     <span class="toolbar-separator"></span>
-    <div class="menu-wrap">
+    <span class="tool-menu-wrap">
       <button class="tool-button" id="btn-menu" type="button" aria-label="更多" title="更多"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg></button>
       <i class="chrome-dot" id="dl-dot"></i>
-      <div class="menu" id="menu" role="menu">
-        <div class="menu-hint">工具</div>
-        <button data-cmd="history" role="menuitem">历史记录</button>
-        <button data-cmd="downloads" role="menuitem">下载</button>
-        <button data-cmd="workspace" role="menuitem">打开工作区</button>
-        <div class="menu-sep"></div>
-        <button data-cmd="diag" role="menuitem">诊断信息</button>
-      </div>
-    </div>
+    </span>
     <div class="engine-state" id="engine-state" data-state="ready" role="status" aria-live="polite"><i class="engine-dot"></i><span id="engine-label">LOCAL</span></div>
   </header>
 
-  <!-- 历史 / 下载面板（展开态渲染，M6） -->
-  <div class="chrome-panel" id="chrome-panel" data-open="0"></div>
+  <!-- 查找条（M7） -->
+  <div class="find-bar" id="find-bar" data-open="0">
+    <input id="find-input" type="text" placeholder="查找…" aria-label="查找" />
+    <span class="find-count" id="find-count"></span>
+    <button class="find-btn" id="find-prev" aria-label="上一个" title="上一个"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg></button>
+    <button class="find-btn" id="find-next" aria-label="下一个" title="下一个"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></button>
+    <button class="find-btn" id="find-close" aria-label="关闭" title="关闭 (Esc)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+  </div>
+
 
   <script>
     const input = document.getElementById('url');
@@ -259,15 +335,11 @@
     // 进入编辑后，新激活/新开的 tab 也要同步态
     function pushModeToTab() { invoke('set_shell_mode', { mode: shellMode }).catch(() => {}); }
 
-    /* ---- Chrome 面板 / 工具栏展开（M6） ---- */
+    /* ---- 下拉浮层（M7 重做）：菜单 / 历史 / 下载都在独立 overlay webview 里，
+       工具栏只负责调 overlay_open。这样打开浮层不会增高工具栏、页面也不会下移。 ---- */
     const btnMenu = document.getElementById('btn-menu');
-    const menu = document.getElementById('menu');
-    const chromePanel = document.getElementById('chrome-panel');
     const dlDot = document.getElementById('dl-dot');
     const API = 'http://127.0.0.1:8793';
-    let panelKind = null; // null | 'history' | 'downloads'
-
-    function setExpanded(on) { try { invoke('set_toolbar_expanded', { expanded: !!on }); } catch (e) {} }
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
     function fmtAgo(ms) {
       const d = Date.now() - ms;
@@ -277,78 +349,8 @@
       const dd = h / 24; if (dd < 30) return Math.floor(dd) + ' 天前';
       try { return new Date(ms).toLocaleDateString(); } catch (e) { return ''; }
     }
-    function fmtBytes(n) {
-      n = Number(n) || 0;
-      if (n < 1024) return n + ' B';
-      const u = ['KB', 'MB', 'GB', 'TB']; let i = -1;
-      do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
-      return (n < 10 ? n.toFixed(1) : Math.round(n)) + ' ' + u[i];
-    }
-    function panelHead(title, clearLabel) {
-      return '<div class="chrome-panel-head"><span class="chrome-panel-title">' + esc(title) + '</span>' +
-        '<span class="chrome-panel-count" id="panel-count"></span><span class="chrome-panel-spacer"></span>' +
-        '<button class="chrome-panel-btn danger" id="panel-clear">' + esc(clearLabel) + '</button>' +
-        '<button class="chrome-panel-btn" id="panel-close">关闭</button></div>' +
-        '<div class="chrome-panel-list" id="panel-list"></div>';
-    }
-    function wirePanel(clearFn) {
-      const close = document.getElementById('panel-close');
-      if (close) close.addEventListener('click', closePanel);
-      const clr = document.getElementById('panel-clear');
-      if (clr) clr.addEventListener('click', clearFn);
-    }
-    function openPanel(kind) {
-      panelKind = kind;
-      setExpanded(true);
-      chromePanel.dataset.open = '1';
-      if (kind === 'downloads') dlDot.style.display = 'none';
-      if (kind === 'history') renderHistory(); else renderDownloads();
-    }
-    function closePanel() {
-      panelKind = null;
-      chromePanel.dataset.open = '0';
-      chromePanel.innerHTML = '';
-      if (menu.dataset.open !== '1') setExpanded(false);
-    }
-    async function renderHistory() {
-      chromePanel.innerHTML = panelHead('历史记录', '清空历史');
-      wirePanel(clearHistory);
-      let rows = [];
-      try { const r = await window.vaFetch('GET', API + '/api/history?limit=200'); rows = (r && r.ok && r.json && r.json.history) || []; } catch (e) {}
-      if (panelKind !== 'history') return; // 面板已切换，丢弃过期结果
-      const list = document.getElementById('panel-list'); if (!list) return;
-      const cnt = document.getElementById('panel-count'); if (cnt) cnt.textContent = rows.length + ' 条';
-      if (!rows.length) { list.innerHTML = '<div class="chrome-empty">暂无历史记录</div>'; return; }
-      list.innerHTML = rows.map((it) =>
-        '<div class="chrome-item" data-url="' + esc(it.url) + '"><div class="chrome-item-main">' +
-        '<div class="chrome-item-title">' + esc(it.title || hostOf(it.url)) + '</div>' +
-        '<div class="chrome-item-sub">' + esc(it.url) + '</div></div>' +
-        '<div class="chrome-item-time">' + fmtAgo(it.visit_at) + '</div></div>').join('');
-      list.querySelectorAll('.chrome-item').forEach((el) => el.addEventListener('click', () => { navigate(el.dataset.url); closePanel(); }));
-    }
-    async function renderDownloads() {
-      chromePanel.innerHTML = panelHead('下载', '清空记录');
-      wirePanel(clearDownloads);
-      let rows = [];
-      try { const r = await window.vaFetch('GET', API + '/api/downloads'); rows = (r && r.ok && r.json && r.json.downloads) || []; } catch (e) {}
-      if (panelKind !== 'downloads') return; // 面板已切换，丢弃过期结果
-      const list = document.getElementById('panel-list'); if (!list) return;
-      const cnt = document.getElementById('panel-count'); if (cnt) cnt.textContent = rows.length + ' 条';
-      if (!rows.length) { list.innerHTML = '<div class="chrome-empty">暂无下载记录</div>'; return; }
-      const label = { done: '已完成', downloading: '下载中', failed: '失败' };
-      list.innerHTML = rows.map((it) =>
-        '<div class="chrome-item" data-path="' + esc(it.path || '') + '" title="' + esc(it.path || it.url) + '"><div class="chrome-item-main">' +
-        '<div class="chrome-item-title">' + esc(it.filename || it.url) + '</div>' +
-        '<div class="chrome-item-sub">' + fmtBytes(it.size) + (it.path ? ' · ' + esc(it.path) : '') + '</div></div>' +
-        '<span class="chrome-badge ' + esc(it.status) + '">' + esc(label[it.status] || it.status) + '</span>' +
-        '<div class="chrome-item-time">' + fmtAgo(it.created_at) + '</div></div>').join('');
-      list.querySelectorAll('.chrome-item').forEach((el) => el.addEventListener('click', () => {
-        const p = el.dataset.path;
-        if (p && window.__ANNOTA__ && window.__ANNOTA__.copyToClipboard) window.__ANNOTA__.copyToClipboard({ text: p }).catch(() => {});
-      }));
-    }
-    async function clearHistory() { try { await window.vaFetch('DELETE', API + '/api/history'); } catch (e) {} renderHistory(); }
-    async function clearDownloads() { try { await window.vaFetch('DELETE', API + '/api/downloads'); } catch (e) {} renderDownloads(); }
+
+    btnMenu.addEventListener('click', () => invoke('overlay_open', { kind: 'menu' }).catch(() => {}));
 
     /* ---- 收藏星标（M6 接后端） ---- */
     const btnBookmark = document.getElementById('btn-bookmark');
@@ -387,37 +389,6 @@
     refreshBookmarks();
     setTimeout(refreshBookmarks, 900);
 
-    /* ---- ⋯ 更多菜单 ---- */
-    btnMenu.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const open = menu.dataset.open === '1';
-      menu.dataset.open = open ? '0' : '1';
-      if (!open) setExpanded(true);
-      else if (!panelKind) setExpanded(false);
-    });
-    document.addEventListener('click', () => {
-      if (menu.dataset.open === '1') {
-        menu.dataset.open = '0';
-        if (!panelKind) setExpanded(false);
-      }
-    });
-    menu.addEventListener('click', (e) => {
-      const cmd = e.target && e.target.dataset && e.target.dataset.cmd;
-      if (!cmd) return;
-      menu.dataset.open = '0';
-      if (cmd === 'workspace') { if (!panelKind) setExpanded(false); navigate(WORKSPACE); }
-      else if (cmd === 'history') openPanel('history');
-      else if (cmd === 'downloads') openPanel('downloads');
-      else if (cmd === 'diag') {
-        if (!panelKind) setExpanded(false);
-        const active = activeTab();
-        alert('Annota 诊断\n\n活动标签：' + (active ? active.id : '-') +
-              '\nURL：' + (active ? active.url : '-') +
-              '\n标签数：' + tabsState.length +
-              '\n引擎：' + engineLabel.textContent);
-      }
-    });
-
     /* ---- 自动更新 ---- */
     const updatePill = document.getElementById('update-pill');
     const updateLabel = document.getElementById('update-label');
@@ -436,29 +407,50 @@
     /* ---- 事件订阅 ---- */
     (function subscribe() {
       const t = tauri();
-      if (t && t.event && t.event.listen) {
-        t.event.listen('annota://update-available', (ev) => onUpdateAvailable(ev.payload));
-        t.event.listen('annota://tabs-changed', (ev) => renderTabs((ev.payload && ev.payload.tabs) || []));
-        t.event.listen('annota://tab-updated', (ev) => {
-          const p = ev.payload || {};
-          if (!p.id) return;
-          if (p.url) tabUrlCache[p.id] = p.url;
-          if (p.active) setOmnibox(tabUrlCache[p.id]);
-          document.getElementById('btn-reload').classList.toggle('is-active', !!p.loading);
-          applyBookmarkUI();
-        });
-        t.event.listen('annota://download-started', () => {
-          dlDot.style.display = 'block';
-          if (panelKind === 'downloads') renderDownloads();
-        });
-        t.event.listen('annota://download-finished', () => {
-          if (panelKind === 'downloads') renderDownloads();
-        });
-        // 内容 webview 内切换编辑态（如 Cmd/Ctrl+E）→ 同步工具栏按钮
-        t.event.listen('annota://shell-mode-changed', (ev) => {
-          const m = ev.payload && ev.payload.mode === 'edit' ? 'edit' : 'view';
-          if (m !== shellMode) { shellMode = m; applyEditUI(); }
-        });
+      const listen = (t && t.event && typeof t.event.listen === 'function')
+        ? t.event.listen.bind(t.event)
+        : null;
+      window.__TOOLBAR_EVENTS__ = [];
+      if (listen) {
+        console.log('[annota-toolbar] event bridge ok');
+      } else {
+        // 没有事件桥时仍要能渲染 tab：退回 Rust 主动推送（annota://tabs-changed 的 HTTP 兜底）。
+        console.warn('[annota-toolbar] 事件桥不可用，tab 列表改用轮询兜底');
+      }
+      const on = (name, fn) => {
+        if (listen) { try { listen('annota://' + name, fn); } catch (e) { console.warn('listen failed ' + name, e); } }
+        else { window.__TOOLBAR_EVENTS__.push('poll:' + name); }
+      };
+      window.__TOOLBAR_EVENTS__ = [];
+
+      on('update-available', (ev) => onUpdateAvailable(ev.payload));
+      on('tabs-changed', (ev) => renderTabs((ev.payload && ev.payload.tabs) || []));
+      on('tab-updated', (ev) => {
+        const p = ev.payload || {};
+        if (!p.id) return;
+        if (p.url) tabUrlCache[p.id] = p.url;
+        if (p.active) setOmnibox(tabUrlCache[p.id]);
+        document.getElementById('btn-reload').classList.toggle('is-active', !!p.loading);
+        applyBookmarkUI();
+      });
+      on('download-started', () => { dlDot.style.display = 'block'; });
+      on('download-finished', () => { dlDot.style.display = 'none'; });
+      // 内容 webview 内切换编辑态（如 Cmd/Ctrl+E）→ 同步工具栏按钮
+      on('shell-mode-changed', (ev) => {
+        const m = ev.payload && ev.payload.mode === 'edit' ? 'edit' : 'view';
+        if (m !== shellMode) { shellMode = m; applyEditUI(); }
+      });
+
+      // 无事件桥时的兜底：轮询 Rust 拿 tab 快照（tabs_snapshot 走 invoke，不依赖事件）
+      if (!listen) {
+        const poll = async () => {
+          try {
+            const r = await invoke('tabs_snapshot');
+            if (r && r.tabs) renderTabs(r.tabs);
+          } catch (e) {}
+        };
+        setTimeout(poll, 500);
+        setInterval(poll, 1500);
       }
     })();
 
@@ -469,27 +461,47 @@
     let tabsState = [];
     function hostOf(u) { try { return new URL(u).host.replace(/^www\./, '') || u; } catch (e) { return u || ''; } }
     function setOmnibox(u) { if (u && document.activeElement !== input) input.value = u; }
+
+    /* 站点色块：无 favicon 时的 fallback。取域名 hash → 稳定色相，辨识度比统一图标高。
+       不拉跨域图片，避免加载失败与性能开销。 */
+    const SITE_HUES = [8, 32, 45, 96, 142, 168, 190, 212, 232, 262, 292, 330];
+    function siteTile(url) {
+      const host = hostOf(url) || '';
+      const key = host.split('.')[0] || '?';
+      let h = 0;
+      for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+      const hue = SITE_HUES[h % SITE_HUES.length];
+      const el = document.createElement('span');
+      el.className = 'bm-fav';
+      el.setAttribute('aria-hidden', 'true');
+      el.style.background = `hsl(${hue} 62% 58%)`;
+      el.textContent = key.slice(0, 1) || '·';
+      return el;
+    }
+
     function renderTabs(tabs) {
       tabsState = tabs || [];
       Array.from(tabsScroll.querySelectorAll('.tab')).forEach((n) => n.remove());
       let activeUrl = '';
       tabsState.forEach((t) => {
         if (t.url) tabUrlCache[t.id] = t.url;
+        const label = t.title || hostOf(t.url) || '新标签页';
         const el = document.createElement('div');
         el.className = 'tab';
         el.dataset.active = t.active ? '1' : '0';
         el.setAttribute('role', 'tab');
-        el.title = t.url || '';
+        el.title = t.url || label;
+        const fav = siteTile(t.url || '');
+        fav.className = 'tab-fav';
         const title = document.createElement('span');
         title.className = 'tab-title';
-        title.textContent = t.title || hostOf(t.url) || '新标签页';
-        const close = document.createElement('span');
+        title.textContent = label;
+        const close = document.createElement('button');
         close.className = 'tab-close';
-        close.setAttribute('role', 'button');
         close.setAttribute('aria-label', '关闭标签页');
         close.textContent = '×';
         close.addEventListener('click', (e) => { e.stopPropagation(); invoke('tab_close', { id: t.id }).catch(() => {}); });
-        el.append(title, close);
+        el.append(fav, title, close);
         el.addEventListener('click', () => invoke('tab_activate', { id: t.id }).catch(() => {}));
         tabsScroll.appendChild(el);
         if (t.active) activeUrl = t.url || '';
@@ -502,6 +514,187 @@
     }
     tabNew.addEventListener('click', () => invoke('tab_new', {}).catch(() => {}));
 
+    /* ---- 书签栏（M7） ---- */
+    const bookmarkBar = document.getElementById('bookmark-bar');
+    const btnBookmarkBar = document.getElementById('btn-bookmark-bar');
+    function applyBookmarkBarUI() {
+      const on = bookmarkBar.dataset.open === '1';
+      btnBookmarkBar.classList.toggle('is-active', on);
+    }
+    async function renderBookmarkBar() {
+      let rows = [];
+      try {
+        const r = await window.vaFetch('GET', API + '/api/bookmarks');
+        if (r && r.ok && r.json) rows = r.json.bookmarks || [];
+      } catch (e) {}
+      if (!bookmarkBar.dataset.open) return;
+      if (!rows.length) {
+        bookmarkBar.innerHTML = '<span class="bookmark-empty">' +
+          '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7">' +
+          '<path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>暂无收藏 · 按 ⌘⇧B 隐藏</span>';
+        return;
+      }
+      bookmarkBar.innerHTML = '';
+      rows.forEach((b) => {
+        const label = b.title || hostOf(b.url);
+        const el = document.createElement('div');
+        el.className = 'bookmark-item';
+        el.dataset.url = b.url;
+        el.title = label + '\n' + b.url;   // 省略号之外保留完整信息
+        el.appendChild(siteTile(b.url || ''));
+        const text = document.createElement('span');
+        text.className = 'bm-text';
+        text.textContent = label;
+        el.appendChild(text);
+        el.addEventListener('click', () => navigate(el.dataset.url));
+        bookmarkBar.appendChild(el);
+      });
+    }
+    btnBookmarkBar.addEventListener('click', () => {
+      bookmarkBar.dataset.open = bookmarkBar.dataset.open === '1' ? '0' : '1';
+      applyBookmarkBarUI();
+      if (bookmarkBar.dataset.open === '1') renderBookmarkBar();
+      reportToolbarHeight();
+    });
+    try { bookmarkBar.dataset.open = localStorage.getItem('va.browser.bookmarkBar') === '1' ? '1' : '0'; } catch (e) {}
+    btnBookmarkBar.addEventListener('click', () => {
+      try { localStorage.setItem('va.browser.bookmarkBar', bookmarkBar.dataset.open); } catch (e) {}
+    });
+    applyBookmarkBarUI();
+
+    /* ---- 查找条（M7） ---- */
+    const findBar = document.getElementById('find-bar');
+    const findInput = document.getElementById('find-input');
+    const findCount = document.getElementById('find-count');
+    function openFindBar() {
+      findBar.dataset.open = '1';
+      findInput.focus();
+      findInput.select();
+    }
+    function closeFindBar() {
+      findBar.dataset.open = '0';
+      invoke('find_in_page', { text: '', forward: true }).catch(() => {});
+    }
+    document.getElementById('btn-find').addEventListener('click', () => {
+      if (findBar.dataset.open === '1') closeFindBar(); else openFindBar();
+    });
+    document.getElementById('find-close').addEventListener('click', closeFindBar);
+    document.getElementById('find-next').addEventListener('click', () => {
+      invoke('find_in_page', { text: findInput.value, forward: true }).catch(() => {});
+    });
+    document.getElementById('find-prev').addEventListener('click', () => {
+      invoke('find_in_page', { text: findInput.value, forward: false }).catch(() => {});
+    });
+    findInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        invoke('find_in_page', { text: findInput.value, forward: !e.shiftKey }).catch(() => {});
+      } else if (e.key === 'Escape') {
+        closeFindBar();
+      }
+    });
+
+    /* 缩放已随菜单搬进 overlay.html；工具栏只保留 ⌘+ / ⌘− / ⌘0 快捷键。 */
+    let zoomFactor = 1.0;
+    try { zoomFactor = parseFloat(localStorage.getItem('va.browser.zoom')) || 1.0; } catch (e) {}
+    function zoomBy(delta) {
+      zoomFactor = Math.min(5.0, Math.max(0.25, +(zoomFactor + delta).toFixed(2)));
+      invoke('set_zoom', { factor: zoomFactor }).catch(() => {});
+      try { localStorage.setItem('va.browser.zoom', String(zoomFactor)); } catch (e) {}
+    }
+
+    /* ---- omnibox 智能搜索（M6c） ---- */
+    const suggestions = document.getElementById('omnibox-suggestions');
+    let suggActive = -1;
+    let suggItems = [];
+    async function fetchSuggestions(q) {
+      try {
+        const r = await window.vaFetch('GET', API + '/api/omnibox?q=' + encodeURIComponent(q));
+        if (r && r.ok && r.json) return r.json.result || {};
+      } catch (e) {}
+      return {};
+    }
+    function renderSuggestions(result, q) {
+      const history = result.history || [];
+      const bookmarks = result.bookmarks || [];
+      suggItems = [];
+      suggActive = -1;
+      if (!history.length && !bookmarks.length && !q) {
+        suggestions.dataset.open = '0';
+        return;
+      }
+      let html = '';
+      if (bookmarks.length) {
+        html += '<div class="os-sep"></div>';
+        bookmarks.forEach((b) => {
+          html += '<div class="os-item" data-url="' + esc(b.url) + '">' +
+            '<svg class="os-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>' +
+            '<span class="os-title">' + esc(b.title || hostOf(b.url)) + '</span>' +
+            '<span class="os-url">' + esc(b.url) + '</span></div>';
+          suggItems.push({ url: b.url });
+        });
+      }
+      if (history.length) {
+        html += '<div class="os-sep"></div>';
+        history.forEach((h) => {
+          html += '<div class="os-item" data-url="' + esc(h.url) + '">' +
+            '<svg class="os-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>' +
+            '<span class="os-title">' + esc(h.title || hostOf(h.url)) + '</span>' +
+            '<span class="os-url">' + esc(h.url) + '</span></div>';
+          suggItems.push({ url: h.url });
+        });
+      }
+      if (q) {
+        html += '<div class="os-sep"></div>';
+        html += '<div class="os-search" data-search="' + esc(q) + '">搜索「' + esc(q) + '」</div>';
+        suggItems.push({ search: q });
+      }
+      suggestions.innerHTML = html;
+      suggestions.dataset.open = '1';
+      suggestions.querySelectorAll('.os-item').forEach((el, i) => {
+        el.addEventListener('click', () => { navigate(el.dataset.url); suggestions.dataset.open = '0'; });
+      });
+      suggestions.querySelectorAll('.os-search').forEach((el) => {
+        el.addEventListener('click', () => { navigate(el.dataset.search); suggestions.dataset.open = '0'; });
+      });
+    }
+    let suggTimer = null;
+    input.addEventListener('input', () => {
+      clearTimeout(suggTimer);
+      const q = input.value.trim();
+      if (!q) { suggestions.dataset.open = '0'; return; }
+      suggTimer = setTimeout(async () => {
+        const result = await fetchSuggestions(q);
+        renderSuggestions(result, q);
+      }, 150);
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown' && suggestions.dataset.open === '1') {
+        e.preventDefault();
+        suggActive = Math.min(suggItems.length - 1, suggActive + 1);
+        suggestions.querySelectorAll('.os-item,.os-search').forEach((el, i) => el.dataset.active = i === suggActive ? '1' : '0');
+      } else if (e.key === 'ArrowUp' && suggestions.dataset.open === '1') {
+        e.preventDefault();
+        suggActive = Math.max(0, suggActive - 1);
+        suggestions.querySelectorAll('.os-item,.os-search').forEach((el, i) => el.dataset.active = i === suggActive ? '1' : '0');
+      } else if (e.key === 'Escape') {
+        suggestions.dataset.open = '0';
+      }
+    });
+    document.addEventListener('click', (e) => {
+      if (!suggestions.contains(e.target) && e.target !== input) suggestions.dataset.open = '0';
+    });
+
+    /* ---- 工具栏高度上报（M7） ---- */
+    function reportToolbarHeight() {
+      const h = document.querySelector('.tabstrip').offsetHeight +
+        (bookmarkBar.dataset.open === '1' ? bookmarkBar.offsetHeight : 0) +
+        document.querySelector('.toolbar').offsetHeight;
+      invoke('set_toolbar_height', { height: h }).catch(() => {});
+    }
+    window.addEventListener('resize', reportToolbarHeight);
+    setTimeout(reportToolbarHeight, 100);
+    setTimeout(reportToolbarHeight, 500);
+
     /* ---- 快捷键 ---- */
     document.addEventListener('keydown', (event) => {
       if (!(event.metaKey || event.ctrlKey)) return;
@@ -510,6 +703,11 @@
       else if (k === 'w') { event.preventDefault(); const a = tabsState.find((t) => t.active); if (a) invoke('tab_close', { id: a.id }).catch(() => {}); }
       else if (k === 'l') { event.preventDefault(); input.focus(); input.select(); }
       else if (k === 'e') { event.preventDefault(); btnEdit.click(); }
+      else if (k === 'f') { event.preventDefault(); if (findBar.dataset.open === '1') closeFindBar(); else openFindBar(); }
+      else if (k === 'b' && event.shiftKey) { event.preventDefault(); btnBookmarkBar.click(); }
+      else if (k === '0' && event.metaKey) { event.preventDefault(); zoomFactor = 1.0; invoke('set_zoom', { factor: 1.0 }).catch(() => {}); try { localStorage.setItem('va.browser.zoom', '1'); } catch (e) {} }
+      else if (k === '+' || k === '=') { event.preventDefault(); zoomBy(0.1); }
+      else if (k === '-') { event.preventDefault(); zoomBy(-0.1); }
     });
 
     /* ---- 引擎健康 ---- */

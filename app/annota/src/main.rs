@@ -17,7 +17,7 @@ mod apkg;
 mod tabs;
 mod store;
 use agent::{agent_cancel, agent_chat, agent_run};
-use tabs::TabManager;
+use tabs::{TabManager, TabState};
 use store::DbState;
 
 // 启动自动更新检查：延迟后查一次；有新版则 emit 给 toolbar（「更多」菜单出角标），
@@ -53,19 +53,27 @@ fn spawn_update_check(app: &AppHandle) {
 // 全局 AppHandle，供 MCP tool handler 使用（clipboard 等需要后端状态）
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
-// 工具栏高度（逻辑像素）：标签条 38 + 导航条 56。child webview 按此高度摆放。
-const TOOLBAR_HEIGHT: f64 = 94.0;
-// 面板展开时工具栏额外高度（历史 / 下载 / 更多菜单浮层）。展开时浏览器内容区相应下移。
-const PANEL_HEIGHT: f64 = 420.0;
-// 工具栏是否处于面板展开态（由工具栏 webview 经 set_toolbar_expanded 切换）。
-static TOOLBAR_EXPANDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+// 工具栏高度（逻辑像素）：由工具栏 webview 加载完成后 JS emit 实际高度，Rust 缓存。
+// 初始值 96 = 标签条 40 + 导航条 56（书签栏展开时 JS 会 emit 更高值）。
+// Rust 标准库无 AtomicF64，用 AtomicU64 存 f64 的 bit pattern。
+static TOOLBAR_HEIGHT_BITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(96.0f64.to_bits());
+// 下拉浮层（菜单 / 历史 / 下载面板）的 overlay webview。
+// 它按需创建 → 永远是最后添加的子 webview → 天然盖在所有 tab 之上，
+// 因此**不需要增高工具栏、也不需要移动页面**（早期方案增高工具栏会把内容整体下推 420px）。
+const OVERLAY_ID: &str = "overlay";
+/// 每次新建 tab 自增；overlay 记录自己创建时的值，用于判断是否被后建的 tab 盖住。
+static TAB_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static OVERLAY_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// ⋯ 菜单浮层高度（逻辑像素）。菜单项固定，可静态给定。
+const PANEL_MENU_H: f64 = 380.0;
 
 fn toolbar_total_height() -> f64 {
-    if TOOLBAR_EXPANDED.load(std::sync::atomic::Ordering::Relaxed) {
-        TOOLBAR_HEIGHT + PANEL_HEIGHT
-    } else {
-        TOOLBAR_HEIGHT
-    }
+    f64::from_bits(TOOLBAR_HEIGHT_BITS.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// 通知浮层：tab 代数已变（被新 tab 盖住了）。
+pub fn bump_tab_gen() {
+    TAB_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 // 本地同步服务地址（va_fetch 只允许它，防 SSRF）
 const SYNC_HOSTS: &[&str] = &["127.0.0.1", "localhost", "::1"];
@@ -261,8 +269,18 @@ fn resolve_nav_url(raw: &str) -> Result<String, String> {
         let path = raw.trim_start_matches('/');
         return Ok(format!("http://127.0.0.1:{}/{path}", SYNC_PORT));
     }
-    // 其余默认加 https://（支持 youtube.com/watch?v=... 等省略写法）
-    Ok(format!("https://{raw}"))
+    // 含点且无空格 → 视为域名（支持 youtube.com/watch?v=... 等省略写法）
+    if raw.contains('.') && !raw.contains(' ') && !raw.contains('/') {
+        return Ok(format!("https://{raw}"));
+    }
+    // 含路径的 URL（如 bilibili.com/video/BV...）
+    if raw.contains('/') && !raw.contains(' ') && raw.split('/').next().map(|s| s.contains('.')).unwrap_or(false) {
+        return Ok(format!("https://{raw}"));
+    }
+    // 其余 → 搜索引擎回落
+    let engine = std::env::var("ANNOTA_SEARCH_ENGINE")
+        .unwrap_or_else(|_| "https://www.bing.com/search?q=".to_string());
+    Ok(format!("{}{}", engine, urlencoding::encode(raw)))
 }
 
 #[tauri::command]
@@ -298,12 +316,183 @@ fn set_shell_mode(app: tauri::AppHandle, mode: String) -> Result<(), String> {
     webview.eval(script).map_err(|e| e.to_string())
 }
 
-// 工具栏面板展开/收起（M6）：展开时工具栏 webview 增高、浏览器内容区下移，
-// 供「历史 / 下载」面板与「更多」菜单浮层使用（否则 94px 的工具栏 webview 会裁掉浮层）。
+/// 归一化浮层种类：只认三种，其余按菜单处理。
+fn normalize_overlay_kind(kind: &str) -> &str {
+    match kind {
+        "menu" => "menu",
+        "history" => "history",
+        "downloads" => "downloads",
+        _ => "menu",
+    }
+}
+
+fn wv_set_geometry(
+    w: &tauri::Webview,
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+) -> Result<(), String> {
+    w.set_position(PhysicalPosition::new(x, y))
+        .map_err(|e| e.to_string())?;
+    w.set_size(PhysicalSize::new(width, height))
+        .map_err(|e| e.to_string())
+}
+
+// ---------- 下拉浮层：独立 overlay webview（M7 重做） ----------
+// 早期实现用 set_toolbar_expanded 把工具栏 webview 增高 420px，导致页面整体下移（用户报「页面被瞬间下移」）。
+// 现改为：浮层是独立 child webview，按需创建 → 永远最后添加 → 盖在所有 tab 之上；
+// 工具栏高度与页面布局完全不变。
+fn overlay_geometry(app: &AppHandle, kind: &str) -> Result<(u32, u32, i32, i32), String> {
+    let window = app.get_window("main").ok_or_else(|| "主窗口不存在".to_string())?;
+    let size = window.inner_size().map_err(|e| e.to_string())?;
+    let sf = window.scale_factor().map_err(|e| e.to_string())?;
+    let top = titlebar_inset(&window, sf) as i32;
+    let bar_h = (toolbar_total_height() * sf) as i32;
+    let content_h = size.height as i32 - top - bar_h;
+    match kind {
+        // ⋯ 菜单：锚在导航条右侧「更多」按钮下方，宽度按内容
+        "menu" => {
+            let w = (240.0 * sf) as u32;
+            let h = (PANEL_MENU_H * sf) as u32;
+            let x = size.width as i32 - (240.0 * sf) as i32 - (12.0 * sf) as i32;
+            Ok((w, h.min(content_h.max(1) as u32), x.max(0), top + bar_h))
+        }
+        // 历史 / 下载：整行面板，从工具栏下方铺满剩余高度
+        _ => Ok((size.width, content_h.max(1) as u32, 0, top + bar_h)),
+    }
+}
+
+/// 打开浮层。`kind` = `menu` | `history` | `downloads`。
+/// 打开浮层。`kind` = `menu` | `history` | `downloads`。
 #[tauri::command]
-fn set_toolbar_expanded(app: tauri::AppHandle, expanded: bool) -> Result<(), String> {
-    TOOLBAR_EXPANDED.store(expanded, std::sync::atomic::Ordering::Relaxed);
-    apply_layout(&app)
+fn overlay_open(app: tauri::AppHandle, kind: String) -> Result<(), String> {
+    let kind = normalize_overlay_kind(&kind);
+    // 已有 overlay：若没有更新的 tab 盖住它就复用，否则销毁重建
+    // （后建的 webview 在上层，复用会藏在页面下面看不见）。
+    if let Some(wv) = app.get_webview(OVERLAY_ID) {
+        let gen = TAB_GEN.load(std::sync::atomic::Ordering::Relaxed);
+        if OVERLAY_GEN.load(std::sync::atomic::Ordering::Relaxed) == gen {
+            // 变体不同则重新摆位：menu 是 240×380 浮层，history/downloads 是整行面板，
+            // 直接换内容会留下错误的尺寸/位置（面板被压成 240 宽或浮层铺满整行）。
+            let (w, h, x, y) = overlay_geometry(&app, kind)?;
+            let _ = wv_set_geometry(&wv, w, h, x, y);
+            let js = format!(
+                "(function(){{try{{window.__vaOverlayShow && window.__vaOverlayShow({});}}catch(e){{}}}})()",
+                serde_json::to_string(kind).unwrap_or_else(|_| "\"menu\"".into())
+            );
+            let _ = wv.eval(&js);
+            let _ = wv.show();
+            let _ = wv.set_focus();
+            return Ok(());
+        }
+        let _ = wv.close();
+    }
+    let (w, h, x, y) = overlay_geometry(&app, kind)?;
+    let url = WebviewUrl::App("overlay.html".into());
+    let init = format!(
+        "window.__VA_OVERLAY_KIND__ = {};",
+        serde_json::to_string(kind).unwrap_or_else(|_| "\"menu\"".into())
+    );
+    let window = app.get_window("main").ok_or_else(|| "主窗口不存在".to_string())?;
+    // 注意：不要用 on_navigation(|_| false) —— 它会连 webview 自身的初始加载一起拦掉，
+    // 结果是一个 URL 为空的空白透明 webview（表现为「点了没反应/看不见」）。
+    // 浮层不需要跳转能力：它是本地页面，无任何 <a href>；真要防外跳，用 tauri.conf 的
+    // capability + CSP 收口，或在页面里 preventDefault。
+    let builder = WebviewBuilder::new(OVERLAY_ID, url)
+        .initialization_script(BRIDGE_JS)
+        .initialization_script(&init)
+        .transparent(true);
+    window
+        .add_child(builder, PhysicalPosition::new(x, y), PhysicalSize::new(w, h))
+        .map_err(|e| e.to_string())?;
+    // 记录创建时的 tab 代数：之后若又新建了 tab，它会盖在 overlay 之上（后加者在上），
+    // 下次打开时据此决定是否重建。
+    OVERLAY_GEN.store(TAB_GEN.load(std::sync::atomic::Ordering::Relaxed), std::sync::atomic::Ordering::Relaxed);
+    Ok(())
+}
+
+#[tauri::command]
+fn overlay_close(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview(OVERLAY_ID) {
+        let _ = w.close();
+    }
+    // 焦点还给页面，否则键盘事件仍落在已关闭的浮层上。
+    if let Ok(page) = tabs::active_webview(&app) {
+        let _ = page.set_focus();
+    }
+    Ok(())
+}
+
+// 浮层里的「诊断信息」需要真实 tab 状态，但 overlay 是独立 webview，收不到 tabs-changed。
+#[tauri::command]
+fn tabs_snapshot(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    let (ids, active_id) = {
+        let state = app.state::<TabState>();
+        let mgr = state.lock().map_err(|_| "标签状态锁中毒".to_string())?;
+        (
+            mgr.tabs.iter().map(|t| t.id.clone()).collect::<Vec<_>>(),
+            mgr.active_id(),
+        )
+    };
+    let tabs: Vec<Value> = ids
+        .iter()
+        .map(|id| {
+            let url = app
+                .get_webview(id)
+                .and_then(|w| w.url().ok())
+                .map(|u| u.to_string())
+                .unwrap_or_default();
+            let is_active = active_id.as_deref() == Some(id.as_str());
+            json!({ "id": id, "url": url, "active": is_active })
+        })
+        .collect();
+    Ok(json!({ "ok": true, "tabs": tabs }))
+}
+
+// 开发者工具（M6d）：打开当前活动标签页的 devtools（WKWebView 需 Safari 16.4+）。
+#[tauri::command]
+fn open_devtools(app: tauri::AppHandle) -> Result<(), String> {
+    let webview = tabs::active_webview(&app)?;
+    webview.open_devtools();
+    Ok(())
+}
+
+// 工具栏高度上报（M7）：工具栏 webview 加载完成后 emit 实际高度，Rust 缓存并重新布局。
+#[tauri::command]
+fn set_toolbar_height(app: tauri::AppHandle, height: f64) -> Result<(), String> {
+    if height > 0.0 && height < 500.0 {
+        TOOLBAR_HEIGHT_BITS.store(height.to_bits(), std::sync::atomic::Ordering::Relaxed);
+        apply_layout(&app)?;
+    }
+    Ok(())
+}
+
+// 页面内查找（M7）：在当前活动标签页执行查找。
+#[tauri::command]
+fn find_in_page(app: tauri::AppHandle, text: String, forward: bool) -> Result<(), String> {
+    let webview = tabs::active_webview(&app)?;
+    // window.find(text, caseSensitive, backwards, wrapAround, wholeWord, searchInFrames, showDialog)
+    // 注意方向是第 3 位 backwards（要取反），且 showDialog 必须为 false ——
+    // 否则点「上一个」会弹出 WebKit 原生查找对话框。
+    let script = format!(
+        "(function(){{try{{window.find({},false,!{},true,false,false,false);}}catch(e){{}}}})()",
+        serde_json::to_string(&text).unwrap_or_else(|_| "\"\"".to_string()),
+        forward
+    );
+    webview.eval(script).map_err(|e| e.to_string())
+}
+
+// 缩放控制（M7）：设置当前活动标签页的页面缩放。
+#[tauri::command]
+fn set_zoom(app: tauri::AppHandle, factor: f64) -> Result<(), String> {
+    let webview = tabs::active_webview(&app)?;
+    let factor = factor.clamp(0.25, 5.0);
+    let script = format!(
+        "(function(){{try{{document.body.style.zoom='{}';}}catch(e){{}}}})()",
+        factor
+    );
+    webview.eval(script).map_err(|e| e.to_string())
 }
 
 // ---------- 标签页命令（M3） ----------
@@ -347,6 +536,13 @@ fn tab_close(app: tauri::AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 fn tab_move(app: tauri::AppHandle, id: String, to_index: usize) -> Result<(), String> {
     tabs::move_tab(&app, &id, to_index)
+}
+
+// M6a：清除会话文件，下次启动不再恢复上次标签页。
+#[tauri::command]
+fn tab_session_clear(app: tauri::AppHandle) -> Result<(), String> {
+    tabs::clear_session(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -432,19 +628,19 @@ fn setup_webviews(window: &tauri::Window, app: &AppHandle) -> Result<(), String>
         )
         .map_err(|e| e.to_string())?;
 
-    // 首个标签：默认打开 Annota 本地工作区，注入桥 + 浏览器壳标注层
-    let start_url = "http://127.0.0.1:8793/".to_string();
-    let id = tabs::create_tab(
-        app,
-        window,
-        start_url,
-        Vec::new(),
-        BRIDGE_JS,
-        ANNOTATE_JS,
-        PhysicalPosition::new(0, browser_top as i32),
-        PhysicalSize::new(size.width, size.height.saturating_sub(browser_top)),
-    )?;
-    println!("[annota] first tab created: {id}");
+    let pos = PhysicalPosition::new(0, browser_top as i32);
+    let vp = PhysicalSize::new(size.width, size.height.saturating_sub(browser_top));
+
+    // M6a 会话恢复：优先按 tabs.json 重建上次会话；无记录/全部失效才回落到单个工作区 tab。
+    let restored = tabs::restore_tabs(app, window, BRIDGE_JS, ANNOTATE_JS, pos, vp)?;
+    if restored == 0 {
+        let start_url = "http://127.0.0.1:8793/".to_string();
+        let id = tabs::create_tab(app, window, start_url, Vec::new(), BRIDGE_JS, ANNOTATE_JS, pos, vp)?;
+        println!("[annota] first tab created: {id}");
+    }
+
+    // M6a：后台防抖落盘会话（emit_tabs 标脏 → 400ms 后写 tabs.json）
+    tabs::spawn_session_persister(app.clone());
 
     Ok(())
 }
@@ -810,7 +1006,13 @@ pub fn main() {
             browser_action,
             va_fetch,
             set_shell_mode,
-            set_toolbar_expanded,
+            overlay_open,
+            overlay_close,
+            tabs_snapshot,
+            set_toolbar_height,
+            open_devtools,
+            find_in_page,
+            set_zoom,
             agent_run,
             agent_chat,
             agent_cancel,
@@ -818,7 +1020,8 @@ pub fn main() {
             tab_new,
             tab_activate,
             tab_close,
-            tab_move
+            tab_move,
+            tab_session_clear
         ])
         .setup(|app| {
             let _ = APP_HANDLE.set(app.handle().clone());

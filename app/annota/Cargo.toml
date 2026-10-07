@@ -10,7 +10,7 @@ rust-version = "1.77.2"
 tauri-build = { version = "2.7.1", features = [] }
 
 [dependencies]
-tauri = { version = "2.12.1", features = ["unstable"] }
+tauri = { version = "2.12.1", features = ["unstable", "devtools"] }
 tauri-plugin-clipboard-manager = "2.4.1"
 tauri-plugin-screenshots = "2.2.0"
 tauri-plugin-updater = "2.13.1"
@@ -23,6 +23,7 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 xcap = "0.9.8"
 reqwest = { version = "0.12", default-features = false, features = ["json"] }
 url = "2"
+urlencoding = "2"
 axum = "0.7"
 tower-http = { version = "0.6", features = ["fs"] }
 tokio = { version = "1", features = ["fs", "sync", "net", "rt"] }

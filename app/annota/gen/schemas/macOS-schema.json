@@ -213,6 +213,18 @@
           "markdownDescription": "Enables the capture_frame command without any pre-configured scope."
         },
         {
+          "description": "Allows opening the developer tools for the active browser tab.",
+          "type": "string",
+          "const": "allow-devtools",
+          "markdownDescription": "Allows opening the developer tools for the active browser tab."
+        },
+        {
+          "description": "Allows in-page find and zoom control for the active browser tab.",
+          "type": "string",
+          "const": "allow-find",
+          "markdownDescription": "Allows in-page find and zoom control for the active browser tab."
+        },
+        {
           "description": "Enables the install_update command without any pre-configured scope.",
           "type": "string",
           "const": "allow-install-update",
@@ -225,10 +237,22 @@
           "markdownDescription": "Enables the navigate_browser command without any pre-configured scope."
         },
         {
+          "description": "Allows the toolbar to open/close the dropdown overlay webview (menu, history, downloads).",
+          "type": "string",
+          "const": "allow-overlay",
+          "markdownDescription": "Allows the toolbar to open/close the dropdown overlay webview (menu, history, downloads)."
+        },
+        {
           "description": "Enables the set_shell_mode command without any pre-configured scope.",
           "type": "string",
           "const": "allow-set-shell-mode",
           "markdownDescription": "Enables the set_shell_mode command without any pre-configured scope."
+        },
+        {
+          "description": "Allows the toolbar to report its measured height so the shell can lay out the browser content area.",
+          "type": "string",
+          "const": "allow-set-toolbar-height",
+          "markdownDescription": "Allows the toolbar to report its measured height so the shell can lay out the browser content area."
         },
         {
           "description": "Enables the tab_activate command without any pre-configured scope.",

@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "allow-overlay"
+description = "Allows the toolbar to open/close the dropdown overlay webview (menu, history, downloads)."
+commands.allow = ["overlay_open", "overlay_close", "tabs_snapshot"]
+
+[[permission]]
+identifier = "allow-set-toolbar-height"
+description = "Allows the toolbar to report its measured height so the shell can lay out the browser content area."
+commands.allow = ["set_toolbar_height"]

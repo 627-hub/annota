@@ -38,6 +38,8 @@ jobs:
           python build.py
       - name: Guard browser-shell contract
         run: node dev/check-shell-drift.mjs
+      - name: Guard Tauri command permissions
+        run: node dev/check-tauri-permissions.mjs
       - name: Package portable downloads
         shell: bash
         run: |

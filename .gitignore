@@ -27,6 +27,8 @@ app/service/settings.json
 app/service/annota.db
 app/service/annota.db-wal
 app/service/annota.db-shm
+app/service/tabs.json
+app/service/tabs.json.tmp
 dist/.syncurl
 # 注意：dist/version.json 是版本探测顶标（入库，随发布上传）；dist/.buildtime 是本地构建状态，不入库
 dist/.buildtime

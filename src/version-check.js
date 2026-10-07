@@ -19,6 +19,25 @@
     return fetch(url, { cache: 'no-store' }).then((r) => (r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status))));
   }
 
+  // 重装链接必须指向「用户当前装的那个变体」，不能一律给 view 版：
+  // 否则编辑版/GM 版用户会被引导去装只读观看端，等于降级。
+  // 用 VA_VIEW_ONLY 判定观看端；GM 版与编辑版共用同一份代码，仅 fetch 通道不同，
+  // 故按是否声明 GM_xmlhttpRequest 特权区分。
+  function relinkHref() {
+    const base = root.VA_DIST_BASE || '';
+    if (root.VA_VIEW_ONLY) return base + '/annotate.view.user.js';
+    var isGM = false;
+    try { isGM = !!(root.GM_xmlhttpRequest || (root.GM && root.GM.xmlHttpRequest)); } catch (e) { isGM = false; }
+    return base + (isGM ? '/annotate.gm.user.js' : '/annotate.user.js');
+  }
+
+  function variantLabel() {
+    if (root.VA_VIEW_ONLY) return '观看端';
+    var isGM = false;
+    try { isGM = !!(root.GM_xmlhttpRequest || (root.GM && root.GM.xmlHttpRequest)); } catch (e) { isGM = false; }
+    return isGM ? 'GM 编辑版' : '编辑版';
+  }
+
   function nudge(latest, local) {
     try {
       if (document.getElementById('annota-version-nudge')) return;
@@ -29,10 +48,10 @@
         'border-radius:12px;background:rgba(18,20,24,.96);color:#f3d4a2;font:13px/1.4 -apple-system,"PingFang SC",sans-serif;' +
         'box-shadow:0 12px 40px rgba(0,0,0,.5);';
       const text = document.createElement('span');
-      text.textContent = 'Annota 有新版本，建议更新';
+      text.textContent = 'Annota 有新版本（' + variantLabel() + '），建议更新';
       const a = document.createElement('a');
       a.textContent = '重装';
-      a.href = (root.VA_DIST_BASE || '') + '/annotate.view.user.js';
+      a.href = relinkHref();
       a.target = '_blank';
       a.rel = 'noopener';
       a.style.cssText = 'color:#f5a623;font-weight:700;text-decoration:none;white-space:nowrap;';
@@ -58,5 +77,5 @@
     } catch (e) { /* 探测失败：静默 */ }
   }
 
-  root.VAVersion = { check, _nudge: nudge };
+  root.VAVersion = { check, _nudge: nudge, _relinkHref: relinkHref, _variantLabel: variantLabel };
 })(typeof self !== 'undefined' ? self : this);

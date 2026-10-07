@@ -160,6 +160,7 @@ pub async fn run_server(
         .route("/api/bookmarks", get(get_bookmarks).post(post_bookmark).delete(delete_bookmark))
         .route("/api/history", get(get_history).delete(delete_history))
         .route("/api/downloads", get(get_downloads).delete(delete_downloads))
+        .route("/api/omnibox", get(get_omnibox))
         .route("/api/export/card", post(export_card))
         .route("/api/export/finalize", post(export_finalize))
         .route("/exports/:file", get(serve_export))
@@ -287,6 +288,18 @@ async fn delete_downloads(State(state): State<AppState>) -> Response {
     let db = state.db.clone();
     match blocking(move || db.clear_downloads()).await {
         Ok(()) => json_ok(json!({ "ok": true })),
+        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+    }
+}
+
+async fn get_omnibox(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let q = q.get("q").cloned().unwrap_or_default();
+    let db = state.db.clone();
+    match blocking(move || db.search_omnibox(&q)).await {
+        Ok(result) => json_ok(json!({ "ok": true, "result": result })),
         Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
 }
