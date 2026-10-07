@@ -9,7 +9,7 @@
 - 项目路径：`video-annotate/`（仓库根）
 - 从 `../ielts-7.5` 拆出（词库/SRS/Anki 为可选下游消费者）
 - **最近提交**：`140b902`（R2 多媒态）；工作区有 **R3a 批量导出 + 数据工作台 + 通用批注 + 同步重构 + OCR 审查修复** 未提交改动。
-- 本文日期：2026-10-02（**最新进展见 [`docs/progress-2026-10-03.md`](docs/progress-2026-10-03.md)**）
+- 本文日期：2026-10-02（**最新进展见 [`docs/progress-2026-10-04-shell-plan.md`](docs/progress-2026-10-04-shell-plan.md)：Annota 浏览器重构 M1–M6 已完成，M7/M8 待办**）
 
 ---
 

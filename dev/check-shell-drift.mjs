@@ -8,6 +8,12 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const core = fs.readFileSync(path.join(here, '..', 'src', 'core.js'), 'utf8');
 const shell = fs.readFileSync(path.join(here, '..', 'src', 'browser-shell.js'), 'utf8');
+// 剥掉注释后再做「直连内部标识」检查（注释里提到某函数名不算违规）。
+const shellCode = shell
+  .split('\n')
+  .map((l) => l.replace(/\/\/.*$/, ''))
+  .filter((l) => !/^\s*\*/.test(l))
+  .join('\n');
 
 const checks = [];
 const check = (label, ok, detail = '') => { checks.push(!!ok); console.log(`${ok ? 'PASS' : 'FAIL'} ${label}${detail ? ` — ${detail}` : ''}`); };
@@ -35,17 +41,14 @@ while ((idx = core.indexOf('VA_BROWSER_SHELL', idx + 1)) >= 0) {
 check('VA_BROWSER_SHELL 只出现在 mountShell/applyMode', offenders.length === 0, offenders.join(', ') || 'none');
 
 // 4) browser-shell.js 不得直接引用 core 内部标识（只允许通过 adopt 交出的 api / document / localStorage）。
-// 注意：经 `api.` / `ctx.api.` 前缀的调用是允许的（那是接缝交出的受控入口）。
+//    受控入口经 `api.` / `ctx.api.` 前缀访问，由各规则的负向断言/命名排除；其余一律视为违规。
 const forbidden = [
   { re: /window\.__VA\b/, why: 'window.__VA' },
   { re: /\bstate\.\w+/, why: 'state.*' },
   { re: /(?<!\.)\btoggleAnnotate\b/, why: '裸 toggleAnnotate' },
 ];
 const hardRefs = forbidden
-  .filter(({ re, why }) => {
-    // 逐行判断：若该标识只以 api./ctx.api. 前缀出现，放过
-    return shell.split('\n').some((line) => re.test(line) && !/\bapi\.\w/.test(line.replace(re, 'api.X')));
-  })
+  .filter(({ re }) => shellCode.split('\n').some((line) => re.test(line)))
   .map((f) => f.why);
 check('browser-shell.js 未直连 core 内部状态', hardRefs.length === 0, hardRefs.join(' | ') || 'none');
 

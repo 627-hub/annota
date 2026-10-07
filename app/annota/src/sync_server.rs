@@ -19,6 +19,7 @@ use tokio::sync::Mutex;
 use tower_http::services::ServeDir;
 
 use crate::apkg;
+use crate::store::Db;
 
 const HOST: &str = "127.0.0.1";
 const PORT: u16 = 8793;
@@ -33,18 +34,27 @@ pub struct AppState {
     notes_dir: PathBuf,
     settings: PathBuf,
     exports: PathBuf,
+    db: Db,
     locks: Arc<DashMap<String, Arc<Mutex<()>>>>,
     settings_lock: Arc<Mutex<()>>,
 }
 
 impl AppState {
-    fn new(store: PathBuf, root: PathBuf, notes_dir: PathBuf, settings: PathBuf, exports: PathBuf) -> Self {
+    fn new(
+        store: PathBuf,
+        root: PathBuf,
+        notes_dir: PathBuf,
+        settings: PathBuf,
+        exports: PathBuf,
+        db: Db,
+    ) -> Self {
         Self {
             store,
             root,
             notes_dir,
             settings,
             exports,
+            db,
             locks: Arc::new(DashMap::new()),
             settings_lock: Arc::new(Mutex::new(())),
         }
@@ -122,12 +132,18 @@ pub fn resolve_settings_path(app: &AppHandle) -> PathBuf {
         .join("settings.json")
 }
 
-pub async fn run_server(store: PathBuf, root: PathBuf, notes_dir: PathBuf, settings: PathBuf) {
+pub async fn run_server(
+    store: PathBuf,
+    root: PathBuf,
+    notes_dir: PathBuf,
+    settings: PathBuf,
+    db: Db,
+) {
     let exports = store
         .parent()
         .map(|p| p.join("exports"))
         .unwrap_or_else(|| store.join("exports"));
-    let state = AppState::new(store, root, notes_dir, settings, exports);
+    let state = AppState::new(store, root, notes_dir, settings, exports, db);
 
     let mut app = Router::new()
         .route("/", get(root_handler))
@@ -141,6 +157,9 @@ pub async fn run_server(store: PathBuf, root: PathBuf, notes_dir: PathBuf, setti
         .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/ai", get(ai_status))
         .route("/api/note", post(note))
+        .route("/api/bookmarks", get(get_bookmarks).post(post_bookmark).delete(delete_bookmark))
+        .route("/api/history", get(get_history).delete(delete_history))
+        .route("/api/downloads", get(get_downloads).delete(delete_downloads))
         .route("/api/export/card", post(export_card))
         .route("/api/export/finalize", post(export_finalize))
         .route("/exports/:file", get(serve_export))
@@ -173,6 +192,103 @@ fn json_error(status: StatusCode, message: &str) -> Response {
 
 fn json_ok(value: Value) -> Response {
     (StatusCode::OK, Json(value)).into_response()
+}
+
+// ---------- M6 · 收藏 / 历史 / 下载 ----------
+// rusqlite 是同步阻塞 API：统一放到 blocking 线程池执行，避免占用 tokio async worker。
+async fn blocking<T, F>(f: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("db task join: {e}"))?
+}
+
+#[derive(serde::Deserialize)]
+struct BookmarkInput {
+    url: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    favicon: Option<String>,
+}
+
+async fn get_bookmarks(State(state): State<AppState>) -> Response {
+    let db = state.db.clone();
+    match blocking(move || db.list_bookmarks()).await {
+        Ok(list) => json_ok(json!({ "ok": true, "bookmarks": list })),
+        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+    }
+}
+
+async fn post_bookmark(State(state): State<AppState>, Json(input): Json<BookmarkInput>) -> Response {
+    let url = input.url.trim().to_string();
+    if url.is_empty() {
+        return json_error(StatusCode::BAD_REQUEST, "url 为空");
+    }
+    let db = state.db.clone();
+    let title = input.title;
+    let favicon = input.favicon;
+    match blocking(move || db.add_bookmark(&url, &title, favicon.as_deref())).await {
+        Ok(created) => json_ok(json!({ "ok": true, "created": created })),
+        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+    }
+}
+
+async fn delete_bookmark(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let url = q.get("url").map(|s| s.trim().to_string()).unwrap_or_default();
+    if url.is_empty() {
+        return json_error(StatusCode::BAD_REQUEST, "缺少 url");
+    }
+    let db = state.db.clone();
+    match blocking(move || db.remove_bookmark(&url)).await {
+        Ok(removed) => json_ok(json!({ "ok": true, "removed": removed })),
+        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+    }
+}
+
+async fn get_history(
+    State(state): State<AppState>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let limit = q
+        .get("limit")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(200);
+    let db = state.db.clone();
+    match blocking(move || db.list_history(limit)).await {
+        Ok(list) => json_ok(json!({ "ok": true, "history": list })),
+        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+    }
+}
+
+async fn delete_history(State(state): State<AppState>) -> Response {
+    let db = state.db.clone();
+    match blocking(move || db.clear_history()).await {
+        Ok(()) => json_ok(json!({ "ok": true })),
+        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+    }
+}
+
+async fn get_downloads(State(state): State<AppState>) -> Response {
+    let db = state.db.clone();
+    match blocking(move || db.list_downloads()).await {
+        Ok(list) => json_ok(json!({ "ok": true, "downloads": list })),
+        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+    }
+}
+
+async fn delete_downloads(State(state): State<AppState>) -> Response {
+    let db = state.db.clone();
+    match blocking(move || db.clear_downloads()).await {
+        Ok(()) => json_ok(json!({ "ok": true })),
+        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+    }
 }
 
 async fn health(State(state): State<AppState>) -> Response {

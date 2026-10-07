@@ -213,10 +213,10 @@
           "markdownDescription": "Enables the capture_frame command without any pre-configured scope."
         },
         {
-          "description": "Allows the toolbar to download and install an available app update, then restart.",
+          "description": "Enables the install_update command without any pre-configured scope.",
           "type": "string",
           "const": "allow-install-update",
-          "markdownDescription": "Allows the toolbar to download and install an available app update, then restart."
+          "markdownDescription": "Enables the install_update command without any pre-configured scope."
         },
         {
           "description": "Enables the navigate_browser command without any pre-configured scope.",

@@ -1223,7 +1223,8 @@
             isView, applyMode,
             toggleAnnotate, togglePicker, togglePanel, toggleSources, toggleMenu,
             syncNow, render, renderPanel,
-            getState: () => state,
+            // 只读快照：壳不得直接持有/篡改 core 内部 state（见 dev/check-shell-drift.mjs 契约）
+            getState: () => ({ annotate: state.annotate, picking: state.picking, binding: state.binding }),
           },
         });
       }

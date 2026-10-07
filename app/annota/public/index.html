@@ -119,6 +119,37 @@
     .menu .menu-sep { height:1px; margin:5px 4px; background:rgba(255,255,255,.08); }
     .menu .menu-hint { padding:4px 10px 2px; color:#727781; font-size:9px; font-weight:700; letter-spacing:.1em; }
 
+    /* ============ Chrome 面板（历史 / 下载，M6） ============ */
+    .chrome-panel {
+      position:absolute; top:94px; left:0; right:0; bottom:0; z-index:40;
+      display:none; flex-direction:column; background:#17181c;
+      border-bottom:1px solid rgba(255,255,255,.09); box-shadow:0 18px 44px rgba(0,0,0,.42);
+    }
+    .chrome-panel[data-open="1"] { display:flex; }
+    .chrome-panel-head { display:flex; align-items:center; gap:10px; flex:none; padding:12px 16px; border-bottom:1px solid rgba(255,255,255,.07); }
+    .chrome-panel-title { color:#f0f1f3; font-size:13px; font-weight:680; }
+    .chrome-panel-count { color:#727781; font-size:11px; }
+    .chrome-panel-spacer { flex:1; }
+    .chrome-panel-btn {
+      display:inline-flex; align-items:center; height:28px; padding:0 11px; border:1px solid rgba(255,255,255,.1);
+      border-radius:8px; background:rgba(255,255,255,.03); color:#cfd3d9; font:12px var(--va-font-ui); cursor:pointer;
+    }
+    .chrome-panel-btn:hover { background:rgba(255,255,255,.08); color:#f1f2f3; }
+    .chrome-panel-btn.danger:hover { border-color:rgba(239,115,121,.5); color:#ef7379; }
+    .chrome-panel-list { flex:1; overflow:auto; padding:6px; }
+    .chrome-item { display:flex; align-items:center; gap:11px; padding:9px 12px; border-radius:9px; cursor:pointer; }
+    .chrome-item:hover { background:rgba(255,255,255,.06); }
+    .chrome-item-main { flex:1; min-width:0; }
+    .chrome-item-title { color:#e7e9ec; font-size:12.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .chrome-item-sub { margin-top:2px; color:#7c828b; font-size:10.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .chrome-item-time { flex:none; color:#727781; font-size:10.5px; }
+    .chrome-badge { display:inline-flex; align-items:center; flex:none; height:20px; padding:0 8px; border-radius:999px; font:600 10px var(--va-font-ui); }
+    .chrome-badge.done { color:#7fe0b0; background:rgba(73,188,134,.14); }
+    .chrome-badge.downloading { color:#f5c66a; background:rgba(245,166,35,.14); }
+    .chrome-badge.failed { color:#ef9a9e; background:rgba(239,115,121,.14); }
+    .chrome-empty { padding:46px 16px; text-align:center; color:#727781; font-size:12px; }
+    .chrome-dot { display:none; position:absolute; top:6px; right:6px; width:7px; height:7px; border-radius:50%; background:var(--va-accent); box-shadow:0 0 6px rgba(245,166,35,.6); }
+
     button:focus-visible { outline:2px solid var(--va-accent); outline-offset:2px; }
 
     @media (max-width:720px) {
@@ -161,6 +192,7 @@
     <span class="toolbar-separator"></span>
     <div class="menu-wrap">
       <button class="tool-button" id="btn-menu" type="button" aria-label="更多" title="更多"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></svg></button>
+      <i class="chrome-dot" id="dl-dot"></i>
       <div class="menu" id="menu" role="menu">
         <div class="menu-hint">工具</div>
         <button data-cmd="history" role="menuitem">历史记录</button>
@@ -172,6 +204,9 @@
     </div>
     <div class="engine-state" id="engine-state" data-state="ready" role="status" aria-live="polite"><i class="engine-dot"></i><span id="engine-label">LOCAL</span></div>
   </header>
+
+  <!-- 历史 / 下载面板（展开态渲染，M6） -->
+  <div class="chrome-panel" id="chrome-panel" data-open="0"></div>
 
   <script>
     const input = document.getElementById('url');
@@ -224,31 +259,158 @@
     // 进入编辑后，新激活/新开的 tab 也要同步态
     function pushModeToTab() { invoke('set_shell_mode', { mode: shellMode }).catch(() => {}); }
 
-    /* ---- 收藏（M4 仅入口；M6 接后端）---- */
-    const btnBookmark = document.getElementById('btn-bookmark');
-    let bookmarked = false;
-    function applyBookmarkUI() {
-      btnBookmark.classList.toggle('is-active', bookmarked);
-      btnBookmark.setAttribute('title', bookmarked ? '已收藏' : '收藏此页');
-    }
-    btnBookmark.addEventListener('click', () => {
-      // M6 接入 /api/bookmarks；当前先本地占位视觉
-      bookmarked = !bookmarked; applyBookmarkUI();
-    });
-
-    /* ---- ⋯ 更多菜单 ---- */
+    /* ---- Chrome 面板 / 工具栏展开（M6） ---- */
     const btnMenu = document.getElementById('btn-menu');
     const menu = document.getElementById('menu');
-    btnMenu.addEventListener('click', (e) => { e.stopPropagation(); menu.dataset.open = menu.dataset.open === '1' ? '0' : '1'; });
-    document.addEventListener('click', () => { menu.dataset.open = '0'; });
+    const chromePanel = document.getElementById('chrome-panel');
+    const dlDot = document.getElementById('dl-dot');
+    const API = 'http://127.0.0.1:8793';
+    let panelKind = null; // null | 'history' | 'downloads'
+
+    function setExpanded(on) { try { invoke('set_toolbar_expanded', { expanded: !!on }); } catch (e) {} }
+    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+    function fmtAgo(ms) {
+      const d = Date.now() - ms;
+      if (d < 60000) return '刚刚';
+      const m = d / 60000; if (m < 60) return Math.floor(m) + ' 分钟前';
+      const h = m / 60; if (h < 24) return Math.floor(h) + ' 小时前';
+      const dd = h / 24; if (dd < 30) return Math.floor(dd) + ' 天前';
+      try { return new Date(ms).toLocaleDateString(); } catch (e) { return ''; }
+    }
+    function fmtBytes(n) {
+      n = Number(n) || 0;
+      if (n < 1024) return n + ' B';
+      const u = ['KB', 'MB', 'GB', 'TB']; let i = -1;
+      do { n /= 1024; i++; } while (n >= 1024 && i < u.length - 1);
+      return (n < 10 ? n.toFixed(1) : Math.round(n)) + ' ' + u[i];
+    }
+    function panelHead(title, clearLabel) {
+      return '<div class="chrome-panel-head"><span class="chrome-panel-title">' + esc(title) + '</span>' +
+        '<span class="chrome-panel-count" id="panel-count"></span><span class="chrome-panel-spacer"></span>' +
+        '<button class="chrome-panel-btn danger" id="panel-clear">' + esc(clearLabel) + '</button>' +
+        '<button class="chrome-panel-btn" id="panel-close">关闭</button></div>' +
+        '<div class="chrome-panel-list" id="panel-list"></div>';
+    }
+    function wirePanel(clearFn) {
+      const close = document.getElementById('panel-close');
+      if (close) close.addEventListener('click', closePanel);
+      const clr = document.getElementById('panel-clear');
+      if (clr) clr.addEventListener('click', clearFn);
+    }
+    function openPanel(kind) {
+      panelKind = kind;
+      setExpanded(true);
+      chromePanel.dataset.open = '1';
+      if (kind === 'downloads') dlDot.style.display = 'none';
+      if (kind === 'history') renderHistory(); else renderDownloads();
+    }
+    function closePanel() {
+      panelKind = null;
+      chromePanel.dataset.open = '0';
+      chromePanel.innerHTML = '';
+      if (menu.dataset.open !== '1') setExpanded(false);
+    }
+    async function renderHistory() {
+      chromePanel.innerHTML = panelHead('历史记录', '清空历史');
+      wirePanel(clearHistory);
+      let rows = [];
+      try { const r = await window.vaFetch('GET', API + '/api/history?limit=200'); rows = (r && r.ok && r.json && r.json.history) || []; } catch (e) {}
+      if (panelKind !== 'history') return; // 面板已切换，丢弃过期结果
+      const list = document.getElementById('panel-list'); if (!list) return;
+      const cnt = document.getElementById('panel-count'); if (cnt) cnt.textContent = rows.length + ' 条';
+      if (!rows.length) { list.innerHTML = '<div class="chrome-empty">暂无历史记录</div>'; return; }
+      list.innerHTML = rows.map((it) =>
+        '<div class="chrome-item" data-url="' + esc(it.url) + '"><div class="chrome-item-main">' +
+        '<div class="chrome-item-title">' + esc(it.title || hostOf(it.url)) + '</div>' +
+        '<div class="chrome-item-sub">' + esc(it.url) + '</div></div>' +
+        '<div class="chrome-item-time">' + fmtAgo(it.visit_at) + '</div></div>').join('');
+      list.querySelectorAll('.chrome-item').forEach((el) => el.addEventListener('click', () => { navigate(el.dataset.url); closePanel(); }));
+    }
+    async function renderDownloads() {
+      chromePanel.innerHTML = panelHead('下载', '清空记录');
+      wirePanel(clearDownloads);
+      let rows = [];
+      try { const r = await window.vaFetch('GET', API + '/api/downloads'); rows = (r && r.ok && r.json && r.json.downloads) || []; } catch (e) {}
+      if (panelKind !== 'downloads') return; // 面板已切换，丢弃过期结果
+      const list = document.getElementById('panel-list'); if (!list) return;
+      const cnt = document.getElementById('panel-count'); if (cnt) cnt.textContent = rows.length + ' 条';
+      if (!rows.length) { list.innerHTML = '<div class="chrome-empty">暂无下载记录</div>'; return; }
+      const label = { done: '已完成', downloading: '下载中', failed: '失败' };
+      list.innerHTML = rows.map((it) =>
+        '<div class="chrome-item" data-path="' + esc(it.path || '') + '" title="' + esc(it.path || it.url) + '"><div class="chrome-item-main">' +
+        '<div class="chrome-item-title">' + esc(it.filename || it.url) + '</div>' +
+        '<div class="chrome-item-sub">' + fmtBytes(it.size) + (it.path ? ' · ' + esc(it.path) : '') + '</div></div>' +
+        '<span class="chrome-badge ' + esc(it.status) + '">' + esc(label[it.status] || it.status) + '</span>' +
+        '<div class="chrome-item-time">' + fmtAgo(it.created_at) + '</div></div>').join('');
+      list.querySelectorAll('.chrome-item').forEach((el) => el.addEventListener('click', () => {
+        const p = el.dataset.path;
+        if (p && window.__ANNOTA__ && window.__ANNOTA__.copyToClipboard) window.__ANNOTA__.copyToClipboard({ text: p }).catch(() => {});
+      }));
+    }
+    async function clearHistory() { try { await window.vaFetch('DELETE', API + '/api/history'); } catch (e) {} renderHistory(); }
+    async function clearDownloads() { try { await window.vaFetch('DELETE', API + '/api/downloads'); } catch (e) {} renderDownloads(); }
+
+    /* ---- 收藏星标（M6 接后端） ---- */
+    const btnBookmark = document.getElementById('btn-bookmark');
+    let bookmarkUrls = new Set();
+    function activeTab() { return tabsState.find((t) => t.active); }
+    function activeUrl() { const a = activeTab(); if (!a) return ''; return tabUrlCache[a.id] || a.url || ''; }
+    function applyBookmarkUI() {
+      const url = activeUrl();
+      const on = !!url && bookmarkUrls.has(url);
+      btnBookmark.classList.toggle('is-active', on);
+      btnBookmark.setAttribute('title', on ? '已收藏' : '收藏此页');
+    }
+    async function refreshBookmarks() {
+      try {
+        const r = await window.vaFetch('GET', API + '/api/bookmarks');
+        if (!(r && r.ok)) return; // 请求失败不清空本地状态（避免星标全灭）
+        const arr = (r.json && r.json.bookmarks) || [];
+        bookmarkUrls = new Set(arr.map((b) => b.url));
+        applyBookmarkUI();
+      } catch (e) {}
+    }
+    btnBookmark.addEventListener('click', async () => {
+      const a = activeTab(); const url = activeUrl();
+      if (!a || !url) return;
+      try {
+        if (bookmarkUrls.has(url)) {
+          const r = await window.vaFetch('DELETE', API + '/api/bookmarks?url=' + encodeURIComponent(url));
+          if (r && r.ok) bookmarkUrls.delete(url);
+        } else {
+          const r = await window.vaFetch('POST', API + '/api/bookmarks', { url: url, title: a.title || hostOf(url) });
+          if (r && r.ok) bookmarkUrls.add(url);
+        }
+      } catch (e) {}
+      applyBookmarkUI();
+    });
+    refreshBookmarks();
+    setTimeout(refreshBookmarks, 900);
+
+    /* ---- ⋯ 更多菜单 ---- */
+    btnMenu.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = menu.dataset.open === '1';
+      menu.dataset.open = open ? '0' : '1';
+      if (!open) setExpanded(true);
+      else if (!panelKind) setExpanded(false);
+    });
+    document.addEventListener('click', () => {
+      if (menu.dataset.open === '1') {
+        menu.dataset.open = '0';
+        if (!panelKind) setExpanded(false);
+      }
+    });
     menu.addEventListener('click', (e) => {
       const cmd = e.target && e.target.dataset && e.target.dataset.cmd;
       if (!cmd) return;
       menu.dataset.open = '0';
-      if (cmd === 'workspace') navigate(WORKSPACE);
-      else if (cmd === 'history' || cmd === 'downloads') { /* M6 接面板 */ }
+      if (cmd === 'workspace') { if (!panelKind) setExpanded(false); navigate(WORKSPACE); }
+      else if (cmd === 'history') openPanel('history');
+      else if (cmd === 'downloads') openPanel('downloads');
       else if (cmd === 'diag') {
-        const active = tabsState.find((t) => t.active);
+        if (!panelKind) setExpanded(false);
+        const active = activeTab();
         alert('Annota 诊断\n\n活动标签：' + (active ? active.id : '-') +
               '\nURL：' + (active ? active.url : '-') +
               '\n标签数：' + tabsState.length +
@@ -283,6 +445,19 @@
           if (p.url) tabUrlCache[p.id] = p.url;
           if (p.active) setOmnibox(tabUrlCache[p.id]);
           document.getElementById('btn-reload').classList.toggle('is-active', !!p.loading);
+          applyBookmarkUI();
+        });
+        t.event.listen('annota://download-started', () => {
+          dlDot.style.display = 'block';
+          if (panelKind === 'downloads') renderDownloads();
+        });
+        t.event.listen('annota://download-finished', () => {
+          if (panelKind === 'downloads') renderDownloads();
+        });
+        // 内容 webview 内切换编辑态（如 Cmd/Ctrl+E）→ 同步工具栏按钮
+        t.event.listen('annota://shell-mode-changed', (ev) => {
+          const m = ev.payload && ev.payload.mode === 'edit' ? 'edit' : 'view';
+          if (m !== shellMode) { shellMode = m; applyEditUI(); }
         });
       }
     })();
@@ -323,6 +498,7 @@
       tabNew.style.display = tabsState.length >= 12 ? 'none' : '';
       // 新激活/新开的 tab 同步编辑态
       pushModeToTab();
+      applyBookmarkUI();
     }
     tabNew.addEventListener('click', () => invoke('tab_new', {}).catch(() => {}));
 

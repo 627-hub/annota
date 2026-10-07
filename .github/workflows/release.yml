@@ -133,6 +133,10 @@ jobs:
           find app/annota/target/release/bundle/macos -name '*.app.tar.gz' -exec cp {} release-assets/ \;
           find app/annota/target/release/bundle/macos -name '*.app.tar.gz.sig' -exec cp {} release-assets/ \;
           ls -la release-assets/ || true
+          if ! ls release-assets/*.app.tar.gz >/dev/null 2>&1 || ! ls release-assets/*.app.tar.gz.sig >/dev/null 2>&1; then
+            echo "::error::未找到 .app.tar.gz / .app.tar.gz.sig —— 检查 bundle.createUpdaterArtifacts 与 TAURI_SIGNING_PRIVATE_KEY"
+            exit 1
+          fi
       - name: Collect updater artifacts (Windows)
         if: runner.os == 'Windows'
         shell: bash
@@ -152,7 +156,7 @@ jobs:
         with:
           name: ${{ matrix.artifact }}-updater
           path: release-assets/*
-          if-no-files-found: warning
+          if-no-files-found: error
           retention-days: 5
 
   publish:
@@ -171,7 +175,8 @@ jobs:
           RELEASE_TAG: ${{ env.RELEASE_TAG }}
         run: |
           python - <<'PY'
-          import json, os, glob
+          import json, os
+          from datetime import datetime, timezone
           tag = os.environ["RELEASE_TAG"]
           version = json.load(open("app/annota/tauri.conf.json", encoding="utf-8"))["version"]
           base = f"https://github.com/627-hub/annota/releases/download/{tag}"
@@ -183,15 +188,19 @@ jobs:
               return None
           platforms = {}
           mac_tar = next((f for f in files if f.endswith(".app.tar.gz")), None)
-          if mac_tar:
-              # aarch64 与 x86_64 都指向同一产物（CI 只出一个 mac 包时）；有双包再细分
-              platforms["darwin-aarch64"] = {"signature": sig_for(".app.tar.gz"), "url": f"{base}/{mac_tar}"}
-              platforms["darwin-x86_64"] = platforms["darwin-aarch64"]
-          win_sig = sig_for(".exe")
+          mac_sig = sig_for(".app.tar.gz")
+          if mac_tar and mac_sig:
+              # 仅声明实际构建出的架构（macos-latest 为 arm64）；有 x86_64 产物时再补。
+              platforms["darwin-aarch64"] = {"signature": mac_sig, "url": f"{base}/{mac_tar}"}
           win_exe = next((f for f in files if f.endswith(".exe") and not f.endswith(".sig")), None)
+          win_sig = sig_for(".exe")
           if win_exe and win_sig:
               platforms["windows-x86_64"] = {"signature": win_sig, "url": f"{base}/{win_exe}"}
-          out = {"version": version, "notes": f"Annota {tag}", "pub_date": "2026-01-01T00:00:00Z", "platforms": platforms}
+          if not platforms:
+              print("::error::latest.json platforms 为空：未找到带签名的更新产物（检查 createUpdaterArtifacts / .sig 上传）")
+              raise SystemExit(1)
+          pub_date = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+          out = {"version": version, "notes": f"Annota {tag}", "pub_date": pub_date, "platforms": platforms}
           open("release-assets/latest.json", "w", encoding="utf-8").write(json.dumps(out, ensure_ascii=False, indent=2))
           print(json.dumps(out, ensure_ascii=False, indent=2))
           PY
@@ -205,8 +214,13 @@ jobs:
       - name: Publish updater manifest to CloudBase
         env:
           TCB_ENV: ${{ secrets.TCB_ENV }}
+          TENCENTCLOUD_SECRETID: ${{ secrets.TENCENTCLOUD_SECRETID }}
+          TENCENTCLOUD_SECRETKEY: ${{ secrets.TENCENTCLOUD_SECRETKEY }}
         shell: bash
         run: |
           if [ -z "$TCB_ENV" ]; then echo "TCB_ENV 未配置，跳过 updater manifest 上传"; exit 0; fi
+          if [ -z "$TENCENTCLOUD_SECRETID" ] || [ -z "$TENCENTCLOUD_SECRETKEY" ]; then
+            echo "::error::缺少 TENCENTCLOUD_SECRETID/TENCENTCLOUD_SECRETKEY，无法上传 updater manifest"; exit 1
+          fi
           npm i -g @cloudbase/cli@latest
           tcb hosting deploy release-assets/latest.json app/latest.json -e "$TCB_ENV"

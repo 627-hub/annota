@@ -15,8 +15,10 @@ mod sync_server;
 mod agent;
 mod apkg;
 mod tabs;
+mod store;
 use agent::{agent_cancel, agent_chat, agent_run};
 use tabs::TabManager;
+use store::DbState;
 
 // 启动自动更新检查：延迟后查一次；有新版则 emit 给 toolbar（「更多」菜单出角标），
 // 用户确认后由前端调 `install_update` 下载并重启安装。24h 后再查一次。
@@ -53,6 +55,18 @@ static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
 // 工具栏高度（逻辑像素）：标签条 38 + 导航条 56。child webview 按此高度摆放。
 const TOOLBAR_HEIGHT: f64 = 94.0;
+// 面板展开时工具栏额外高度（历史 / 下载 / 更多菜单浮层）。展开时浏览器内容区相应下移。
+const PANEL_HEIGHT: f64 = 420.0;
+// 工具栏是否处于面板展开态（由工具栏 webview 经 set_toolbar_expanded 切换）。
+static TOOLBAR_EXPANDED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn toolbar_total_height() -> f64 {
+    if TOOLBAR_EXPANDED.load(std::sync::atomic::Ordering::Relaxed) {
+        TOOLBAR_HEIGHT + PANEL_HEIGHT
+    } else {
+        TOOLBAR_HEIGHT
+    }
+}
 // 本地同步服务地址（va_fetch 只允许它，防 SSRF）
 const SYNC_HOSTS: &[&str] = &["127.0.0.1", "localhost", "::1"];
 const SYNC_PORT: u16 = 8793;
@@ -284,6 +298,14 @@ fn set_shell_mode(app: tauri::AppHandle, mode: String) -> Result<(), String> {
     webview.eval(script).map_err(|e| e.to_string())
 }
 
+// 工具栏面板展开/收起（M6）：展开时工具栏 webview 增高、浏览器内容区下移，
+// 供「历史 / 下载」面板与「更多」菜单浮层使用（否则 94px 的工具栏 webview 会裁掉浮层）。
+#[tauri::command]
+fn set_toolbar_expanded(app: tauri::AppHandle, expanded: bool) -> Result<(), String> {
+    TOOLBAR_EXPANDED.store(expanded, std::sync::atomic::Ordering::Relaxed);
+    apply_layout(&app)
+}
+
 // ---------- 标签页命令（M3） ----------
 #[tauri::command]
 fn tab_new(app: tauri::AppHandle, url: Option<String>) -> Result<String, String> {
@@ -291,7 +313,7 @@ fn tab_new(app: tauri::AppHandle, url: Option<String>) -> Result<String, String>
     let size = window.inner_size().map_err(|e| e.to_string())?;
     let sf = window.scale_factor().map_err(|e| e.to_string())?;
     let top_inset = titlebar_inset(&window, sf);
-    let browser_top = top_inset.saturating_add((TOOLBAR_HEIGHT * sf) as u32);
+    let browser_top = top_inset.saturating_add((toolbar_total_height() * sf) as u32);
     let target = match url.as_deref() {
         Some(u) if !u.trim().is_empty() => resolve_nav_url(u)?,
         _ => "http://127.0.0.1:8793/".to_string(),
@@ -365,7 +387,7 @@ fn apply_layout(app: &AppHandle) -> Result<(), String> {
     let size = window.inner_size().map_err(|e| e.to_string())?;
     let sf = window.scale_factor().map_err(|e| e.to_string())?;
     let top_inset = titlebar_inset(&window, sf);
-    let toolbar_h = (TOOLBAR_HEIGHT * sf) as u32;
+    let toolbar_h = (toolbar_total_height() * sf) as u32;
     let browser_top = top_inset.saturating_add(toolbar_h);
 
     if let Some(toolbar) = app.get_webview("toolbar") {
@@ -395,7 +417,7 @@ fn setup_webviews(window: &tauri::Window, app: &AppHandle) -> Result<(), String>
     let size = window.inner_size().map_err(|e| e.to_string())?;
     let sf = window.scale_factor().map_err(|e| e.to_string())?;
     let top_inset = titlebar_inset(window, sf);
-    let toolbar_h = (TOOLBAR_HEIGHT * sf) as u32;
+    let toolbar_h = (toolbar_total_height() * sf) as u32;
     let browser_top = top_inset.saturating_add(toolbar_h);
 
     // 工具栏 webview：加载本地 index.html（地址栏 + 标签条）
@@ -754,7 +776,6 @@ fn make_mcp_tools() -> tauri_plugin_mcp_server::McpBuilder {
         )
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
 // 用户确认后：下载并安装更新，然后重启应用（由工具栏「更多」菜单触发）。
 #[tauri::command]
 async fn install_update(app: AppHandle) -> Result<String, String> {
@@ -772,6 +793,7 @@ async fn install_update(app: AppHandle) -> Result<String, String> {
     app.restart();
 }
 
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -788,6 +810,7 @@ pub fn main() {
             browser_action,
             va_fetch,
             set_shell_mode,
+            set_toolbar_expanded,
             agent_run,
             agent_chat,
             agent_cancel,
@@ -805,11 +828,34 @@ pub fn main() {
             let root_path = sync_server::resolve_project_root();
             let notes_dir = sync_server::resolve_notes_dir(app.handle());
             let settings_path = sync_server::resolve_settings_path(app.handle());
+            // 本地 SQLite（收藏 / 历史 / 下载，M6）
+            let db_path = store::resolve_db_path(app.handle(), &store_path);
+            let db = match store::Db::open(&db_path) {
+                Ok(db) => db,
+                Err(e) => {
+                    // 可恢复场景（目录只读 / 文件损坏 / ANNOTA_DB 指向不可写处）不要拖垮整个应用：
+                    // 回退到临时目录再试一次，仍失败才终止。
+                    eprintln!("[annota] 打开本地库失败 {db_path:?}: {e}；回退到临时目录");
+                    let fallback = std::env::temp_dir().join("Annota").join("annota.db");
+                    match store::Db::open(&fallback) {
+                        Ok(db) => {
+                            eprintln!("[annota] 已回退到临时库 {fallback:?}");
+                            db
+                        }
+                        Err(e2) => {
+                            eprintln!("[annota] 临时库亦不可用 {fallback:?}: {e2}");
+                            panic!("无法初始化本地数据库 annota.db");
+                        }
+                    }
+                }
+            };
+            app.manage(DbState(db.clone()));
             tauri::async_runtime::spawn(sync_server::run_server(
                 store_path,
                 root_path,
                 notes_dir,
                 settings_path,
+                db.clone(),
             ));
 
             let window = WindowBuilder::new(app, "main")

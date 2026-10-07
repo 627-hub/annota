@@ -578,7 +578,7 @@ button { color: inherit; }
   .va-onb { width:calc(100vw - 24px); }
   .va-probe { right:10px; bottom:10px; }
 }
-@media (max-width: 720px) {
+@media (max-width: 768px) {
   .va-panel--docked {
     top:auto; right:0; bottom:0; left:0; width:100%; min-width:0;
     height:min(56vh, 520px); max-height:calc(100dvh - env(safe-area-inset-top) - 12px);

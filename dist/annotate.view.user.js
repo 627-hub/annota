@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         Annota（只读观看端）
 // @namespace    https://video-annotate.local/
-// @version      0.1.0.18
+// @version      0.1.0.19
 // @description  给视频和网页内容添加可共享标注（框选、时间锚点、词条与同步）
 // @author       Annota
 // @match        *://*/*
@@ -17,8 +17,8 @@
 window.VA_VIEW_ONLY=true;window.VA_AUTO_SYNC=true;
 
 /* ===== data: build id ===== */
-window.VA_BUILD=1791088668;
-window.VA_US_VER="0.1.0.18";
+window.VA_BUILD=1791347940;
+window.VA_US_VER="0.1.0.19";
 window.VA_DIST_BASE="https://tencentcloudtest-d2eg4lu85c76fb0-1414056833.tcloudbaseapp.com";
 /* ===== src/geometry.js ===== */
 /* video-annotate · geometry
@@ -1604,7 +1604,7 @@ button { color: inherit; }
   .va-onb { width:calc(100vw - 24px); }
   .va-probe { right:10px; bottom:10px; }
 }
-@media (max-width: 720px) {
+@media (max-width: 768px) {
   .va-panel--docked {
     top:auto; right:0; bottom:0; left:0; width:100%; min-width:0;
     height:min(56vh, 520px); max-height:calc(100dvh - env(safe-area-inset-top) - 12px);
@@ -2737,12 +2737,12 @@ button { color: inherit; }
 
   function updateEditBar() {
     if (!ctx || !editbar) return;
-    const state = ctx.api.getState();
-    const binding = state && state.binding;
+    const snap = ctx.api.getState();
+    const binding = snap && snap.binding;
     const meta = binding && typeof binding.mediaMeta === 'function' ? binding.mediaMeta() : null;
     const title = String((meta && (meta.title || meta.videoTitle)) || document.title || '当前页面').trim();
-    const annotate = !!(state && state.annotate);
-    const picking = !!(state && state.picking);
+    const annotate = !!(snap && snap.annotate);
+    const picking = !!(snap && snap.picking);
     editbar.el.classList.toggle('is-active', annotate || picking);
     editbar.objectTitle.textContent = title || '当前页面';
     editbar.objectTitle.title = title || '当前页面';
@@ -2758,6 +2758,17 @@ button { color: inherit; }
     editbar.hint.textContent = picking
       ? '点选页面中的视频、图片或正文'
       : annotate ? '拖动框选画面，松开后创建标注' : binding ? '准备就绪 · 可开始框选或切换内容' : '选择页面对象后即可开始标注';
+  }
+
+  // 仅在编辑态轮询刷新顶栏（观看态不写 DOM、不空转）
+  function setPolling(on) {
+    if (!IN_BROWSER) return;
+    if (on) {
+      if (!refreshTimer) refreshTimer = root.setInterval(updateEditBar, 250);
+    } else if (refreshTimer) {
+      root.clearInterval(refreshTimer);
+      refreshTimer = null;
+    }
   }
 
   // 构建抽屉顶部的编辑操作条（对象信息 + 标注/选对象/同步/来源）
@@ -2803,6 +2814,7 @@ button { color: inherit; }
     if (!IN_BROWSER || !ctx) return;
     const m = mode();
     const editing = m === 'edit';
+    setPolling(editing);
     try { document.documentElement.setAttribute('data-va-mode', editing ? 'edit' : 'view'); } catch (e) {}
 
     // core 每帧会重设 dock 的 inline display；类选择器 + !important 稳定隐藏它。
@@ -2822,9 +2834,9 @@ button { color: inherit; }
       }
       updateEditBar();
     } else {
-      const state = ctx.api.getState();
-      if (state && state.annotate) ctx.api.toggleAnnotate(false);
-      if (state && state.picking) ctx.api.togglePicker(false);
+      const snap = ctx.api.getState();
+      if (snap && snap.annotate) ctx.api.toggleAnnotate(false);
+      if (snap && snap.picking) ctx.api.togglePicker(false);
       ctx.panel.classList.remove('va-panel--docked');
       ctx.api.togglePanel(false);
       try { delete ctx.uiRoot.dataset.vaDocked; } catch (e) {}
@@ -2848,7 +2860,7 @@ button { color: inherit; }
     if ((event.metaKey || event.ctrlKey) && key === 'e') {
       event.preventDefault();
       event.stopImmediatePropagation();
-      root.VA_BROWSER_SHELL.setMode('edit');
+      root.VA_BROWSER_SHELL.setMode(mode() === 'edit' ? 'view' : 'edit');
     } else if (!event.metaKey && !event.ctrlKey && key === 'e' && mode() === 'edit') {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -2862,7 +2874,7 @@ button { color: inherit; }
       ctx = c;
       try { document.documentElement.setAttribute('data-va-shell', 'browser'); } catch (e) {}
       try { applyShellMode(); } catch (e) { console.log('[annota][shell] applyShellMode failed', e); }
-      if (!refreshTimer) refreshTimer = root.setInterval(updateEditBar, 250);
+      setPolling(mode() === 'edit');
       const close = ctx.panel.querySelector('.va-close');
       if (close) close.addEventListener('click', () => root.VA_BROWSER_SHELL.setMode('view'), true);
       console.log('[annota][shell] adopted (M5 drawer), browser=%s mode=%s', IN_BROWSER, mode());
@@ -2878,6 +2890,11 @@ button { color: inherit; }
       if (!IN_BROWSER) return;
       setModeStored(next);
       try { applyShellMode(); } catch (e) {}
+      // 通知工具栏同步「编辑」按钮态（跨 webview 广播）
+      try {
+        const t = root.__TAURI__;
+        if (t && t.event && t.event.emit) t.event.emit('annota://shell-mode-changed', { mode: mode() });
+      } catch (e) {}
     },
     getMode: mode,
     _inBrowser: () => IN_BROWSER,
@@ -4116,7 +4133,8 @@ button { color: inherit; }
             isView, applyMode,
             toggleAnnotate, togglePicker, togglePanel, toggleSources, toggleMenu,
             syncNow, render, renderPanel,
-            getState: () => state,
+            // 只读快照：壳不得直接持有/篡改 core 内部 state（见 dev/check-shell-drift.mjs 契约）
+            getState: () => ({ annotate: state.annotate, picking: state.picking, binding: state.binding }),
           },
         });
       }
