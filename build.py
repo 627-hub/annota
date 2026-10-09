@@ -174,8 +174,9 @@ def main():
         f.write(browser_header + "\n".join(bbody))
     print("built:", os.path.relpath(browser_out, HERE), os.path.getsize(browser_out), "bytes", "· browser variant")
 
-    # MV3 扩展 / 自建浏览器壳 的 core（与 userscript 共用同一份）
-    for sub in ("extension", "browser"):
+    # MV3 扩展 的 core（与 userscript 共用同一份）。
+    # M8-1：Electron 壳（app/browser）已冻结，不再生成其 core.js（保留末版在库）。
+    for sub in ("extension",):
         d = os.path.join(HERE, "app", sub)
         if os.path.isdir(d):
             with open(os.path.join(d, "core.js"), "w", encoding="utf-8") as f:

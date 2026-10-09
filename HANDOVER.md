@@ -98,7 +98,7 @@ export ANNOTA_SEARCH_ENGINE="https://www.bing.com/search?q="   # omnibox 搜索�
 
 端口：**8793**（主：静态+API）、**8794**（MCP）、**8792**（`dev/serve.py` 纯静态，遗留）。
 
-> `app/browser/`（Electron）已冻结：不再投入，保留末版；`build.py` 仍会生成其 `core.js`，
+> `app/browser/`（Electron）已冻结：不再投入，保留末版；`build.py` **不再**生成其 `core.js`（M8-1，2026-10-09），
 > M8 起停发。主线是 `app/annota/`（Tauri）。
 
 ---
@@ -233,10 +233,12 @@ video-annotate/
 ## 8. 下一步（建议）
 
 **M8（浏览器收尾）**
-1. **Electron 冻结**：`app/browser/` 保留末版但标注 deprecated；`build.py` 停发其 `core.js`；
-   README/HANDOVER 更新说明。
+1. **Electron 冻结**：✅ 已完成（2026-10-09）——`app/browser/` README 已标 DEPRECATED；`build.py` 停发其
+   `core.js`；README 更新。P1 其余收尾（前进/后退、tab 标题、查找计数、健壮性、in-app key）见
+   `docs/product-plan.md` P1。
 2. **标注菜单继续精简**：`core.js` 的「更多」菜单已从 22 压到 7 个首屏元素（低频项收进
    「高级设置」「组管理」折叠区）。仍可考虑：把「组管理」整块移出菜单（已有 hub 组页）。
+   （`pw dev/more-menu-check.mjs` 已 36/36，本轮不再动。）
 
 **产品主线**
 3. **数据管理台**：查看已收集的 `data.jsonl`（标注 + 对话），按视频/词聚合，一键导出训练集。
