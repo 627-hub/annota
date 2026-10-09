@@ -48,3 +48,4 @@ models/
 # 本地运行产物
 nohup.out
 cloudbaserc.json
+app/service/backups/

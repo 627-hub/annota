@@ -25,27 +25,26 @@
     }
     .tabs-scroll::-webkit-scrollbar { display:none; }
 
-    /* tab：非激活为「斜切」形（同色系一档底），激活为抬起的实心卡片 + 顶部强调条 */
+    /* tab：非激活透明、标题降亮；hover 抬升到 #1d1e23；激活态抬升为同色卡片 + 顶部 2px 琥珀发丝线。
+       激活/非激活共用同一套 border / padding / font，切换时零布局位移（仅颜色与透明度过渡）。 */
     .tab {
       position:relative; display:flex; align-items:center; gap:7px;
       width:180px; min-width:56px; height:30px; padding:0 7px 0 9px;
       border:1px solid transparent; border-bottom:none; border-radius:9px 9px 0 0;
-      background:#16171b; color:#8b9099;
+      background:transparent; color:#8b9099;
       font:12px var(--va-font-ui); cursor:pointer; white-space:nowrap; flex:none;
-      transition:background 140ms var(--va-ease), color 140ms var(--va-ease);
+      transition:background-color 140ms var(--va-ease), color 140ms var(--va-ease);
     }
     .tab:hover { background:#1d1e23; color:#c3c7cd; }
-    .tab[data-active="1"] {
-      background:#22242a; color:#f2f3f5;
-      box-shadow:0 -1px 0 rgba(255,255,255,.06) inset;
-    }
-    /* 激活态：顶部 2px 强调条（贴合标签条上沿，指向导航条，形成"这一页是当前页"的连续感） */
+    .tab[data-active="1"] { background:#1d1e23; color:#f2f3f5; }
+    .tab[data-active="1"]:hover { color:#f2f3f5; }
+    /* 激活态：顶部 2px 琥珀发丝线，贴齐标签条上沿（绝对定位，不占布局） */
     .tab[data-active="1"]::before {
-      content:""; position:absolute; top:0; left:8px; right:8px; height:2px;
+      content:""; position:absolute; top:-1px; left:8px; right:8px; height:2px;
       border-radius:0 0 2px 2px; background:var(--va-accent);
     }
-    /* 站点色块（无 favicon 时的 fallback） */
-    .tab .tab-fav {
+    /* 站点色块（无 favicon 时的 fallback）：标签与书签共用尺寸与圆角 */
+    .tab .tab-fav, .bookmark-item .bm-fav {
       display:grid; place-items:center; width:16px; height:16px; flex:none;
       border-radius:5px; font:700 9px/1 var(--va-font-ui); color:rgba(0,0,0,.62);
       text-transform:uppercase; letter-spacing:0;
@@ -55,11 +54,15 @@
       display:grid; place-items:center; width:17px; height:17px; flex:none;
       border:none; padding:0; border-radius:5px; background:transparent;
       color:#6b7078; cursor:pointer; font:400 13px/1 var(--va-font-ui);
-      opacity:.55; transition:opacity 120ms ease, background 120ms ease, color 120ms ease;
+      opacity:.55; transition:opacity 120ms var(--va-ease), background-color 120ms var(--va-ease), color 120ms var(--va-ease);
     }
     .tab:hover .tab-close { opacity:1; }
-    .tab .tab-close:hover { background:rgba(255,255,255,.14); color:#f1f2f3; }
-    .tab[data-active="1"] .tab-close { color:#9aa0a8; opacity:.9; }
+    /* 关闭按钮 hover：暖红（沿用页面已有的 #ef7379 错误色相，不引入新色） */
+    .tab .tab-close:hover { background:rgba(239,115,121,.16); color:#ef7379; }
+    /* 激活标签的 × 默认隐去，hover 标签（或键盘聚焦）才现 */
+    .tab[data-active="1"] .tab-close { opacity:0; pointer-events:none; }
+    .tab[data-active="1"]:hover .tab-close,
+    .tab[data-active="1"] .tab-close:focus-visible { opacity:1; pointer-events:auto; }
 
     /* + 号紧贴 tab 群末尾：给它左分隔线，形成"新建"独立分组感 */
     .tab-new {
@@ -67,12 +70,14 @@
       border:1px solid transparent; border-bottom:none; border-radius:9px 9px 0 0;
       background:transparent; color:#8b9099; cursor:pointer; align-self:flex-end;
       margin-left:4px; padding-left:4px; position:relative;
+      transition:background-color 140ms var(--va-ease), color 140ms var(--va-ease);
     }
     .tab-new::before {
       content:""; position:absolute; left:0; top:7px; bottom:6px; width:1px;
       background:rgba(255,255,255,.08);
     }
-    .tab-new:hover { background:rgba(255,255,255,.06); color:#f1f2f3; }
+    .tab-new:hover { background:#1d1e23; color:#f1f2f3; }
+    .tab-new:active { background:#24262c; }
     .tab-new svg { width:14px; height:14px; }
 
     /* ============ Row 2 · 导航条 ============ */
@@ -158,20 +163,17 @@
       border:1px solid transparent; border-radius:8px;
       background:transparent; color:#a9aeb6;
       font:11.5px var(--va-font-ui); cursor:pointer; white-space:nowrap;
-      transition:background 120ms ease, color 120ms ease, border-color 120ms ease;
+      transition:background-color 140ms var(--va-ease), color 140ms var(--va-ease), border-color 140ms var(--va-ease), transform 120ms var(--va-ease);
     }
     .bookmark-item:hover {
-      background:rgba(255,255,255,.06); border-color:rgba(255,255,255,.08); color:#f0f1f3;
+      background:#1d1e23; border-color:rgba(255,255,255,.07); color:#f0f1f3;
     }
+    /* 点击态：下沉一档底色 + 轻微缩放，给出按下反馈（不改布局） */
+    .bookmark-item:active { background:#24262c; transform:scale(.98); }
     .bookmark-item .bm-text {
       flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     }
-    /* 站点色块：按域名 hash 取色，比统一图标更有辨识度 */
-    .bookmark-item .bm-fav {
-      display:grid; place-items:center; width:18px; height:18px; flex:none;
-      border-radius:5px; font:700 9px/1 var(--va-font-ui);
-      color:rgba(0,0,0,.6); text-transform:uppercase;
-    }
+    /* 站点色块（.bm-fav）：按域名 hash 取色，尺寸与圆角同标签，见标签条段 */
     .bookmark-empty {
       display:flex; align-items:center; gap:6px; color:#5a5f68;
       font-size:11.5px; padding:0 8px;
@@ -598,6 +600,7 @@
         el.className = 'tab';
         el.dataset.active = t.active ? '1' : '0';
         el.setAttribute('role', 'tab');
+        el.setAttribute('aria-selected', t.active ? 'true' : 'false');
         el.title = t.url && t.url !== label ? label + '\n' + t.url : label;   // 标题截断后悬停可看全文 + 地址
         const fav = siteTile(t.url || '');
         fav.className = 'tab-fav';
@@ -669,6 +672,8 @@
       try { localStorage.setItem('va.browser.bookmarkBar', bookmarkBar.dataset.open); } catch (e) {}
     });
     applyBookmarkBarUI();
+    // 启动即恢复「书签栏展开」时要立即渲染内容，否则只有一条空色带
+    if (bookmarkBar.dataset.open === '1') renderBookmarkBar();
 
     /* ---- 查找条（M7） ---- */
     const findBar = document.getElementById('find-bar');
