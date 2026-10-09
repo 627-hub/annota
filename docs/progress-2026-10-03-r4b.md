@@ -1,7 +1,7 @@
 # 进展 · 2026-10-03~04（R4b 托管后端：CloudBase PG + HubStore + GitHub OAuth）
 
 > 承接 [`r4-plan.md`](r4-plan.md) R4a / [`r4b-plan.md`](r4b-plan.md) v0.1。目标：把小组共享从「用户自建 git 仓 + PAT」升级为「托管后端」——登录一次即可建组/加入/同步，全程不见 git。
-> 状态：**R4b-1（PG schema+RLS）**、**R4b-2（HubStore + vendor SDK）**、**R4b-3（GitHub OAuth 云函数，已部署上线）**、**R4b-4（RLS 修正：递归 + 自助加入）**、**R4b-5（前端接线）已完成**；回归全绿；**未提交**（用户暂不提交）。
+> 状态：**R4b-1（PG schema+RLS）**、**R4b-2（HubStore + vendor SDK）**、**R4b-3（GitHub OAuth 云函数，已部署上线）**、**R4b-4（RLS 修正：递归 + 自助加入）**、**R4b-5（前端接线）已完成**；回归全绿；**已提交推送**（`68c8320`，2026-10-04）。收尾见 §9.1（2026-10-09 P0）。
 
 ---
 
@@ -122,7 +122,19 @@
 - myGroups 未与本地组注册表自动合并（本地注册表为准）。
 - 提交 R4b（用户确认后）。
 
-## 10. 未提交内容
+### 9.1 P0 收尾（2026-10-09，全部完成）
+
+| # | 事项 | 结果 |
+|---|---|---|
+| P0-1 | 提交 R4b | ✅ `68c8320` 已提交推送（此前完成）；隐私复核无 secret 明文入库（OAuth secret/自定义登录私钥均走 env/`sec`；cb-config.js 内为 Publishable Key 公开值） |
+| P0-2 | release 态补组页路由 | ✅ `sync_server.rs` 新增 `/group.html`、`/cb-config.js`、`/vendor/cloudbase.full.js` 内嵌路由（`include_str!` 同既有模式）；`group.html` tokens.css 相对路径改绝对。**release 二进制实测**：7 条路由 200；Playwright 无头打开组页 0 console error / 0 失败请求；cargo test 22/22；权限自检 3/3 |
+| P0-3 | userscript 注入 PK | ✅ `build.py:134-138,167` 已内联（随 `68c8320` 完成）；dist 已重建（us_ver 0.1.0.46） |
+| P0-4 | douyin/generic mediaId 前缀归一 | ✅ 建组时 douyin 按 `modal_id`/`/video/(\d+)`/`/note/(\d+)` 提取裸 id（对齐 `adapter.js`）；`sameMediaId` 重写：URL 去协议/查询串规范化、`platform:<url>` ↔ URL、URL 末尾 id 兜底匹配（id ≥6 字符防误配）。`group_hub.test.mjs` 新增 6 断言（douyin 前缀/裸 id/legacy URL/generic 查询串/负例） |
+| P0-5 | myGroups 并回本地注册表 + 验收落档 | ✅ 新增 `HubStore.syncFromHub()`：members→groups 交集并入 `annota:groups`（不重复、失败静默）；工作区「组」页打开时异步合并后重绘。档 2/3 验收记录即本文档 §9 首条；本表为 P0 收尾落档 |
+
+回归（P0-4/P0-5 改动后全量）：node 测试 7/7、python 4/4、smoke 7/7、cargo test 22/22、release 构建 + 路由烟测全绿。
+
+## 10. 未提交内容（历史记录：上述清单已随 `68c8320` 提交，仅存档）
 
 - `docs/r4b-plan.md`、`docs/progress-2026-10-03-r4b.md`（本文件）
 - `cloudbase/`（deploy.sh、functions/auth-github/、migrations/×2）
