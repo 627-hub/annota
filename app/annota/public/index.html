@@ -14,70 +14,84 @@
       -webkit-font-smoothing:antialiased; user-select:none;
     }
 
-    /* ============ Row 1 · 标签条 ============ */
+    /* ============ Row 1 · 标签条 ============
+       明度分层（由上到下）：标签轨道 #0b0c0f（最暗）→ 工具栏/书签栏 #111216。
+       激活标签底色 = #111216，与下方同色，视觉上「长」进工具栏；标签轨道的分隔线由 ::after 画，
+       激活标签 z-index 盖住它，因此激活处没有断线的缝。 */
     .tabstrip {
-      display:flex; align-items:flex-end; gap:2px; width:100%; height:40px; padding:6px 10px 0;
-      border-bottom:1px solid rgba(255,255,255,.075); background:#0e0f12;
+      position:relative; display:flex; align-items:stretch; gap:2px; width:100%; height:40px; padding:0 10px;
+      background:#0b0c0f;
     }
+    .tabstrip::after {
+      content:""; position:absolute; left:0; right:0; bottom:0; height:1px;
+      background:rgba(255,255,255,.065); pointer-events:none; z-index:1;
+    }
+    /* 不用 border-bottom + overflow 裁切：tab 行撑满 40px，激活标签贴底即可覆盖分隔线 */
     .tabs-scroll {
-      display:flex; align-items:flex-end; gap:2px; flex:1; min-width:0;
+      display:flex; align-items:flex-end; gap:2px; flex:1; min-width:0; height:100%; padding-top:6px;
       overflow-x:auto; scrollbar-width:none;
     }
     .tabs-scroll::-webkit-scrollbar { display:none; }
 
-    /* tab：非激活透明、标题降亮；hover 抬升到 #1d1e23；激活态抬升为同色卡片 + 顶部 2px 琥珀发丝线。
+    /* tab：非激活透明、标题降亮；hover 轻抬升；激活态 = 工具栏同色「凸起平台」+ 顶部 2px 琥珀发丝线。
        激活/非激活共用同一套 border / padding / font，切换时零布局位移（仅颜色与透明度过渡）。 */
     .tab {
-      position:relative; display:flex; align-items:center; gap:7px;
-      width:180px; min-width:56px; height:30px; padding:0 7px 0 9px;
-      border:1px solid transparent; border-bottom:none; border-radius:9px 9px 0 0;
-      background:transparent; color:#8b9099;
+      position:relative; display:flex; align-items:center; gap:8px;
+      width:184px; min-width:56px; height:30px; padding:0 6px 0 8px;
+      border:1px solid transparent; border-bottom:none; border-radius:8px 8px 0 0;
+      background:transparent; color:#7c828b;
       font:12px var(--va-font-ui); cursor:pointer; white-space:nowrap; flex:none;
-      transition:background-color 140ms var(--va-ease), color 140ms var(--va-ease);
+      transition:background-color 160ms var(--va-ease), color 160ms var(--va-ease), border-color 160ms var(--va-ease);
     }
-    .tab:hover { background:#1d1e23; color:#c3c7cd; }
-    .tab[data-active="1"] { background:#1d1e23; color:#f2f3f5; }
-    .tab[data-active="1"]:hover { color:#f2f3f5; }
-    /* 激活态：顶部 2px 琥珀发丝线，贴齐标签条上沿（绝对定位，不占布局） */
+    /* 非激活标签之间的细分隔线：悬停或紧邻激活标签时隐去，避免抢戏 */
+    .tab:not([data-active="1"])::after {
+      content:""; position:absolute; right:-2px; top:9px; bottom:9px; width:1px;
+      background:rgba(255,255,255,.07); transition:opacity 160ms var(--va-ease);
+    }
+    .tab:hover::after, .tab:hover + .tab::after, .tab[data-active="1"] + .tab::after { opacity:0; }
+    .tab:hover { background:rgba(255,255,255,.045); color:#c4c9d0; }
+    /* 激活：与工具栏同色 + 发丝边框（上/左/右），下沿不画边框，与工具栏融合 */
+    .tab[data-active="1"] {
+      z-index:2; background:#111216; color:#f3f4f6; border-color:rgba(255,255,255,.08); border-bottom-color:transparent;
+      box-shadow:inset 0 1px 0 rgba(255,255,255,.03);
+    }
+    /* 激活态：顶部 2px 琥珀发丝线，贴齐标签上沿（绝对定位，不占布局） */
     .tab[data-active="1"]::before {
-      content:""; position:absolute; top:-1px; left:8px; right:8px; height:2px;
-      border-radius:0 0 2px 2px; background:var(--va-accent);
+      content:""; position:absolute; top:-1px; left:-1px; right:-1px; height:2px;
+      border-radius:8px 8px 0 0; background:var(--va-accent);
     }
-    /* 站点色块（无 favicon 时的 fallback）：标签与书签共用尺寸与圆角 */
+    /* 站点 monogram（无 favicon 时的 fallback）：标签与书签共用尺寸/圆角/字号。
+       颜色由 JS 写入 --h（域名 hash 色相），低饱和底 + 高明度字，避免彩色方块的廉价感。 */
     .tab .tab-fav, .bookmark-item .bm-fav {
-      display:grid; place-items:center; width:16px; height:16px; flex:none;
-      border-radius:5px; font:700 9px/1 var(--va-font-ui); color:rgba(0,0,0,.62);
-      text-transform:uppercase; letter-spacing:0;
+      display:grid; place-items:center; width:18px; height:18px; flex:none;
+      border-radius:6px; font:600 10px/1 var(--va-font-ui); text-transform:uppercase; letter-spacing:0;
+      color:hsl(var(--h, 200) 70% 80%); background:hsl(var(--h, 200) 24% 21%);
+      box-shadow:inset 0 0 0 1px hsl(var(--h, 200) 30% 36% / .45);
     }
+    .tab .tab-fav { opacity:.7; transition:opacity 160ms var(--va-ease), transform 160ms var(--va-ease); }
+    .tab:hover .tab-fav { opacity:.9; }
+    .tab[data-active="1"] .tab-fav { opacity:1; transform:scale(1.1); }
     .tab .tab-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+    .tab[data-active="1"] .tab-title { color:#f3f4f6; }
     .tab .tab-close {
-      display:grid; place-items:center; width:17px; height:17px; flex:none;
-      border:none; padding:0; border-radius:5px; background:transparent;
-      color:#6b7078; cursor:pointer; font:400 13px/1 var(--va-font-ui);
-      opacity:.55; transition:opacity 120ms var(--va-ease), background-color 120ms var(--va-ease), color 120ms var(--va-ease);
+      display:grid; place-items:center; width:18px; height:18px; flex:none;
+      border:none; padding:0; border-radius:6px; background:transparent;
+      color:#7c828b; cursor:pointer; font:400 14px/1 var(--va-font-ui);
+      opacity:0; transition:opacity 140ms var(--va-ease), background-color 140ms var(--va-ease), color 140ms var(--va-ease);
     }
-    .tab:hover .tab-close { opacity:1; }
+    /* 非激活：悬停标签才现 ×；激活：常驻（便于一眼找到关闭入口） */
+    .tab:hover .tab-close, .tab[data-active="1"] .tab-close, .tab .tab-close:focus-visible { opacity:.6; }
     /* 关闭按钮 hover：暖红（沿用页面已有的 #ef7379 错误色相，不引入新色） */
-    .tab .tab-close:hover { background:rgba(239,115,121,.16); color:#ef7379; }
-    /* 激活标签的 × 默认隐去，hover 标签（或键盘聚焦）才现 */
-    .tab[data-active="1"] .tab-close { opacity:0; pointer-events:none; }
-    .tab[data-active="1"]:hover .tab-close,
-    .tab[data-active="1"] .tab-close:focus-visible { opacity:1; pointer-events:auto; }
+    .tab .tab-close:hover { opacity:1; background:rgba(239,115,121,.16); color:#ef7379; }
 
-    /* + 号紧贴 tab 群末尾：给它左分隔线，形成"新建"独立分组感 */
+    /* + 新建：与标签同一高度语言，独立圆角小按钮，不再贴着末尾标签长成一条竖线 */
     .tab-new {
-      display:grid; place-items:center; width:28px; height:30px; flex:none;
-      border:1px solid transparent; border-bottom:none; border-radius:9px 9px 0 0;
-      background:transparent; color:#8b9099; cursor:pointer; align-self:flex-end;
-      margin-left:4px; padding-left:4px; position:relative;
+      display:grid; place-items:center; width:26px; height:26px; flex:none; margin:0 0 4px 6px; padding:0;
+      border:0; border-radius:7px; background:transparent; color:#7c828b; cursor:pointer; align-self:flex-end;
       transition:background-color 140ms var(--va-ease), color 140ms var(--va-ease);
     }
-    .tab-new::before {
-      content:""; position:absolute; left:0; top:7px; bottom:6px; width:1px;
-      background:rgba(255,255,255,.08);
-    }
-    .tab-new:hover { background:#1d1e23; color:#f1f2f3; }
-    .tab-new:active { background:#24262c; }
+    .tab-new:hover { background:rgba(255,255,255,.06); color:#f1f2f3; }
+    .tab-new:active { background:rgba(255,255,255,.1); }
     .tab-new svg { width:14px; height:14px; }
 
     /* ============ Row 2 · 导航条 ============ */
@@ -148,34 +162,36 @@
 
 
     /* ============ 书签栏（M7） ============ */
+    /* 与工具栏同色（#111216）：激活标签可以直接「长」进书签栏；与工具栏之间靠发丝线分层 */
     .bookmark-bar {
-      display:none; align-items:center; gap:3px; width:100%; height:36px; padding:0 10px;
-      border-bottom:1px solid rgba(255,255,255,.06); background:#0f1013;
+      display:none; align-items:center; gap:2px; width:100%; height:36px; padding:0 10px;
+      border-bottom:1px solid rgba(255,255,255,.075); background:#111216;
       overflow-x:auto; scrollbar-width:none;
     }
     .bookmark-bar[data-open="1"] { display:flex; }
     .bookmark-bar::-webkit-scrollbar { display:none; }
-    /* 宽度上限 + 单行省略：长标题不再撑爆整行。flex:0 1 auto + max-width，
-       使「按内容宽度」与「超长时收缩」同时成立（不用 auto 会让末项拉伸占满剩余空间）。 */
+    /* 行式条目：宽度上限 + 单行省略；flex:0 1 auto 让「按内容宽度」与「超长收缩」同时成立。
+       hover 抬升（底色 + 1px 上移 + 轻阴影），按下回落。 */
     .bookmark-item {
       display:flex; align-items:center; gap:7px; flex:0 1 auto;
-      width:auto; max-width:190px; min-width:0; height:26px; padding:0 10px 0 7px;
-      border:1px solid transparent; border-radius:8px;
-      background:transparent; color:#a9aeb6;
-      font:11.5px var(--va-font-ui); cursor:pointer; white-space:nowrap;
-      transition:background-color 140ms var(--va-ease), color 140ms var(--va-ease), border-color 140ms var(--va-ease), transform 120ms var(--va-ease);
+      width:auto; max-width:190px; min-width:0; height:26px; padding:0 9px 0 6px;
+      border:1px solid transparent; border-radius:7px;
+      background:transparent; color:#9ca2ac;
+      font:12px var(--va-font-ui); cursor:pointer; white-space:nowrap;
+      transition:background-color 160ms var(--va-ease), color 160ms var(--va-ease), border-color 160ms var(--va-ease), transform 160ms var(--va-ease), box-shadow 160ms var(--va-ease);
     }
     .bookmark-item:hover {
-      background:#1d1e23; border-color:rgba(255,255,255,.07); color:#f0f1f3;
+      background:#1c1d22; border-color:rgba(255,255,255,.06); color:#eceef1;
+      transform:translateY(-1px); box-shadow:0 3px 10px rgba(0,0,0,.28);
     }
-    /* 点击态：下沉一档底色 + 轻微缩放，给出按下反馈（不改布局） */
-    .bookmark-item:active { background:#24262c; transform:scale(.98); }
+    /* 按下：底色下沉一档、回到原位并轻微收缩，给出即时反馈 */
+    .bookmark-item:active { background:#22242a; transform:scale(.98); box-shadow:none; }
     .bookmark-item .bm-text {
       flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
     }
-    /* 站点色块（.bm-fav）：按域名 hash 取色，尺寸与圆角同标签，见标签条段 */
+    /* 站点 monogram（.bm-fav）：样式见标签条段，尺寸/圆角与标签一致 */
     .bookmark-empty {
-      display:flex; align-items:center; gap:6px; color:#5a5f68;
+      display:flex; align-items:center; gap:6px; color:#5d626b;
       font-size:11.5px; padding:0 8px;
     }
 
@@ -511,6 +527,17 @@
       try { await invoke('install_update'); }
       catch (e) { updatePill.dataset.state = ''; updateLabel.textContent = '更新失败，重试'; updatePill.setAttribute('title', String((e && e.message) || e)); }
     });
+    // 角标兜底：Rust 启动 5s 后发 update-available 事件，可能先于本页订阅发出而被错过；
+    // 加载后主动查两次（update_status），保证角标可见。
+    async function pollUpdateStatus() {
+      if (updatePill.dataset.on === '1') return;
+      try {
+        const u = await invoke('update_status');
+        if (u && u.version) onUpdateAvailable(u);
+      } catch (e) { /* 桥未就绪则静默，稍后再试 */ }
+    }
+    setTimeout(pollUpdateStatus, 6500);
+    setTimeout(pollUpdateStatus, 15000);
 
     /* ---- 事件订阅 ---- */
     (function subscribe() {
@@ -574,17 +601,17 @@
 
     /* 站点色块：无 favicon 时的 fallback。取域名 hash → 稳定色相，辨识度比统一图标高。
        不拉跨域图片，避免加载失败与性能开销。 */
-    const SITE_HUES = [8, 32, 45, 96, 142, 168, 190, 212, 232, 262, 292, 330];
+    // 色相表不含紫/靛/品红区段（设计规范禁忌色）；饱和度由 CSS 统一压低，见 .bm-fav。
+    const SITE_HUES = [8, 26, 42, 96, 138, 162, 186, 204, 222, 350];
     function siteTile(url) {
       const host = hostOf(url) || '';
       const key = host.split('.')[0] || '?';
       let h = 0;
       for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
-      const hue = SITE_HUES[h % SITE_HUES.length];
       const el = document.createElement('span');
       el.className = 'bm-fav';
       el.setAttribute('aria-hidden', 'true');
-      el.style.background = `hsl(${hue} 62% 58%)`;
+      el.style.setProperty('--h', String(SITE_HUES[h % SITE_HUES.length]));
       el.textContent = key.slice(0, 1) || '·';
       return el;
     }
