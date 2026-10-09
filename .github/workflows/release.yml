@@ -208,6 +208,12 @@ jobs:
           open("release-assets/latest.json", "w", encoding="utf-8").write(json.dumps(out, ensure_ascii=False, indent=2))
           print(json.dumps(out, ensure_ascii=False, indent=2))
           PY
+      - name: Generate SHA256SUMS
+        shell: bash
+        run: |
+          cd release-assets
+          if command -v shasum >/dev/null 2>&1; then shasum -a 256 $(ls | grep -v SHA256SUMS) > SHA256SUMS.txt; else sha256sum $(ls | grep -v SHA256SUMS) > SHA256SUMS.txt; fi
+          cat SHA256SUMS.txt
       - uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
