@@ -137,5 +137,30 @@ assert.equal(joined.rec.role, 'member');
 assert.equal(joined.rec.name, 'G-A');
 assert.ok(S.__db._tables.members.some((m) => m.group_id === gA.rec.gid && m.user_id === 'user-B' && m.role === 'member'), 'B 应成为成员');
 
-console.log('group_hub.test  PASS · storeFor 分发 · createGroup/join/push/pull/幂等/邀请(hub) 走 app.rdb() · 无 token · 登录态/自助加入 OK');
+// ---- P0-4：douyin / 旧 URL 片单项 / generic web 与平台前缀 mediaId 匹配 ----
+const DY_ID = '7345678901234567890';
+const gDY = await G.createGroup({ host: 'hub', name: '抖音组', contentItems: [{ media: { platform: 'douyin', videoId: DY_ID, url: 'https://www.douyin.com/video/' + DY_ID } }] });
+assert.ok(G.groupsForMedia('douyin:' + DY_ID).some((g) => g.gid === gDY.rec.gid), 'douyin 前缀 id 应匹配裸 videoId 片单项');
+assert.ok(G.groupsForMedia(DY_ID).some((g) => g.gid === gDY.rec.gid), 'douyin 裸 id 也应匹配');
+assert.ok(G.groupsForMedia('douyin:9999999999999999999').every((g) => g.gid !== gDY.rec.gid), '不同 douyin 视频不应误匹配');
+
+// 旧数据兼容：历史建组把完整 URL 存成 videoId
+const gLegacy = await G.createGroup({ host: 'hub', name: '旧片单', contentItems: [{ media: { platform: 'douyin', videoId: 'https://www.douyin.com/video/' + DY_ID, url: 'https://www.douyin.com/video/' + DY_ID } }] });
+assert.ok(G.groupsForMedia('douyin:' + DY_ID).some((g) => g.gid === gLegacy.rec.gid), 'URL 形态 videoId 应匹配前缀 id（legacy 兼容）');
+
+// generic web：引擎 mediaId 为 generic:<origin><path>，建组存的是用户粘贴的完整 URL（可带查询串）
+const gWeb = await G.createGroup({ host: 'hub', name: '网页组', contentItems: [{ media: { platform: 'web', videoId: 'https://lesson.example.com/p/1?from=app', url: 'https://lesson.example.com/p/1?from=app' } }] });
+assert.ok(G.groupsForMedia('generic:https://lesson.example.com/p/1').some((g) => g.gid === gWeb.rec.gid), 'generic 前缀 URL 应匹配建组 URL 片单项（忽略查询串）');
+assert.ok(G.groupsForMedia('generic:https://lesson.example.com/p/2').every((g) => g.gid !== gWeb.rec.gid), '不同网页路径不应误匹配');
+
+// ---- P0-5：syncFromHub 把云端「我加入的组」并回本地注册表（跨设备入组场景）----
+G.saveGroups(G.listGroups().filter((g) => g.gid !== gA.rec.gid));   // 模拟本机注册表丢失 A 组
+assert.ok(!G.listGroups().some((g) => g.gid === gA.rec.gid), '预置：本地已无 A 组');
+await G.syncFromHub();
+const restored = G.listGroups().find((g) => g.gid === gA.rec.gid);
+assert.ok(restored, 'syncFromHub 应把云端组并回本地注册表');
+assert.equal(restored.host, 'hub');
+assert.equal(restored.name, 'G-A');
+
+console.log('group_hub.test  PASS · storeFor 分发 · createGroup/join/push/pull/幂等/邀请(hub) 走 app.rdb() · 无 token · 登录态/自助加入 OK · douyin/URL/generic 匹配 · syncFromHub 合并');
 process.exit(0);

@@ -152,6 +152,10 @@ pub async fn run_server(
         // 工作区页面态依赖的模块脚本（release 无 ServeDir，必须内嵌路由）
         .route("/src/identity.js", get(identity_js))
         .route("/src/group.js", get(group_js))
+        // 组页与 CloudBase 依赖（工作区 index.html 与 group.html 引用；release 无 ServeDir）
+        .route("/group.html", get(group_html))
+        .route("/cb-config.js", get(cb_config_js))
+        .route("/vendor/cloudbase.full.js", get(cloudbase_sdk_js))
         .route("/api/health", get(health))
         .route("/api/list", get(list))
         .route("/api/settings", get(get_settings).put(put_settings))
@@ -850,6 +854,9 @@ async fn tokens_css() -> Response {
 const CONSOLE_HTML: &str = include_str!("../../service/console.html");
 const IDENTITY_JS: &str = include_str!("../../../src/identity.js");
 const GROUP_JS: &str = include_str!("../../../src/group.js");
+const GROUP_HTML: &str = include_str!("../../service/group.html");
+const CB_CONFIG_JS: &str = include_str!("../../service/cb-config.js");
+const CLAUDBASE_SDK_JS: &str = include_str!("../../service/vendor/cloudbase.full.js");
 
 async fn console_page() -> Response {
     Html(CONSOLE_HTML).into_response()
@@ -861,6 +868,18 @@ async fn identity_js() -> Response {
 
 async fn group_js() -> Response {
     ([(CONTENT_TYPE, "application/javascript; charset=utf-8")], GROUP_JS).into_response()
+}
+
+async fn group_html() -> Response {
+    Html(GROUP_HTML).into_response()
+}
+
+async fn cb_config_js() -> Response {
+    ([(CONTENT_TYPE, "application/javascript; charset=utf-8")], CB_CONFIG_JS).into_response()
+}
+
+async fn cloudbase_sdk_js() -> Response {
+    ([(CONTENT_TYPE, "application/javascript; charset=utf-8")], CLAUDBASE_SDK_JS).into_response()
 }
 
 fn key_to_file(store: &Path, key: &str) -> PathBuf {

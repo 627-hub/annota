@@ -1,6 +1,6 @@
 /* ===== data: build id ===== */
-window.VA_BUILD=1791372221;
-window.VA_US_VER="0.1.0.45";
+window.VA_BUILD=1791527133;
+window.VA_US_VER="0.1.0.46";
 window.VA_DIST_BASE="https://tencentcloudtest-d2eg4lu85c76fb0-1414056833.tcloudbaseapp.com";
 /* ===== src/geometry.js ===== */
 /* video-annotate · geometry
@@ -1938,6 +1938,27 @@ button { color: inherit; }
       const r = await db.from('members').select('group_id');
       return (r.data || []).map((m) => m.group_id);
     },
+    // 把云端「我加入的组」合并进本地注册表（跨设备入组后本机可见/可同步）
+    async syncFromHub() {
+      try {
+        const db = cbInit();
+        const mem = await db.from('members').select('group_id');
+        const ids = new Set((mem.data || []).map((m) => m.group_id));
+        if (!ids.size) return listGroups();
+        const gs = await db.from('groups').select('id, name, visibility');
+        const list = listGroups();
+        let changed = false;
+        for (const g of (gs.data || [])) {
+          if (!ids.has(g.id)) continue;
+          if (!list.some((x) => x.gid === g.id)) {
+            list.push({ host: 'hub', gid: g.id, name: g.name || '', visibility: g.visibility || 'private', role: '成员', addedAt: new Date().toISOString() });
+            changed = true;
+          }
+        }
+        if (changed) saveGroups(list);
+        return list;
+      } catch (e) { return listGroups(); }
+    },
   };
 
   // 按 host 分发到对应 store（R4a: git；R4b: hub）
@@ -2080,10 +2101,32 @@ button { color: inherit; }
     const x = String(a || ''), y = String(b || '');
     if (!x || !y) return false;
     if (x === y) return true;
-    const hx = x.indexOf(':') > 0, hy = y.indexOf(':') > 0;
-    if (hx === hy) return false;
-    const bare = (s) => s.slice(s.indexOf(':') + 1);
-    return (hx ? bare(x) : x) === (hy ? bare(y) : y);
+    const isUrl = (s) => /^https?:\/\//i.test(s);
+    const canonUrl = (s) => s.replace(/^https?:\/\//i, '').replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
+    // URL ↔ URL：去协议/查询串/末尾斜杠后比较
+    if (isUrl(x) && isUrl(y)) return canonUrl(x) === canonUrl(y);
+    // 平台前缀剥离：platform:id ↔ id；http(s):// 开头不算前缀（URL 里自带冒号）
+    const pref = (s) => (!isUrl(s) && /^[a-z][a-z0-9+.-]*:/i.test(s)) ? s.slice(s.indexOf(':') + 1) : null;
+    const px = pref(x), py = pref(y);
+    const urlEndsWithId = (url, id) => !id.includes('/') && id.length >= 6 && canonUrl(url).endsWith('/' + id.toLowerCase());
+    if (px !== null && py === null) {
+      if (px === y) return true;
+      if (isUrl(px) && isUrl(y)) return canonUrl(px) === canonUrl(y); // generic:https://a/p ↔ https://a/p?q
+      if (isUrl(y) && urlEndsWithId(y, px)) return true;              // douyin:123 ↔ …/video/123
+      return false;
+    }
+    if (py !== null && px === null) {
+      if (py === x) return true;
+      if (isUrl(py) && isUrl(x)) return canonUrl(py) === canonUrl(x);
+      if (isUrl(x) && urlEndsWithId(x, py)) return true;
+      return false;
+    }
+    if (px !== null && py !== null) {
+      if (px === py) return true;
+      if (isUrl(px) && isUrl(py)) return canonUrl(px) === canonUrl(py); // web:https://a/p ↔ generic:https://a/p
+      return false;
+    }
+    return false;
   }
   function groupHasMedia(g, mediaId) {
     const doc = g.doc;
@@ -2145,6 +2188,7 @@ button { color: inherit; }
     newGid, createGroup, inviteLink, parseInvite, joinGroup, me,
     pullForMedia, pushForMedia, groupsForMedia,
     setPublishableKey, cbPublishableKey, myGroups: () => HubStore.myGroups(),
+    syncFromHub: () => HubStore.syncFromHub(),
     // 登录态（GitHub OAuth → CloudBase 自定义登录）
     HUB_BASE, loginUrl, startLogin, handleTicket,
     session, currentUser, signOut, hubMe, setHubMe, hubIdentity,

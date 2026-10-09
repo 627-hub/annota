@@ -445,7 +445,11 @@
       document.querySelectorAll('[data-route]').forEach((link) => link.classList.toggle('is-active', link.dataset.route === route));
       document.getElementById('crumb-label').textContent = 'ANNOTATION SPACE / ' + route.toUpperCase();
       if (route === 'library') renderLibrary();
-      if (route === 'groups') renderGroups();
+      if (route === 'groups') {
+        renderGroups();
+        // 云端「我加入的组」异步合并进本地注册表后重绘一次（跨设备入组本机即可见）
+        try { const ga = groupApi(); if (ga && typeof ga.syncFromHub === 'function') ga.syncFromHub().then(() => renderGroups()).catch(() => {}); } catch (_) {}
+      }
     }
     window.addEventListener('hashchange', () => setRoute(location.hash.slice(1)));
 
@@ -745,7 +749,10 @@
       if (firstUrl) {
         const parsed = new URL(firstUrl);
         const platform = /bilibili\.com$/i.test(parsed.hostname) ? 'bilibili' : /youtube\.com$|youtu\.be$/i.test(parsed.hostname) ? 'youtube' : /douyin\.com$/i.test(parsed.hostname) ? 'douyin' : 'web';
-        const videoId = platform === 'bilibili' ? ((firstUrl.match(/\/video\/([^/?#]+)/i) || [])[1] || firstUrl) : platform === 'youtube' ? (parsed.searchParams.get('v') || parsed.pathname.split('/').filter(Boolean).pop() || firstUrl) : firstUrl;
+        const videoId = platform === 'bilibili' ? ((firstUrl.match(/\/video\/([^/?#]+)/i) || [])[1] || firstUrl)
+          : platform === 'youtube' ? (parsed.searchParams.get('v') || parsed.pathname.split('/').filter(Boolean).pop() || firstUrl)
+          : platform === 'douyin' ? (parsed.searchParams.get('modal_id') || (firstUrl.match(/\/video\/(\d+)/i) || [])[1] || (firstUrl.match(/\/note\/(\d+)/i) || [])[1] || firstUrl)
+          : firstUrl;
         let addedBy = '';
         try { addedBy = api.me ? api.me().id : ''; } catch (_) {}
         items.push({ media: { platform, videoId, url: firstUrl, title: parsed.hostname, type: 'video' }, note: '', addedBy, addedAt: new Date().toISOString() });
