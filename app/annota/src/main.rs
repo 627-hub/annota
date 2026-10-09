@@ -18,7 +18,7 @@ mod tabs;
 mod store;
 mod logf;
 use agent::{agent_cancel, agent_chat, agent_run};
-use tabs::{TabManager, TabState};
+use tabs::TabManager;
 use store::DbState;
 
 // 最近一次发现的更新（供工具栏轮询兜底：一次性事件可能在页面加载前发出而被错过）。
@@ -133,9 +133,24 @@ pub(crate) fn origin_from_url(url: &url::Url) -> String {
     }
 }
 
-/// 调用方 webview 当前页面的来源串。
-pub(crate) fn caller_origin(w: &tauri::Webview) -> String {
-    w.url().ok().as_ref().map(origin_from_url).unwrap_or_default()
+/// 调用方 webview 的当前页面 URL（**不回调 Webview::url()**——见 Tab.url 注释的崩溃链）。
+/// 壳内页面（toolbar/overlay）返回固定的本地 URL；tab 返回 TabState 缓存；未知来源返回空串。
+pub(crate) fn caller_url(app: &AppHandle, w: &tauri::Webview) -> String {
+    let label = w.label();
+    if label == "toolbar" || label == "overlay" {
+        return "tauri://localhost".to_string();
+    }
+    tabs::tab_url_by_label(app, label).unwrap_or_default()
+}
+
+/// 调用方来源的 origin 串（scheme://host[:port]）；无法识别返回空串。
+pub(crate) fn caller_origin(app: &AppHandle, w: &tauri::Webview) -> String {
+    let raw = caller_url(app, w);
+    url::Url::parse(&raw)
+        .ok()
+        .as_ref()
+        .map(origin_from_url)
+        .unwrap_or_default()
 }
 
 /// 用户显式信任的站点列表（settings.trustedOrigins）。小文件，按需同步读即可。
@@ -156,7 +171,7 @@ pub(crate) fn require_local_or_trusted(
     w: &tauri::Webview,
     what: &str,
 ) -> Result<(), String> {
-    let origin = caller_origin(w);
+    let origin = caller_origin(app, w);
     if origin.is_empty() {
         return Err(format!("{what} 需要可识别的页面来源，已拒绝"));
     }
@@ -174,14 +189,12 @@ pub(crate) fn require_local_or_trusted(
 // P2-S1：把当前活动标签页的 origin 加入信任列表（仅工具栏可调用）。
 #[tauri::command]
 fn trust_current_site(app: tauri::AppHandle, w: tauri::Webview) -> Result<String, String> {
-    let caller = caller_origin(&w);
-    if !is_local_origin(&caller) {
+    let caller = caller_origin(&app, &w);
+    if caller.is_empty() || !is_local_origin(&caller) {
         return Err("只能从工具栏信任站点".to_string());
     }
-    let target = tabs::active_webview(&app)
-        .ok()
-        .and_then(|v| v.url().ok())
-        .ok_or_else(|| "没有可识别的活动标签页".to_string())?;
+    let target_s = tabs::active_tab_url(&app);
+    let target = url::Url::parse(&target_s).map_err(|_| "没有可识别的活动标签页".to_string())?;
     if !matches!(target.scheme(), "http" | "https") {
         return Err("只能信任 http(s) 站点".to_string());
     }
@@ -606,33 +619,20 @@ fn overlay_close(app: tauri::AppHandle) -> Result<(), String> {
 // 浮层里的「诊断信息」需要真实 tab 状态，但 overlay 是独立 webview，收不到 tabs-changed。
 #[tauri::command]
 fn tabs_snapshot(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
-    let (ids, active_id) = {
-        let state = app.state::<TabState>();
-        let mgr = state.lock().map_err(|_| "标签状态锁中毒".to_string())?;
-        (
-            mgr.tabs.iter().map(|t| t.id.clone()).collect::<Vec<_>>(),
-            mgr.active_id(),
-        )
-    };
-    let tabs: Vec<Value> = ids
-        .iter()
-        .map(|id| {
-            let url = app
-                .get_webview(id)
-                .and_then(|w| w.url().ok())
-                .map(|u| u.to_string())
-                .unwrap_or_default();
-            let is_active = active_id.as_deref() == Some(id.as_str());
-            json!({ "id": id, "url": url, "active": is_active })
-        })
-        .collect();
-    Ok(json!({ "ok": true, "tabs": tabs }))
+    // P2-fix：读 TabState 缓存快照（不再逐个回调 Webview::url()——崩溃根因）
+    let (list, _) = tabs::snapshot(&app);
+    Ok(json!({ "ok": true, "tabs": list }))
 }
 
 // 开发者工具（M6d）：打开当前活动标签页的 devtools（WKWebView 需 Safari 16.4+）。
 #[tauri::command]
 fn open_devtools(app: tauri::AppHandle, w: tauri::Webview) -> Result<(), String> {
     require_local_or_trusted(&app, &w, "开发者工具")?;
+    // release 构建的 WKWebView 未开 inspector，open_devtools 会静默无效果——
+    // 显式报错让前端能给反馈（否则用户「点了没反应」）。
+    if !cfg!(debug_assertions) {
+        return Err("开发者工具仅调试版可用（release 构建未启用 WebKit 检查器）".to_string());
+    }
     let webview = tabs::active_webview(&app)?;
     webview.open_devtools();
     Ok(())
@@ -725,9 +725,8 @@ fn restart_server(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
 }
 
 // ---------- 标签页命令（M3） ----------
-#[tauri::command]
-fn tab_new(app: tauri::AppHandle, w: tauri::Webview, url: Option<String>) -> Result<String, String> {
-    require_local_or_trusted(&app, &w, "新建标签")?;
+/// 内部开 tab（不校验调用方）：工具栏命令与页面 _blank/window.open 新窗口共用。
+pub(crate) fn open_tab(app: tauri::AppHandle, url: Option<String>) -> Result<String, String> {
     let window = app.get_window("main").ok_or_else(|| "主窗口不存在".to_string())?;
     let size = window.inner_size().map_err(|e| e.to_string())?;
     let sf = window.scale_factor().map_err(|e| e.to_string())?;
@@ -747,6 +746,12 @@ fn tab_new(app: tauri::AppHandle, w: tauri::Webview, url: Option<String>) -> Res
         PhysicalPosition::new(0, browser_top as i32),
         PhysicalSize::new(size.width, size.height.saturating_sub(browser_top)),
     )
+}
+
+#[tauri::command]
+fn tab_new(app: tauri::AppHandle, w: tauri::Webview, url: Option<String>) -> Result<String, String> {
+    require_local_or_trusted(&app, &w, "新建标签")?;
+    open_tab(app, url)
 }
 
 #[tauri::command]
@@ -1033,10 +1038,10 @@ pub fn run_tool(name: &str, params: &Value) -> Result<String, String> {
             let t = params.get("t").and_then(|v| v.as_f64()).ok_or("缺少 t 参数")?;
             let radius = params.get("radius").and_then(|v| v.as_f64()).unwrap_or(0.5);
             let explicit = params.get("media_id").and_then(|v| v.as_str()).map(String::from);
-            let page_url = tabs::active_webview(app)
-                .ok()
-                .and_then(|w| w.url().ok())
-                .map(|u| u.to_string());
+            let page_url = {
+                let u = tabs::active_tab_url(app);
+                if u.is_empty() { None } else { Some(u) }
+            };
             let derived = page_url.as_deref().map(media_id_from_url);
 
             let mut pack = None;

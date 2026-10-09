@@ -204,22 +204,40 @@
     applyZoom();
 
     // ---------- 菜单命令 ----------
+    // 要点：①先发命令、完成后才关菜单（closeMe 销毁本 webview，先关会吞掉 invoke/alert）；
+    // ②**失败不关菜单**——toast 就渲染在这个 webview 里，关了用户根本看不见（「无响应」的体感来源）；
+    // ③分发用 closest('[data-cmd]')：点在 SVG 子节点时 e.target.dataset 是空的。
     menu.addEventListener('click', (e) => {
-      const cmd = e.target && e.target.dataset && e.target.dataset.cmd;
+      const btn = e.target && e.target.closest && e.target.closest('[data-cmd]');
+      const cmd = btn && btn.dataset ? btn.dataset.cmd : '';
       if (!cmd) return;
       if (cmd === 'history' || cmd === 'downloads') { showPanel(cmd); return; }
-      closeMe();
-      if (cmd === 'workspace') invoke('navigate_browser', { url: WORKSPACE }).catch(() => {});
-      else if (cmd === 'no-restore') invoke('tab_session_clear').catch(() => {});
-      else if (cmd === 'devtools') invoke('open_devtools').catch(() => {});
-      else if (cmd === 'diag') {
-        let diag = { ok: true };
-        invoke('tabs_snapshot').then((r) => { diag = r; }).catch(() => {})
-          .finally(() => {
-            const tabs = (diag && diag.tabs) || [];
-            alert('Annota 诊断\n\n标签数：' + tabs.length +
-              (tabs.length ? '\n活动标签：' + (tabs.find((t) => t.active) || {}).id : ''));
-          });
+      const errText = (err) => String((err && err.message) || err || '未知错误');
+      const fail = (err) => { toast('操作失败：' + errText(err), 'error'); };
+      if (cmd === 'workspace') {
+        Promise.resolve(invoke('navigate_browser', { url: WORKSPACE })).then(closeMe).catch(fail);
+      } else if (cmd === 'no-restore') {
+        Promise.resolve(invoke('tab_session_clear')).then(closeMe).catch(fail);
+      } else if (cmd === 'devtools') {
+        Promise.resolve(invoke('open_devtools')).then(closeMe).catch(fail);
+      } else if (cmd === 'diag') {
+        // 真机：子 webview 上 window.alert 不弹（WKUIDelegate 未挂），改用本页 toast。
+        // 结果要被人读到 → 不关菜单（关窗会连 toast 一起销毁）。
+        Promise.all([
+          Promise.resolve(invoke('tabs_snapshot')).catch(() => null),
+          Promise.resolve(invoke('diag_status')).catch(() => null),
+        ]).then(([snap, d]) => {
+          const tabs = (snap && snap.tabs) || [];
+          const active = tabs.find((t) => t.active);
+          const parts = [
+            '标签 ' + tabs.length + (active ? '（活动 ' + (active.id || '?') + '）' : ''),
+            d ? (d.running ? '服务 OK' : '服务未运行') : null,
+            d && d.error ? String(d.error).slice(0, 40) : null,
+            d && d.db_memory ? '库=内存降级' : null,
+            d && d.corrupt_packs && d.corrupt_packs.length ? '损坏 ' + d.corrupt_packs.length + ' 个包' : null,
+          ].filter(Boolean);
+          toast('诊断：' + parts.join(' · '), 'ok');
+        }).catch(fail);
       }
     });
 

@@ -548,8 +548,12 @@
     /* ---- 事件订阅 ---- */
     (function subscribe() {
       const t = tauri();
-      const listen = (t && t.event && typeof t.event.listen === 'function')
-        ? t.event.listen.bind(t.event)
+      // 关键：__TAURI_INTERNALS__ 只有 invoke，完整 event API 在 withGlobalTauri 注入的
+      // __TAURI__ 上。取错对象会让 listen 恒为 null → 所有事件（tabs-changed/update/查找计数）
+      // 静默失效，tab 变更退化为 1.5s 轮询（「标签不跟手」的根因）。
+      const evApi = (window.__TAURI__ && window.__TAURI__.event) || (t && t.event);
+      const listen = (evApi && typeof evApi.listen === 'function')
+        ? evApi.listen.bind(evApi)
         : null;
       window.__TOOLBAR_EVENTS__ = [];
       if (listen) {
@@ -583,6 +587,16 @@
       });
       // P1-a#5：活动页查找匹配总数（payload {count, text}）
       on('find-count', (ev) => onFindCount(ev.payload));
+
+      // 初始渲染：会话恢复等 tabs-changed 可能早于本页订阅而错过（表现=启动标签条空白）。
+      // 无条件主动拉一次快照兜底（含事件桥可用时）。
+      if (listen) {
+        setTimeout(() => {
+          Promise.resolve(invoke('tabs_snapshot'))
+            .then((r) => { if (r && r.tabs && r.tabs.length) renderTabs(r.tabs); })
+            .catch(() => {});
+        }, 150);
+      }
 
       // 无事件桥时的兜底：轮询 Rust 拿 tab 快照（tabs_snapshot 走 invoke，不依赖事件）
       if (!listen) {

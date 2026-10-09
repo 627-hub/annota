@@ -152,11 +152,10 @@ fn system_prompt() -> String {
     let app = crate::APP_HANDLE.get();
     let mut ctx = String::new();
     if let Some(app) = app {
-        // P1-a#8：取当前激活标签页，而非写死的首个 webview
-        if let Ok(wv) = crate::tabs::active_webview(app) {
-            if let Ok(url) = wv.url() {
-                ctx.push_str(&format!("当前页面：{url}\n"));
-            }
+        // P2-fix：读 TabState 缓存 URL（不回调 Webview::url()——崩溃根因）
+        let url = crate::tabs::active_tab_url(app);
+        if !url.is_empty() {
+            ctx.push_str(&format!("当前页面：{url}\n"));
         }
     }
     format!(

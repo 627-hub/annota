@@ -25,6 +25,11 @@ pub struct Tab {
     pub id: String,
     /// P1-a#4：页面标题（由桥接脚本上报；会话恢复时不持久化，加载后重新上报）。
     pub title: String,
+    /// P2-fix：当前 URL 缓存（on_navigation/on_page_load 写入，会话恢复时=初始目标）。
+    /// snapshot/origin 判定全部读这里——**绝不回调 Webview::url()**：wry 对初始化
+    /// 中间态 webview 会 unwrap(None) panic，且 panic 会毒化 tauri runtime 锁 →
+    /// 连锁 PoisonError 杀死进程（真实崩溃 ×4，见 2026-10-09 日志）。
+    pub url: String,
 }
 
 pub struct TabManager {
@@ -88,7 +93,7 @@ pub fn create_tab(
             mgr.seq += 1;
             format!("tab-{}", mgr.seq)
         };
-        mgr.tabs.push(Tab { id: id.clone(), title: String::new() });
+        mgr.tabs.push(Tab { id: id.clone(), title: String::new(), url: url.clone() });
         mgr.active = mgr.tabs.len() - 1;
         let seq = mgr.seq;
         (id, seq)
@@ -97,20 +102,62 @@ pub fn create_tab(
     let parsed = url::Url::parse(&url).map_err(|e| e.to_string())?;
     let app_evt = app.clone();
     let id_for_nav = id.clone();
+    let id_for_nav2 = id.clone();
     let id_for_events = id.clone();
+    let app_nav = app.clone();
     let mut builder = WebviewBuilder::new(&id, WebviewUrl::External(parsed))
         .initialization_script(bridge_js)
         .initialization_script(annotate_js)
         // P1-a#4：桥接脚本用它把 document.title 归属到本 tab（emit annota://page-title）
         .initialization_script(&format!("window.__ANNOTA_TAB_ID__='{}';", id))
         .auto_resize()
+        // P2-fix：页面内 window.open / target=_blank（如词典外链、UGC 弹窗）原本被默认
+        // Deny 掉 → 点击毫无反应；改为拒绝原生新窗、改开一个新标签（仅 http/https）。
+        // 去重：WKWebView 对一次点击可能回调两次（navigation-action + new-window），
+        // 600ms 内同 URL 只开一个标签（实测有道/欧路各双开一次）。
+        .on_new_window({
+            let app_popup = app.clone();
+            move |url, _features| {
+                let scheme = url.scheme();
+                if scheme == "http" || scheme == "https" {
+                    let target = url.to_string();
+                    if popup_dedup(&target) {
+                        let app = app_popup.clone();
+                        tauri::async_runtime::spawn(async move {
+                            // 避开当前页面导航回调的重入窗口（url_scheme_handler 泵内
+                            // 同步建 webview 会撞 wry 中间态）
+                            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                            let _ = crate::open_tab(app, Some(target));
+                        });
+                    }
+                }
+                tauri::webview::NewWindowResponse::Deny
+            }
+        })
         .on_navigation(move |u| {
             crate::alog!("INFO", "[annota] tab {id_for_nav} navigation: {u}");
+            // 更新 url 缓存（snapshot/origin 判定的数据源；回调在事件循环线程、
+            // 只做短锁字段写、不发任何 wry 消息——无死锁/毒化风险）
+            if let Some(st) = app_nav.try_state::<TabState>() {
+                if let Ok(mut mgr) = st.lock() {
+                    if let Some(t) = mgr.tabs.iter_mut().find(|t| t.id == id_for_nav2) {
+                        t.url = u.to_string();
+                    }
+                }
+            }
             true
         })
         .on_page_load(move |wv, payload| {
             let url = payload.url().to_string();
             let started = matches!(payload.event(), tauri::webview::PageLoadEvent::Started);
+            // 同步 url 缓存（兜底 on_navigation 未覆盖的形态，如首载）
+            if let Some(st) = app_evt.try_state::<TabState>() {
+                if let Ok(mut mgr) = st.lock() {
+                    if let Some(t) = mgr.tabs.iter_mut().find(|t| t.id == id_for_events) {
+                        t.url = url.clone();
+                    }
+                }
+            }
             // P1-a#6：页面每完成一次加载就重放全局缩放（reload / 站内跳转后不打回 100%）
             if !started {
                 let _ = wv.eval(&crate::page_zoom_script());
@@ -289,6 +336,25 @@ pub fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
 // P1-a#7：move_tab 已随 main.rs 的 tab_move 死命令一并移除（前端无拖拽排序；
 // 将来接拖拽时再恢复，恢复点见 git 历史 5311043 之前的实现）。
 
+/// 弹窗去重：同一 URL 在 600ms 内只允许开一次标签（返回 true 表示应开）。
+fn popup_dedup(url: &str) -> bool {
+    static LAST: std::sync::Mutex<(u128, String)> = std::sync::Mutex::new((0, String::new()));
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    match LAST.lock() {
+        Ok(mut g) => {
+            if g.1 == url && now.saturating_sub(g.0) < 600 {
+                return false;
+            }
+            *g = (now, url.to_string());
+            true
+        }
+        Err(_) => true,
+    }
+}
+
 /// 向工具栏广播标签列表（全量）。
 pub fn emit_tabs(app: &AppHandle) {
     let (list, _active) = snapshot(app);
@@ -298,40 +364,46 @@ pub fn emit_tabs(app: &AppHandle) {
 }
 
 /// tab 快照：`(列表, 激活下标)`。取 URL 会派发到 UI 线程，故必须先释放锁再查。
-fn snapshot(app: &AppHandle) -> (Vec<Value>, Option<usize>) {
-    let (titles, active_id) = {
-        let state = app.state::<TabState>();
-        let locked = state.lock();
-        match locked {
-            Ok(mgr) => (
-                mgr.tabs
-                    .iter()
-                    .map(|t| (t.id.clone(), t.title.clone()))
-                    .collect::<Vec<_>>(),
-                mgr.active_id(),
-            ),
-            Err(_) => (Vec::new(), None),
-        }
-    };
-    let ids: Vec<String> = titles.iter().map(|(id, _)| id.clone()).collect();
-    let active = active_id.as_deref().and_then(|id| ids.iter().position(|x| x == id));
-    let list: Vec<Value> = titles
+/// tab 快照：`(列表, 激活下标)`。
+/// P2-fix：**纯内存读 TabState**——不回调 Webview::url()（wry 中间态 unwrap None →
+/// panic 毒化 runtime 锁 → 连锁崩溃 ×4）。url/title 全部来自缓存。
+pub fn snapshot(app: &AppHandle) -> (Vec<Value>, Option<usize>) {
+    let state = app.state::<TabState>();
+    let locked = state.lock();
+    let Ok(mgr) = locked else { return (Vec::new(), None) };
+    let active_id = mgr.active_id();
+    let active = active_id
+        .as_deref()
+        .and_then(|id| mgr.tabs.iter().position(|t| t.id == id));
+    let list: Vec<Value> = mgr
+        .tabs
         .iter()
-        .map(|(id, title)| {
-            let url = app
-                .get_webview(id)
-                .and_then(|w| w.url().ok())
-                .map(|u| u.to_string())
-                .unwrap_or_default();
+        .map(|t| {
             json!({
-                "id": id,
-                "url": url,
-                "title": title,
-                "active": active_id.as_deref() == Some(id.as_str()),
+                "id": t.id,
+                "url": t.url,
+                "title": t.title,
+                "active": active_id.as_deref() == Some(t.id.as_str()),
             })
         })
         .collect();
     (list, active)
+}
+
+/// 当前激活 tab 的 URL（缓存）。供 origin 判定 / agent 上下文 / 词典媒体推导使用。
+pub fn active_tab_url(app: &AppHandle) -> String {
+    let state = app.state::<TabState>();
+    let Ok(mgr) = state.lock() else { return String::new() };
+    mgr.active_id()
+        .and_then(|id| mgr.tabs.iter().find(|t| t.id == id).map(|t| t.url.clone()))
+        .unwrap_or_default()
+}
+
+/// 按 label（=tab id）取缓存 URL。
+pub fn tab_url_by_label(app: &AppHandle, label: &str) -> Option<String> {
+    let state = app.try_state::<TabState>()?;
+    let mgr = state.lock().ok()?;
+    mgr.tabs.iter().find(|t| t.id == label).map(|t| t.url.clone())
 }
 
 /// P1-a#4：写入 tab 标题并广播（由桥接脚本的 annota://page-title 事件驱动）。
