@@ -684,9 +684,10 @@ async fn put_anno(
         Err(e) => return json_error(StatusCode::BAD_REQUEST, &format!("bad json: {e}")),
     };
 
+    // OCR-fix：锁键必须与文件名同源（sanitize_key），否则 a:b 与 a/b 映射同文件却各有锁、形同虚设
     let lock = state
         .locks
-        .entry(media_id.clone())
+        .entry(sanitize_key(&media_id))
         .or_insert_with(|| Arc::new(Mutex::new(())))
         .clone();
 
@@ -1025,7 +1026,11 @@ async fn serve_export(State(state): State<AppState>, AxumPath(file): AxumPath<St
             );
             resp.headers_mut().insert(
                 axum::http::header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{name}\"").parse().unwrap(),
+                // OCR-fix：URL 解码出的文件名可能含控制字符，parse 失败不能 panic 生产请求线程
+                match format!("attachment; filename=\"{name}\"").parse() {
+                    Ok(v) => v,
+                    Err(_) => axum::http::HeaderValue::from_static("attachment"),
+                },
             );
             resp
         }
@@ -1360,6 +1365,13 @@ async fn import_packs(State(state): State<AppState>, body: Bytes) -> Response {
             continue;
         }
         let key = sanitize_key(media_id);
+        // OCR-fix：import 与在线 PUT 同为读-改-写，必须拿同一把 per-media 锁（此前并发丢条目）
+        let lock = state
+            .locks
+            .entry(key.clone())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone();
+        let _guard = lock.lock().await;
         let cur = match read_pack(&state.store, &key).await {
             Ok(v) => v,
             Err(e) => {

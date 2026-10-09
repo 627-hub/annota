@@ -3,6 +3,7 @@
 //! 仅用于**用户本地的个人导出**；共享 Pack 不含截图（docs/architecture.md ADR-6）。
 
 use rusqlite::{params, Connection};
+use std::sync::atomic::{AtomicI64, Ordering};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::io::Write;
@@ -106,6 +107,25 @@ fn default_deck(deck_id: i64, deck_name: &str) -> serde_json::Value {
 }
 
 /// 写一个 .apkg（deck_name 重复导入会更新同一牌组）。
+/// 进程内上一次导出预留到的 id 上界。
+static LAST_APKG_BASE: AtomicI64 = AtomicI64::new(0);
+
+/// 为一次导出预留不相交的 id 区间：返回区间起点。
+/// 区间大小 = notes*2+16（每条 note + card，留余量）；跨次/并发导出窗口永不重叠。
+fn fresh_id_base(seed_secs: i64, note_count: i64) -> i64 {
+    let seed = seed_secs.saturating_mul(1_000_000);
+    let need = note_count.saturating_mul(2).saturating_add(16);
+    let mut last = LAST_APKG_BASE.load(Ordering::Relaxed);
+    loop {
+        let base = seed.max(last.saturating_add(1));
+        let new_last = base.saturating_add(need);
+        match LAST_APKG_BASE.compare_exchange(last, new_last, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return base,
+            Err(cur) => last = cur,
+        }
+    }
+}
+
 pub fn build_apkg(
     out_path: &Path,
     deck_name: &str,
@@ -116,8 +136,10 @@ pub fn build_apkg(
     let ts = timestamp.unwrap_or_else(|| chrono::Local::now().timestamp());
     let deck_id = deck_id_for(deck_name);
     let uuid = uuid::Uuid::new_v4();
-    // note/card id 基数：millis 单调 + 随机，跨次导出不撞
-    let mut next_id = ts * 1_000_000 + ((uuid.as_u128() as i64).rem_euclid(1000));
+    // note/card id 基数（OCR-fix）：旧实现 = 秒*1e6 + rand(0..999)，同秒两次导出基址相差 ≤999，
+    // 导出 ≈500 条即区间重叠 → Anki 导入按 id 合并会静默覆盖他人笔记。
+    // 改为进程级单调预留：每次导出按需精确预留 [base, base+2N+16) 窗口，并发/连续导出互不相交。
+    let mut next_id = fresh_id_base(ts, notes.len() as i64);
     let db_path = std::env::temp_dir().join(format!("annota-{}.anki2", uuid));
 
     let result = (|| -> Result<(), String> {
@@ -250,9 +272,6 @@ mod tests {
         assert!(zip.by_name("media").is_ok());
         assert!(zip.by_name("0").is_ok());
 
-        // sqlite 结构
-        let conn = Connection::open(&out).ok();
-        let _ = conn; // 直接开 .apkg 不是 sqlite；解出 collection 再校验
         let mut bytes = Vec::new();
         {
             let mut z = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
@@ -266,5 +285,16 @@ mod tests {
         let c: i64 = conn.query_row("SELECT COUNT(*) FROM cards", [], |r| r.get(0)).unwrap();
         assert_eq!((n, c), (2, 2));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fresh_id_base_windows_disjoint() {
+        // OCR-fix 回归：同秒两次导出的 id 区间必须不相交（旧实现基址相差 ≤999）
+        let a = fresh_id_base(1_700_000_000, 3);
+        let b = fresh_id_base(1_700_000_000, 3);
+        assert!(b >= a + 3 * 2 + 16, "同秒连续导出区间重叠：a={a} b={b}");
+        // 时钟回拨也不回头
+        let c = fresh_id_base(1_600_000_000, 1);
+        assert!(c > b, "时钟回拨后仍应单调：b={b} c={c}");
     }
 }

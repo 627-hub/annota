@@ -24,8 +24,9 @@ use store::DbState;
 // 最近一次发现的更新（供工具栏轮询兜底：一次性事件可能在页面加载前发出而被错过）。
 static LATEST_UPDATE: Mutex<Option<Value>> = Mutex::new(None);
 
-// 启动自动更新检查：延迟后查一次；有新版则 emit 给 toolbar（「更多」菜单出角标），
-// 用户确认后由前端调 `install_update` 下载并重启安装。24h 后再查一次。
+// 启动自动更新检查：延迟后查一次；有新版则存入 LATEST_UPDATE 并 emit 给 toolbar
+// （角标显示靠事件 + update_status 查询双保险）；ANNOTA_UPDATE_TEST=版本号 走假更新
+// 钩子（跳过真实请求，供本地验证事件→角标链路）；24h 后再查一次。
 fn spawn_update_check(app: &AppHandle) {
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -38,7 +39,7 @@ fn spawn_update_check(app: &AppHandle) {
                 if !fake.is_empty() {
                     crate::alog!("INFO", "[annota] ANNOTA_UPDATE_TEST active -> fake update {fake}");
                     let payload = json!({ "version": fake, "currentVersion": "test", "notes": "fake" });
-                    if let Ok(mut g) = LATEST_UPDATE.lock() { *g = Some(payload.clone()); }
+                    { let mut g = LATEST_UPDATE.lock().unwrap_or_else(|e| e.into_inner()); *g = Some(payload.clone()); }
                     match h.emit("annota://update-available", payload) {
                         Ok(_) => crate::alog!("INFO", "[annota] update event emitted to webviews"),
                         Err(e) => crate::alog!("ERROR", "[annota] update event emit FAILED: {e}"),
@@ -56,7 +57,8 @@ fn spawn_update_check(app: &AppHandle) {
                             "currentVersion": update.current_version,
                             "notes": update.body.clone().unwrap_or_default(),
                         });
-                        if let Ok(mut g) = LATEST_UPDATE.lock() {
+                        {
+                            let mut g = LATEST_UPDATE.lock().unwrap_or_else(|e| e.into_inner());
                             *g = Some(payload.clone());
                         }
                         // 假更新钩子（ANNOTA_UPDATE_TEST=版本号）：跳过真实检查直接走 emit，
@@ -78,8 +80,11 @@ fn spawn_update_check(app: &AppHandle) {
 
 // 工具栏加载后主动查询一次更新状态（事件可能先于订阅发出，导致角标丢失）。
 #[tauri::command]
-fn update_status() -> Value {
-    let g = LATEST_UPDATE.lock().unwrap();
+fn update_status(app: tauri::AppHandle, w: tauri::Webview) -> Value {
+    if require_local_or_trusted(&app, &w, "更新状态").is_err() {
+        return Value::Null;
+    }
+    let g = LATEST_UPDATE.lock().unwrap_or_else(|e| e.into_inner());
     g.clone().unwrap_or(Value::Null)
 }
 
@@ -225,8 +230,9 @@ fn trust_current_site(app: tauri::AppHandle, w: tauri::Webview) -> Result<String
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    std::fs::write(&path, serde_json::to_vec_pretty(&v).unwrap_or_default())
-        .map_err(|e| format!("写入设置失败：{e}"))?;
+    // OCR-fix：序列化失败必须报错——旧实现 unwrap_or_default 会写空文件清掉信任列表
+    let bytes = serde_json::to_vec_pretty(&v).map_err(|e| format!("序列化设置失败：{e}"))?;
+    std::fs::write(&path, bytes).map_err(|e| format!("写入设置失败：{e}"))?;
     Ok(origin)
 }
 // 下拉浮层（菜单 / 历史 / 下载面板）的 overlay webview。
@@ -499,7 +505,8 @@ fn browser_action(app: tauri::AppHandle, w: tauri::Webview, action: String) -> R
 // 工具栏 → 浏览器 webview 的浏览器壳：切换「观看 ↔ 编辑」态（M4）。
 // 注入的 browser-shell.js 暴露 window.VA_BROWSER_SHELL.setMode；未注入时静默无操作。
 #[tauri::command]
-fn set_shell_mode(app: tauri::AppHandle, mode: String) -> Result<(), String> {
+fn set_shell_mode(app: tauri::AppHandle, w: tauri::Webview, mode: String) -> Result<(), String> {
+    require_local_or_trusted(&app, &w, "编辑态切换")?;
     let m = if mode == "edit" { "edit" } else { "view" };
     let webview = tabs::active_webview(&app)?;
     let script = format!(
@@ -558,7 +565,8 @@ fn overlay_geometry(app: &AppHandle, kind: &str) -> Result<(u32, u32, i32, i32),
 /// 打开浮层。`kind` = `menu` | `history` | `downloads`。
 /// 打开浮层。`kind` = `menu` | `history` | `downloads`。
 #[tauri::command]
-fn overlay_open(app: tauri::AppHandle, kind: String) -> Result<(), String> {
+fn overlay_open(app: tauri::AppHandle, w: tauri::Webview, kind: String) -> Result<(), String> {
+    require_local_or_trusted(&app, &w, "打开菜单面板")?;
     let kind = normalize_overlay_kind(&kind);
     // 已有 overlay：若没有更新的 tab 盖住它就复用，否则销毁重建
     // （后建的 webview 在上层，复用会藏在页面下面看不见）。
@@ -605,9 +613,10 @@ fn overlay_open(app: tauri::AppHandle, kind: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn overlay_close(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(w) = app.get_webview(OVERLAY_ID) {
-        let _ = w.close();
+fn overlay_close(app: tauri::AppHandle, w: tauri::Webview) -> Result<(), String> {
+    require_local_or_trusted(&app, &w, "关闭菜单面板")?;
+    if let Some(wv) = app.get_webview(OVERLAY_ID) {
+        let _ = wv.close();
     }
     // 焦点还给页面，否则键盘事件仍落在已关闭的浮层上。
     if let Ok(page) = tabs::active_webview(&app) {
@@ -618,7 +627,9 @@ fn overlay_close(app: tauri::AppHandle) -> Result<(), String> {
 
 // 浮层里的「诊断信息」需要真实 tab 状态，但 overlay 是独立 webview，收不到 tabs-changed。
 #[tauri::command]
-fn tabs_snapshot(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+fn tabs_snapshot(app: tauri::AppHandle, w: tauri::Webview) -> Result<serde_json::Value, String> {
+    // OCR-fix：快照含全部打开页 URL——必须过 S1 守卫（此前远程页面可枚举标签）
+    require_local_or_trusted(&app, &w, "标签快照")?;
     // P2-fix：读 TabState 缓存快照（不再逐个回调 Webview::url()——崩溃根因）
     let (list, _) = tabs::snapshot(&app);
     Ok(json!({ "ok": true, "tabs": list }))
@@ -640,7 +651,8 @@ fn open_devtools(app: tauri::AppHandle, w: tauri::Webview) -> Result<(), String>
 
 // 工具栏高度上报（M7）：工具栏 webview 加载完成后 emit 实际高度，Rust 缓存并重新布局。
 #[tauri::command]
-fn set_toolbar_height(app: tauri::AppHandle, height: f64) -> Result<(), String> {
+fn set_toolbar_height(app: tauri::AppHandle, w: tauri::Webview, height: f64) -> Result<(), String> {
+    require_local_or_trusted(&app, &w, "工具栏高度上报")?;
     if height > 0.0 && height < 500.0 {
         TOOLBAR_HEIGHT_BITS.store(height.to_bits(), std::sync::atomic::Ordering::Relaxed);
         apply_layout(&app)?;
@@ -695,7 +707,10 @@ fn set_zoom(app: tauri::AppHandle, w: tauri::Webview, factor: f64) -> Result<(),
 
 // P1-b#9 + P2-S3：本地同步服务状态 + 库降级标记 + 损坏标注包扫描。
 #[tauri::command]
-fn diag_status(app: tauri::AppHandle) -> serde_json::Value {
+fn diag_status(app: tauri::AppHandle, w: tauri::Webview) -> serde_json::Value {
+    if require_local_or_trusted(&app, &w, "诊断信息").is_err() {
+        return json!({ "error": "诊断信息需要本地页面或信任站点" });
+    }
     let store = sync_server::resolve_store_path(&app);
     json!({
         "running": sync_server::server_running(),
@@ -707,7 +722,8 @@ fn diag_status(app: tauri::AppHandle) -> serde_json::Value {
 
 // P1-b#9：重试启动本地同步服务（用户在工具栏点「重试」时调用）。
 #[tauri::command]
-fn restart_server(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+fn restart_server(app: tauri::AppHandle, w: tauri::Webview) -> Result<serde_json::Value, String> {
+    require_local_or_trusted(&app, &w, "重启本地服务")?;
     if sync_server::server_running() {
         return Ok(json!({ "running": true }));
     }

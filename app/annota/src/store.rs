@@ -214,17 +214,20 @@ impl Db {
     /// 写入一条历史；随后裁剪到 HISTORY_CAP 条。
     pub fn add_history(&self, url: &str, title: &str, tab_id: Option<&str>) -> Result<(), String> {
         self.with_conn(|c| {
-            c.execute(
+            // OCR-fix：插入与裁剪放同一事务——此前两语句间崩溃会留下超帽状态
+            let tx = c.unchecked_transaction().map_err(|e| e.to_string())?;
+            tx.execute(
                 "INSERT INTO history (url,title,visit_at,tab_id) VALUES (?1,?2,?3,?4)",
                 params![url, title, now_ms(), tab_id],
             )
             .map_err(|e| e.to_string())?;
-            c.execute(
+            tx.execute(
                 "DELETE FROM history WHERE id NOT IN (
                      SELECT id FROM history ORDER BY visit_at DESC, id DESC LIMIT ?1)",
                 params![HISTORY_CAP],
             )
             .map_err(|e| e.to_string())?;
+            tx.commit().map_err(|e| e.to_string())?;
             Ok(())
         })
     }
@@ -350,12 +353,14 @@ impl Db {
         if q.is_empty() {
             return Ok(json!({ "history": [], "bookmarks": [] }));
         }
-        let pattern = format!("%{}%", q);
+        // OCR-fix：转义 LIKE 元字符并声明 ESCAPE，防止输入 % 或 _ 变成通配（如搜 "_" 命中全部）
+        let escaped = q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+        let pattern = format!("%{escaped}%");
         self.with_conn(|c| {
             let mut stmt = c
                 .prepare(
                     "SELECT url,title,visit_at FROM history
-                     WHERE url LIKE ?1 OR title LIKE ?1
+                     WHERE url LIKE ?1 ESCAPE '\\' OR title LIKE ?1 ESCAPE '\\'
                      ORDER BY visit_at DESC LIMIT 5",
                 )
                 .map_err(|e| e.to_string())?;
@@ -374,7 +379,7 @@ impl Db {
             let mut stmt = c
                 .prepare(
                     "SELECT url,title,favicon FROM bookmarks
-                     WHERE url LIKE ?1 OR title LIKE ?1
+                     WHERE url LIKE ?1 ESCAPE '\\' OR title LIKE ?1 ESCAPE '\\'
                      ORDER BY created_at DESC LIMIT 5",
                 )
                 .map_err(|e| e.to_string())?;
@@ -495,5 +500,19 @@ mod tests {
         assert_eq!(db.list_history(10).unwrap()[0]["title"], "示例视频");
         // 不存在的 URL 不报错
         db.update_history_title("https://nowhere/", "x").unwrap();
+    }
+
+    #[test]
+    fn omnibox_like_metacharacters_are_escaped() {
+        let db = tmp_db();
+        db.add_history("https://a.com/x", "hello_world", None).unwrap();
+        db.add_history("https://b.com/y", "nothing", None).unwrap();
+        // OCR-fix 回归：转义后 "_" 不再是通配符
+        let r = db.search_omnibox("hello_world").unwrap();
+        assert_eq!(r["history"].as_array().unwrap().len(), 1, "含 _ 的查询应精确命中");
+        let r2 = db.search_omnibox("_").unwrap();
+        assert_eq!(r2["history"].as_array().unwrap().len(), 1, "裸 _ 应按字面命中含下划线的 1 条（通配行为会命中全部 2 条）");
+        let r3 = db.search_omnibox("%").unwrap();
+        assert_eq!(r3["history"].as_array().unwrap().len(), 0, "裸 % 不应命中全部");
     }
 }

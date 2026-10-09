@@ -187,7 +187,7 @@ fn invoke_tool(handle: &tauri::AppHandle, id: &str, name: &str, args: Value) -> 
     if is_write_tool(name) {
         purge_expired_pending();
         let confirm_id = format!("c{}", SEQ.fetch_add(1, Ordering::Relaxed));
-        pending().lock().unwrap().insert(
+        pending().lock().unwrap_or_else(|e| e.into_inner()).insert(
             confirm_id.clone(),
             json!({"name": name, "arguments": args.clone(), "at": now_ms()}),
         );
@@ -249,7 +249,7 @@ fn compact_tool_result(name: &str, result: &Value) -> Value {
         });
     }
     let encoded = result.to_string();
-    if encoded.len() > TOOL_RESULT_LIMIT {
+    if encoded.chars().count() > TOOL_RESULT_LIMIT {   // 与 truncate 的 chars 单位一致（OCR-fix）
         json!({"summary": truncate(&encoded, TOOL_RESULT_LIMIT)})
     } else {
         result.clone()
@@ -351,7 +351,9 @@ pub async fn agent_run(
         .map_err(|e| e.to_string())?;
 
     let mut convo: Vec<Value> = vec![json!({"role": "system", "content": system_prompt()})];
-    convo.extend(messages.into_iter().take(40));
+    // OCR-fix：旧 take(40) 保留的是**最旧**消息、丢掉最新上下文——保留最新 40 条
+    let keep_from = messages.len().saturating_sub(40);
+    convo.extend(messages.into_iter().skip(keep_from));
 
     let mut audit: Vec<Value> = Vec::new();
     let mut final_message = json!({"role": "assistant", "content": ""});
@@ -400,6 +402,17 @@ pub async fn agent_run(
         final_message = message;
     }
 
+    // OCR-fix：轮次耗尽时若模型仍停在 tool_calls，用户将收不到任何回复——
+    // 兜底成显式说明（该轮排队的写确认交由 30min TTL 清理）。
+    if final_message.get("tool_calls").and_then(Value::as_array).map(|a| !a.is_empty()).unwrap_or(false) {
+        let content = final_message.get("content").and_then(Value::as_str).unwrap_or("");
+        final_message["content"] = json!(if content.is_empty() {
+            "助手在完成工具调用前已达到单次对话的工具轮次上限，请把问题拆小后重试。".to_string()
+        } else {
+            format!("{content}\n（工具调用未完成：已达单次对话的轮次上限）")
+        });
+    }
+
     Ok(json!({
         "message": final_message,
         "messages": client_messages(&convo),
@@ -413,7 +426,7 @@ pub fn agent_chat(app: tauri::AppHandle, w: tauri::Webview, confirm_id: String) 
     crate::require_local_or_trusted(&app, &w, "AI 助手")?;
     let entry = pending()
         .lock()
-        .unwrap()
+        .unwrap_or_else(|e| e.into_inner())
         .remove(&confirm_id)
         .ok_or("确认已过期")?;
     let age = now_ms().saturating_sub(entry.get("at").and_then(Value::as_u64).unwrap_or(0));
@@ -431,7 +444,7 @@ pub fn agent_cancel(app: tauri::AppHandle, w: tauri::Webview, confirm_id: String
     if crate::require_local_or_trusted(&app, &w, "AI 助手").is_err() {
         return false;
     }
-    pending().lock().unwrap().remove(&confirm_id).is_some()
+    pending().lock().unwrap_or_else(|e| e.into_inner()).remove(&confirm_id).is_some()
 }
 
 #[cfg(test)]
@@ -442,19 +455,19 @@ mod tests {
     fn pending_ttl_purge_and_reject() {
         let old = now_ms().saturating_sub(PENDING_TTL_MS + 60_000);
         {
-            let mut m = pending().lock().unwrap();
+            let mut m = pending().lock().unwrap_or_else(|e| e.into_inner());
             m.insert("ctest-old".into(), json!({"name":"copy_to_clipboard","arguments":{},"at":old}));
             m.insert("ctest-new".into(), json!({"name":"copy_to_clipboard","arguments":{},"at":now_ms()}));
         }
         purge_expired_pending();
         {
-            let m = pending().lock().unwrap();
+            let m = pending().lock().unwrap_or_else(|e| e.into_inner());
             assert!(!m.contains_key("ctest-old"), "过期项应被清理");
             assert!(m.contains_key("ctest-new"), "未过期项应保留");
         }
         // 年龄判定（agent_chat 内的双保险）：过期条目应被判过期
         let age = {
-            let m = pending().lock().unwrap();
+            let m = pending().lock().unwrap_or_else(|e| e.into_inner());
             let e = m.get("ctest-new").unwrap();
             now_ms().saturating_sub(e.get("at").and_then(Value::as_u64).unwrap_or(0))
         };

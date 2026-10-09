@@ -84,22 +84,21 @@ pub fn create_tab(
     // 代数 +1，让 overlay 下次打开时重建；这里同时把浮层关掉，避免它悬在旧位置。
     crate::bump_tab_gen();
     let _ = app.get_webview(crate::OVERLAY_ID).map(|w| w.close());
-    let (id, _seq) = {
+    // OCR-fix：先校验 URL——在任何共享状态变更之前失败即退出，
+    // 避免旧实现「先 push 再 parse」失败时留下幽灵 Tab（snapshot 会报、active_webview 会选中）。
+    let parsed = url::Url::parse(&url).map_err(|e| e.to_string())?;
+    // 预留 id：只推进 seq、不 push；真正的状态提交放在 webview 构建成功之后。
+    // （并发首个 tab 的 id 冲突窗口仅存在于启动瞬间——彼时无页面可触发并发创建，可接受。）
+    let id = {
         let state = app.state::<TabState>();
         let mut mgr = state.lock().map_err(|_| "标签状态锁中毒".to_string())?;
-        let id = if mgr.tabs.is_empty() {
+        if mgr.tabs.is_empty() {
             FIRST_TAB_ID.to_string()
         } else {
             mgr.seq += 1;
             format!("tab-{}", mgr.seq)
-        };
-        mgr.tabs.push(Tab { id: id.clone(), title: String::new(), url: url.clone() });
-        mgr.active = mgr.tabs.len() - 1;
-        let seq = mgr.seq;
-        (id, seq)
+        }
     };
-
-    let parsed = url::Url::parse(&url).map_err(|e| e.to_string())?;
     let app_evt = app.clone();
     let id_for_nav = id.clone();
     let id_for_nav2 = id.clone();
@@ -253,6 +252,14 @@ pub fn create_tab(
     let new_wv = window
         .add_child(builder, position, size)
         .map_err(|e| e.to_string())?;
+
+    // webview 构建成功后才提交状态（失败路径不留幽灵条目）
+    {
+        let state = app.state::<TabState>();
+        let mut mgr = state.lock().map_err(|_| "标签状态锁中毒".to_string())?;
+        mgr.tabs.push(Tab { id: id.clone(), title: String::new(), url: url.clone() });
+        mgr.active = mgr.tabs.len() - 1;
+    }
 
     // 与 activate_tab 行为一致：新 tab 置前并获焦点，其余隐藏（否则旧 tab 仍可见/持焦点）。
     let ids: Vec<String> = {
