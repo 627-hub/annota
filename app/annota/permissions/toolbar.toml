@@ -10,7 +10,7 @@ commands.allow = ["set_toolbar_height"]
 [[permission]]
 identifier = "allow-diag-status"
 description = "Allows the toolbar to read local server/database diagnostics (bind failure reason, memory-db degrade) and retry starting the local sync server."
-commands.allow = ["diag_status", "restart_server"]
+commands.allow = ["diag_status", "restart_server", "update_status"]
 
 [[permission]]
 identifier = "allow-trust-current-site"

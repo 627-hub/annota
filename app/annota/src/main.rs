@@ -21,6 +21,9 @@ use agent::{agent_cancel, agent_chat, agent_run};
 use tabs::{TabManager, TabState};
 use store::DbState;
 
+// 最近一次发现的更新（供工具栏轮询兜底：一次性事件可能在页面加载前发出而被错过）。
+static LATEST_UPDATE: Mutex<Option<Value>> = Mutex::new(None);
+
 // 启动自动更新检查：延迟后查一次；有新版则 emit 给 toolbar（「更多」菜单出角标），
 // 用户确认后由前端调 `install_update` 下载并重启安装。24h 后再查一次。
 fn spawn_update_check(app: &AppHandle) {
@@ -39,6 +42,9 @@ fn spawn_update_check(app: &AppHandle) {
                             "currentVersion": update.current_version,
                             "notes": update.body.clone().unwrap_or_default(),
                         });
+                        if let Ok(mut g) = LATEST_UPDATE.lock() {
+                            *g = Some(payload.clone());
+                        }
                         let _ = h.emit("annota://update-available", payload);
                     }
                     Ok(None) => crate::alog!("INFO", "[annota] up to date"),
@@ -49,6 +55,13 @@ fn spawn_update_check(app: &AppHandle) {
             tokio::time::sleep(std::time::Duration::from_secs(24 * 60 * 60)).await;
         }
     });
+}
+
+// 工具栏加载后主动查询一次更新状态（事件可能先于订阅发出，导致角标丢失）。
+#[tauri::command]
+fn update_status() -> Value {
+    let g = LATEST_UPDATE.lock().unwrap();
+    g.clone().unwrap_or(Value::Null)
 }
 
 // 全局 AppHandle，供 MCP tool handler 使用（clipboard 等需要后端状态）
@@ -1267,6 +1280,7 @@ pub fn main() {
             diag_status,
             restart_server,
             trust_current_site,
+            update_status,
             agent_run,
             agent_chat,
             agent_cancel,
