@@ -16,6 +16,11 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # 先重建 dist：checkout 不保留 mtime，build.rs 的新鲜度守护（dist vs src mtime）会误判；
+      # build.py 幂等重跑让产物获得新 mtime。
+      - name: 构建产物（build.py）
+        run: python3 build.py
+
       - name: Rust 单测
         working-directory: app/annota
         run: cargo test
@@ -32,9 +37,6 @@ jobs:
 
       - name: Shell 漂移检查
         run: node dev/check-shell-drift.mjs
-
-      - name: 构建产物（build.py 幂等重跑）
-        run: python3 build.py
 
       - name: JS 单测
         run: |
