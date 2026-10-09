@@ -87,12 +87,23 @@ pub(crate) fn is_local_origin(origin: &str) -> bool {
         || o == "http://127.0.0.1:8793" || o == "http://localhost:8793" || o == "http://[::1]:8793"
 }
 
-/// 调用方 webview 当前页面的 origin。
+/// 从 URL 提取参与校验的「来源串」（scheme://host[:port]，端口仅在显式给出时拼接，
+/// 与 url::Origin 的 ascii_serialization 及 settings.trustedOrigins 的存法一致）。
+/// 关键坑：tauri:// / app:// 等自定义 scheme 在 WHATWG URL 里是 opaque origin，
+/// `origin().ascii_serialization()` 会返回字符串 "null"，导致壳内页面被误判为外来页面
+/// （真机表现：工具栏菜单所有命令都报「只能从工具栏信任站点」）。必须手拼 scheme://host。
+pub(crate) fn origin_from_url(url: &url::Url) -> String {
+    let scheme = url.scheme();
+    match (url.host_str(), url.port()) {
+        (Some(h), Some(p)) => format!("{scheme}://{h}:{p}"),
+        (Some(h), None) => format!("{scheme}://{h}"),
+        _ => String::new(),
+    }
+}
+
+/// 调用方 webview 当前页面的来源串。
 pub(crate) fn caller_origin(w: &tauri::Webview) -> String {
-    w.url()
-        .ok()
-        .map(|u| u.origin().ascii_serialization())
-        .unwrap_or_default()
+    w.url().ok().as_ref().map(origin_from_url).unwrap_or_default()
 }
 
 /// 用户显式信任的站点列表（settings.trustedOrigins）。小文件，按需同步读即可。
@@ -142,7 +153,11 @@ fn trust_current_site(app: tauri::AppHandle, w: tauri::Webview) -> Result<String
     if !matches!(target.scheme(), "http" | "https") {
         return Err("只能信任 http(s) 站点".to_string());
     }
-    let origin = target.origin().ascii_serialization();
+    // 本地服务页/壳内页无需也不会进信任列表（避免列表被 127.0.0.1 污染）
+    let origin = origin_from_url(&target);
+    if is_local_origin(&origin) {
+        return Err("本地页面无需信任".to_string());
+    }
     let path = sync_server::resolve_settings_path(&app);
     let mut v: Value = std::fs::read_to_string(&path)
         .ok()
@@ -1355,4 +1370,31 @@ pub fn main() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod origin_guard_tests {
+    use super::*;
+
+    #[test]
+    fn opaque_custom_scheme_is_local_not_null() {
+        // 回归锁：tauri:// 是 opaque origin，ascii_serialization 为 "null"；
+        // origin_from_url 必须手拼出 tauri://localhost，且判为本地。
+        let overlay = url::Url::parse("tauri://localhost/overlay.html").unwrap();
+        assert_eq!(origin_from_url(&overlay), "tauri://localhost");
+        assert!(is_local_origin(&origin_from_url(&overlay)));
+        // Windows 形态
+        let win = url::Url::parse("http://tauri.localhost/index.html").unwrap();
+        assert!(is_local_origin(&origin_from_url(&win)));
+        // 工作区页（本地服务）
+        let ws = url::Url::parse("http://127.0.0.1:8793/#settings").unwrap();
+        assert_eq!(origin_from_url(&ws), "http://127.0.0.1:8793");
+        assert!(is_local_origin(&origin_from_url(&ws)));
+        // 远程站点：不本地、不带默认端口，与 trustedOrigins 存法一致
+        let bili = url::Url::parse("https://www.bilibili.com/video/BV1xx").unwrap();
+        assert_eq!(origin_from_url(&bili), "https://www.bilibili.com");
+        assert!(!is_local_origin(&origin_from_url(&bili)));
+        // origin().ascii_serialization 对照：确实返回 "null"（文档化的坑）
+        assert_eq!(overlay.origin().ascii_serialization(), "null");
+    }
 }
