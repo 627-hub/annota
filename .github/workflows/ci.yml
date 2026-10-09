@@ -1,0 +1,49 @@
+# P2-R3：push/PR 测试门禁。
+# 范围说明：cargo fmt --check 与 clippy -D warnings 待全库格式化清理后加入（现有基线未清）；
+# 当前先门禁「测试 + 构建可编译 + 权限/版本一致性 + 全量 JS/Python 回归」。
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust 单测
+        working-directory: app/annota
+        run: cargo test
+
+      - name: Rust 编译检查（debug）
+        working-directory: app/annota
+        run: cargo build
+
+      - name: 权限自检（Tauri 命令 ↔ permissions/*.toml）
+        run: node dev/check-tauri-permissions.mjs
+
+      - name: 版本一致性（Cargo.toml ↔ tauri.conf.json）
+        run: node dev/check-version.mjs
+
+      - name: Shell 漂移检查
+        run: node dev/check-shell-drift.mjs
+
+      - name: 构建产物（build.py 幂等重跑）
+        run: python3 build.py
+
+      - name: JS 单测
+        run: |
+          for t in dev/*.test.mjs; do echo "== $t"; node "$t"; done
+
+      - name: Python 单测
+        run: |
+          for t in dev/*.test.py; do echo "== $t"; python3 "$t"; done
+
+      - name: smoke（HTML 内联脚本语法 + 基础行为）
+        run: |
+          for t in dev/smoke*.mjs; do echo "== $t"; node "$t"; done
