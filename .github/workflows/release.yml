@@ -61,7 +61,9 @@ jobs:
         include:
           - name: macOS DMG
             os: macos-latest
-            bundle: dmg
+            # 必须含 app：updater 产物（.app.tar.gz+.sig）只在显式构建 app target 时生成，
+            # 只构建 dmg 会警告 "no updater-enabled targets were built"
+            bundle: app,dmg
             artifact: macos-dmg
             path: app/annota/target/release/bundle/dmg/*.dmg
           - name: Windows installer
