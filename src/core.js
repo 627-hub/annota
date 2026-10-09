@@ -1012,7 +1012,7 @@
   // 默认词典链接模板（编辑器读同一个 key；须含 {word} 且为 http(s)）
   const dictBox = el('input'); dictBox.className = 'va-input';
   dictBox.setAttribute('aria-label', '默认词典链接模板');
-  dictBox.placeholder = 'https://dictionary.cambridge.org/dictionary/english/{word}';
+  dictBox.placeholder = 'https://dictionary.cambridge.org/dictionary/english-chinese-traditional/{word}';
   async function saveDictTemplate() {
     const v = dictBox.value.trim();
     if (!v) {
@@ -1724,7 +1724,7 @@
         const v = appSettings.dictUrlTemplate || localStorage.getItem('annota:dictUrlTemplate');
         if (v && v.indexOf('{word}') >= 0 && isHttp(v)) return v;
       } catch (e) {}
-      return 'https://dictionary.cambridge.org/dictionary/english/{word}';
+      return 'https://dictionary.cambridge.org/dictionary/english-chinese-traditional/{word}';
     })();
     const dictLinks = [
       ['查词', (word) => dictTemplate.replace('{word}', encodeURIComponent(word))],
@@ -1864,7 +1864,7 @@
     const dictionary = el('div'); dictionary.className = 'va-dictionary';
     const dictLabel = el('span', null, '查词'); dictLabel.className = 'va-dictionary-label'; dictionary.appendChild(dictLabel);
     for (const [name, href] of [
-      ['剑桥', 'https://dictionary.cambridge.org/dictionary/english/' + encodeURIComponent(e.word || '')],
+      ['剑桥', 'https://dictionary.cambridge.org/dictionary/english-chinese-traditional/' + encodeURIComponent(e.word || '')],
       ['有道', 'https://www.youdao.com/result?word=' + encodeURIComponent(e.word || '') + '&lang=en'],
       ['欧路', 'https://dict.eudic.net/dicts/en/' + encodeURIComponent(e.word || '')],
     ]) {

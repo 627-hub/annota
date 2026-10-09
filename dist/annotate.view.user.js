@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         Annota（只读观看端）
 // @namespace    https://video-annotate.local/
-// @version      0.1.0.47
+// @version      0.1.0.48
 // @description  给视频和网页内容添加可共享标注（框选、时间锚点、词条与同步）
 // @author       Annota
 // @match        *://*/*
@@ -17,8 +17,8 @@
 window.VA_VIEW_ONLY=true;window.VA_AUTO_SYNC=true;
 
 /* ===== data: build id ===== */
-window.VA_BUILD=1791527133;
-window.VA_US_VER="0.1.0.47";
+window.VA_BUILD=1791559510;
+window.VA_US_VER="0.1.0.48";
 window.VA_DIST_BASE="https://tencentcloudtest-d2eg4lu85c76fb0-1414056833.tcloudbaseapp.com";
 /* ===== src/geometry.js ===== */
 /* video-annotate · geometry
@@ -4011,7 +4011,7 @@ button { color: inherit; }
   // 默认词典链接模板（编辑器读同一个 key；须含 {word} 且为 http(s)）
   const dictBox = el('input'); dictBox.className = 'va-input';
   dictBox.setAttribute('aria-label', '默认词典链接模板');
-  dictBox.placeholder = 'https://dictionary.cambridge.org/dictionary/english/{word}';
+  dictBox.placeholder = 'https://dictionary.cambridge.org/dictionary/english-chinese-traditional/{word}';
   async function saveDictTemplate() {
     const v = dictBox.value.trim();
     if (!v) {
@@ -4723,7 +4723,7 @@ button { color: inherit; }
         const v = appSettings.dictUrlTemplate || localStorage.getItem('annota:dictUrlTemplate');
         if (v && v.indexOf('{word}') >= 0 && isHttp(v)) return v;
       } catch (e) {}
-      return 'https://dictionary.cambridge.org/dictionary/english/{word}';
+      return 'https://dictionary.cambridge.org/dictionary/english-chinese-traditional/{word}';
     })();
     const dictLinks = [
       ['查词', (word) => dictTemplate.replace('{word}', encodeURIComponent(word))],
@@ -4863,7 +4863,7 @@ button { color: inherit; }
     const dictionary = el('div'); dictionary.className = 'va-dictionary';
     const dictLabel = el('span', null, '查词'); dictLabel.className = 'va-dictionary-label'; dictionary.appendChild(dictLabel);
     for (const [name, href] of [
-      ['剑桥', 'https://dictionary.cambridge.org/dictionary/english/' + encodeURIComponent(e.word || '')],
+      ['剑桥', 'https://dictionary.cambridge.org/dictionary/english-chinese-traditional/' + encodeURIComponent(e.word || '')],
       ['有道', 'https://www.youdao.com/result?word=' + encodeURIComponent(e.word || '') + '&lang=en'],
       ['欧路', 'https://dict.eudic.net/dicts/en/' + encodeURIComponent(e.word || '')],
     ]) {

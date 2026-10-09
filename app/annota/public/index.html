@@ -564,8 +564,14 @@
         if (u && u.version) onUpdateAvailable(u);
       } catch (e) { /* 桥未就绪则静默，稍后再试 */ }
     }
+    // 慢网络下 updater 检查可能耗时数十秒（实测 GitHub 端点 76s）：早查两次 + 每 30s 补查（上限 3 分钟）
     setTimeout(pollUpdateStatus, 6500);
     setTimeout(pollUpdateStatus, 15000);
+    const pollDeadline = Date.now() + 180000;
+    const pollTimer = setInterval(() => {
+      if (updatePill.dataset.on === '1' || Date.now() > pollDeadline) { clearInterval(pollTimer); return; }
+      pollUpdateStatus();
+    }, 30000);
 
     /* ---- 事件订阅 ---- */
     (function subscribe() {
