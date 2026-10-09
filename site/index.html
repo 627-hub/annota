@@ -53,10 +53,17 @@
     .feature-index { margin-bottom:20px; color:var(--accent); font:11px ui-monospace,SFMono-Regular,monospace; }
     .feature h2 { margin:0; font-size:15px; letter-spacing:-.02em; }
     .feature p { margin:8px 0 0; color:#9698a1; font-size:12px; line-height:1.7; }
-    .downloads { margin-bottom:75px; padding:25px 28px; display:flex; align-items:center; justify-content:space-between; gap:20px; border:1px solid var(--line); border-radius:16px; background:#15161a; }
+    .downloads { margin-bottom:22px; padding:25px 28px; display:flex; align-items:center; justify-content:space-between; gap:20px; border:1px solid var(--line); border-radius:16px; background:#15161a; }
     .downloads strong { display:block; font-size:14px; }
     .downloads p { margin:4px 0 0; color:#888a93; font-size:12px; }
     .downloads a { flex:none; color:#edbd6a; font-size:12px; }
+    .install { margin-bottom:75px; }
+    .install h2 { margin:0 0 13px; font-size:15px; letter-spacing:-.02em; }
+    .install-card { padding:22px 24px; border:1px solid var(--line); border-radius:15px; background:rgba(255,255,255,.018); }
+    .install ol { margin:0; padding-left:20px; color:#9698a1; font-size:12.5px; line-height:1.8; }
+    .install li + li { margin-top:8px; }
+    .install li strong { color:#d6d7db; font-weight:620; }
+    .install code { padding:1px 6px; border-radius:5px; background:#1d1e24; color:#edbd6a; font:11px ui-monospace,SFMono-Regular,monospace; }
     footer { border-top:1px solid rgba(255,255,255,.06); color:#777983; font-size:11px; }
     .footer-inner { min-height:70px; display:flex; align-items:center; justify-content:space-between; gap:14px; }
     .footer-links { display:flex; gap:18px; }
@@ -126,9 +133,20 @@
       <div><strong id="version-heading">Annota 桌面版</strong><p>桌面浏览器、Chrome / Edge 扩展与 userscript，按你的使用方式选择。</p></div>
       <a href="https://github.com/627-hub/annota/releases">查看扩展与所有下载项 →</a>
     </section>
+
+    <section class="wrap install" aria-labelledby="install-heading">
+      <h2 id="install-heading">安装</h2>
+      <div class="install-card">
+        <ol>
+          <li><strong>macOS</strong>：打开下载的 <code>.dmg</code>，把 Annota 拖入「应用程序」（Applications）文件夹，再从启动台或应用程序中打开。</li>
+          <li><strong>Windows</strong>：运行下载的 <code>.exe</code> 安装程序。若出现「Windows 已保护你的电脑」，点击「更多信息」，再点击「仍要运行」。</li>
+          <li><strong>校验 SHA256</strong>：发布页会附上每个安装包的 SHA256 校验值。下载后请自行比对，macOS 可运行 <code>shasum -a 256 文件名</code>，Windows 可运行 <code>certutil -hashfile 文件名 SHA256</code>。</li>
+        </ol>
+      </div>
+    </section>
   </main>
 
-  <footer><div class="wrap footer-inner"><span>Annota · 内容之上的标注层</span><div class="footer-links"><a href="https://github.com/627-hub/annota">GitHub</a><a href="https://github.com/627-hub/annota/releases">Releases</a><a href="https://github.com/627-hub/annota/issues">反馈问题</a></div></div></footer>
+  <footer><div class="wrap footer-inner"><span>Annota · 内容之上的标注层</span><div class="footer-links"><a href="https://github.com/627-hub/annota">GitHub</a><a href="https://github.com/627-hub/annota/releases">Releases</a><a href="https://github.com/627-hub/annota/issues">反馈问题</a><a href="privacy.html">隐私政策</a><a href="eula.html">许可协议</a></div></div></footer>
 
   <script>
     (async function () {

@@ -42,6 +42,25 @@
     .btn:hover { background:rgba(245,166,35,.17); color:#fff0d4; }
     .empty { color:#8d939c; padding:22px 0; text-align:center; }
     a.mut { color:#8d939c; }
+    .note { margin:0 0 12px; font-size:12px; }
+    .note code { font:11px var(--va-font-mono); color:#c9ccd1; }
+    .btn:disabled { opacity:.45; cursor:not-allowed; }
+    label.btn { display:inline-block; }
+    label.btn:focus-within { outline:2px solid var(--va-accent,#F5A623); outline-offset:2px; }
+    .sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+    .file-row { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+    .file-row .sub { margin:0; font-size:12px; overflow-wrap:anywhere; }
+    .result { min-height:18px; margin-top:12px; color:#8d939c; font-size:12.5px; }
+    .result[data-state="ready"] { color:#78c99d; }
+    .result[data-state="error"] { color:#f19a9d; }
+    .result[data-state="busy"] { color:#d7b878; }
+    .skip-list { margin:10px 0 0; padding:0 0 0 18px; max-height:200px; overflow:auto; color:#8d939c; font-size:12px; }
+    .skip-list[hidden] { display:none; }
+    .skip-list li { overflow-wrap:anywhere; }
+    .diag-file { font:12px var(--va-font-mono); color:#c9ccd1; overflow-wrap:anywhere; }
+    td.act { text-align:right; white-space:nowrap; }
+    [data-theme="light"] .result { color:#626b78; }
+    [data-theme="light"] .diag-file, [data-theme="light"] .note code { color:#24262a; }
     @media (max-width:820px){ .cards{grid-template-columns:repeat(2,1fr)} .grid2{grid-template-columns:1fr} }
   </style>
 </head>
@@ -69,6 +88,26 @@
         <button class="btn" id="exp-json" type="button">导出 JSON</button>
       </div>
       <p class="sub" style="margin:12px 0 0;font-size:12px">带截图的学习卡（Anki）在「我的库 → 批量导出…」按视频逐条生成。</p>
+    </section>
+
+    <section class="panel" aria-labelledby="import-heading">
+      <h2 id="import-heading">导入标注</h2>
+      <p class="sub note">可选择「导出全部数据」得到的 .json，也可选择单个 Pack，或 <code>{"packs":[…]}</code> 形式的文件。每次最多提交 500 个包。</p>
+      <div class="file-row">
+        <label class="btn" for="import-file">选择 JSON 文件<input id="import-file" class="sr-only" type="file" accept=".json,application/json"></label>
+        <span class="sub" id="import-name">未选择文件</span>
+        <button class="btn" id="import-run" type="button" disabled>导入</button>
+      </div>
+      <div class="result" id="import-result" role="status" aria-live="polite"></div>
+      <ul class="skip-list" id="import-skipped" hidden></ul>
+    </section>
+
+    <section class="panel" aria-labelledby="health-heading">
+      <h2 id="health-heading">健康检查</h2>
+      <p class="sub note">损坏的标注文件无法读取。可从最近一份备份恢复，恢复后自动刷新列表。</p>
+      <div id="diag-list"></div>
+      <div class="result" id="diag-result" role="status" aria-live="polite"></div>
+      <p class="sub note">备份位置：应用数据目录 backups/，每日一份，保留 7 份。</p>
     </section>
   </div>
 
@@ -163,6 +202,129 @@
         $('cards').innerHTML = `<div class="card" style="grid-column:1/-1"><b>—</b><span>无法读取本地服务：${esc(error.message || error)}</span></div>`;
       }
     }
+    // ---------- 导入 ----------
+    const IMPORT_BATCH = 500;
+    const IMPORT_SHOW = 50;
+    let importPlan = null;   // { packs:[{mediaId,pack}], skipped:[{mediaId,reason}] }
+    const importFile = $('import-file');
+    const importRun = $('import-run');
+    const importResult = $('import-result');
+    const importSkipped = $('import-skipped');
+    function setResult(el, message, state) { el.textContent = message; el.dataset.state = state || 'ready'; }
+    function packMediaId(pack) {
+      const media = (pack && pack.media) || {};
+      return String(media.mediaId || media.videoId || pack.mediaId || '').trim();
+    }
+    // 兼容三种形态：单个 Pack、{packs:[...]}、Pack 数组（也接受 {mediaId, pack} 包装项）
+    function extractPlan(data) {
+      let items;
+      if (Array.isArray(data)) items = data;
+      else if (data && Array.isArray(data.packs)) items = data.packs;
+      else if (data && typeof data === 'object' && (data.media || data.entries)) items = [data];
+      else throw new Error('无法识别的文件结构：需要单个 Pack、{"packs":[…]} 或 Pack 数组');
+      const packs = [];
+      const skipped = [];
+      for (const item of items) {
+        if (!item || typeof item !== 'object') { skipped.push({ mediaId: '(未知)', reason: '不是有效的 Pack 对象' }); continue; }
+        const wrapped = item.pack && typeof item.pack === 'object';
+        const pack = wrapped ? item.pack : item;
+        const mediaId = wrapped && item.mediaId ? String(item.mediaId).trim() : packMediaId(pack);
+        if (!mediaId) { skipped.push({ mediaId: '(未知)', reason: '缺少媒体标识（media.mediaId）' }); continue; }
+        packs.push({ mediaId, pack });
+      }
+      return { packs, skipped };
+    }
+    function renderSkipped(list) {
+      importSkipped.innerHTML = list.slice(0, IMPORT_SHOW).map((s) => `<li>${esc(s.mediaId)} — ${esc(s.reason)}</li>`).join('') +
+        (list.length > IMPORT_SHOW ? `<li>另有 ${list.length - IMPORT_SHOW} 条未显示</li>` : '');
+      importSkipped.hidden = list.length === 0;
+    }
+    importFile.addEventListener('change', async () => {
+      const file = importFile.files && importFile.files[0];
+      importPlan = null; importRun.disabled = true; renderSkipped([]);
+      if (!file) { $('import-name').textContent = '未选择文件'; setResult(importResult, ''); return; }
+      $('import-name').textContent = file.name;
+      try {
+        const data = JSON.parse(await file.text());
+        importPlan = extractPlan(data);
+        importRun.disabled = importPlan.packs.length === 0;
+        setResult(importResult, '已解析 ' + importPlan.packs.length + ' 个包' + (importPlan.skipped.length ? '，' + importPlan.skipped.length + ' 条将被跳过' : '') + '。点击「导入」提交。', importPlan.packs.length ? 'ready' : 'error');
+        renderSkipped(importPlan.skipped);
+      } catch (error) {
+        setResult(importResult, error instanceof SyntaxError
+          ? '文件不是有效的 JSON。请选择「我的库 → 导出全部数据」得到的 .json 文件。'
+          : '文件无法读取：' + (error.message || '未知错误'), 'error');
+      }
+    });
+    importRun.addEventListener('click', async () => {
+      if (!importPlan || !importPlan.packs.length) return;
+      importRun.disabled = true; importFile.disabled = true;
+      setResult(importResult, '正在导入…', 'busy');
+      let imported = 0;
+      const skipped = importPlan.skipped.slice();
+      try {
+        for (let i = 0; i < importPlan.packs.length; i += IMPORT_BATCH) {
+          const response = await fetch('/api/import/packs', {
+            method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+            body: JSON.stringify({ packs: importPlan.packs.slice(i, i + IMPORT_BATCH) }),
+          });
+          const body = await response.json().catch(() => ({}));
+          if (!response.ok || body.ok === false) throw new Error(body.error || 'HTTP ' + response.status);
+          imported += Number(body.imported) || 0;
+          if (Array.isArray(body.skipped)) skipped.push(...body.skipped);
+        }
+        setResult(importResult, '导入完成：成功 ' + imported + ' 个，跳过 ' + skipped.length + ' 个。', 'ready');
+        renderSkipped(skipped);
+        importPlan = null;
+        load();
+      } catch (error) {
+        setResult(importResult, '导入中断：' + (error.message || '本地服务暂不可用') + '（已成功 ' + imported + ' 个）', 'error');
+        renderSkipped(skipped);
+      } finally { importFile.disabled = false; }
+    });
+
+    // ---------- 健康检查 ----------
+    const diagList = $('diag-list');
+    const diagResult = $('diag-result');
+    async function loadDiag() {
+      diagList.innerHTML = '<div class="empty">正在检查…</div>';
+      try {
+        const response = await api('/api/diag');
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok || body.ok === false) throw new Error(body.error || 'HTTP ' + response.status);
+        const corrupt = Array.isArray(body.corruptPacks) ? body.corruptPacks : [];
+        diagList.innerHTML = corrupt.length
+          ? `<table><thead><tr><th>损坏的标注文件</th><th class="act">操作</th></tr></thead><tbody>${corrupt.map((name) =>
+              `<tr><td class="diag-file">${esc(name)}</td><td class="act"><button class="btn" type="button" data-restore="${esc(name)}">从备份恢复</button></td></tr>`).join('')}</tbody></table>`
+          : '<div class="empty">所有标注文件健康</div>';
+      } catch (error) {
+        diagList.innerHTML = `<div class="empty">无法读取健康状态：${esc(error.message || error)}</div>`;
+      }
+    }
+    diagList.addEventListener('click', async (event) => {
+      const button = event.target.closest && event.target.closest('[data-restore]');
+      if (!button) return;
+      const name = button.dataset.restore;
+      const mediaId = name.replace(/\.json$/i, '');
+      button.disabled = true;
+      setResult(diagResult, '正在从备份恢复 ' + name + '…', 'busy');
+      try {
+        const response = await fetch('/api/anno/' + encodeURIComponent(mediaId) + '/restore', {
+          method: 'POST', headers: { Accept: 'application/json' },
+        });
+        const body = await response.json().catch(() => ({}));
+        if (response.status === 404) throw new Error('没有可用的备份');
+        if (!response.ok || body.ok === false) throw new Error(body.error || 'HTTP ' + response.status);
+        setResult(diagResult, '已从备份恢复：' + name, 'ready');
+        await loadDiag();
+        load();
+      } catch (error) {
+        setResult(diagResult, '恢复失败：' + (error.message || '本地服务暂不可用'), 'error');
+        button.disabled = false;
+      }
+    });
+
+    loadDiag();
     load();
   </script>
 </body>

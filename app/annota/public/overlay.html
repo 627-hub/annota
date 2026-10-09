@@ -70,6 +70,7 @@
     /* 轻量 toast（P1-b#12）：浮层内右下角 */
     .toast-stack { position:fixed; right:8px; bottom:8px; z-index:var(--va-z-toast); display:flex; flex-direction:column; align-items:flex-end; gap:6px; max-width:calc(100% - 16px); pointer-events:none; }
     .toast { max-width:100%; padding:6px 10px; border:1px solid rgba(255,255,255,.1); border-left:3px solid var(--va-warning); border-radius:8px; background:#1e1f24; color:#e7e9ec; font:11.5px/1.45 var(--va-font-ui); box-shadow:0 8px 24px rgba(0,0,0,.4); overflow-wrap:anywhere; user-select:text; }
+    .toast[data-kind="ok"] { border-left-color:#49bc86; }
     .toast[data-leaving="1"] { opacity:0; transition:opacity 200ms ease; }
   </style>
 </head>
@@ -84,6 +85,7 @@
     <button data-cmd="downloads" role="menuitem">下载</button>
     <button data-cmd="no-restore" role="menuitem">不恢复上次会话</button>
     <button data-cmd="workspace" role="menuitem">打开工作区</button>
+    <button data-action="trust-site" role="menuitem" title="允许本工具在当前网站上使用截图、剪贴板与 AI 等功能">信任当前站点</button>
     <div class="menu-sep"></div>
     <div class="menu-hint">缩放</div>
     <div class="zoom-row">
@@ -176,6 +178,21 @@
       }
     });
 
+    // 信任当前站点：菜单保持打开，结果以 toast 反馈（成功 / 失败都留在菜单上）
+    menu.addEventListener('click', (e) => {
+      const btn = e.target && e.target.closest && e.target.closest('[data-action="trust-site"]');
+      if (!btn) return;
+      e.stopPropagation();
+      btn.disabled = true;
+      let pending;
+      try { pending = Promise.resolve(invoke('trust_current_site')); }
+      catch (err) { pending = Promise.reject(err); }
+      pending.then(
+        (origin) => toast('已信任 ' + (typeof origin === 'string' && origin ? origin : '当前站点'), 'ok'),
+        (err) => { console.warn('[annota] 信任当前站点失败', err); toast('信任失败：' + reasonText(err)); }
+      ).finally(() => { btn.disabled = false; });
+    });
+
     // ---------- 面板 ----------
     let panelKind = null;
     function panelHead(title, clearLabel) {
@@ -252,11 +269,11 @@
       }
       return String(e);
     }
-    function toast(msg) {
+    function toast(msg, kind) {
       const stack = document.getElementById('toast-stack');
       if (!stack) return;
       const el = document.createElement('div');
-      el.className = 'toast'; el.dataset.kind = 'error'; el.setAttribute('role', 'alert');
+      el.className = 'toast'; el.dataset.kind = kind || 'error'; el.setAttribute('role', kind === 'ok' ? 'status' : 'alert');
       el.textContent = msg;
       stack.appendChild(el);
       while (stack.children.length > 2) stack.firstElementChild.remove();

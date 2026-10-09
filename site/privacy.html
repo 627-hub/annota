@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101114">
+  <meta name="description" content="Annota 隐私政策：无遥测，标注数据默认保存在本机，API key 只存于本机钥匙串。">
+  <title>隐私政策 — Annota</title>
+  <style>
+    :root { color-scheme: dark; --bg:#101114; --panel:#17181d; --line:#292a30; --ink:#f0f0f2; --muted:#999ba4; --accent:#f5a623; }
+    * { box-sizing:border-box; }
+    html { min-width:320px; background:var(--bg); }
+    body { margin:0; color:var(--ink); font:15px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif; -webkit-font-smoothing:antialiased; }
+    a { color:#edbd6a; text-decoration:none; }
+    a:hover { text-decoration:underline; }
+    .wrap { width:min(760px,calc(100% - 48px)); margin:0 auto; }
+    header { height:76px; display:flex; align-items:center; border-bottom:1px solid rgba(255,255,255,.06); }
+    .nav { display:flex; align-items:center; justify-content:space-between; }
+    .brand { display:flex; align-items:center; gap:11px; color:var(--ink); font-size:16px; font-weight:700; letter-spacing:-.03em; }
+    .brand:hover { text-decoration:none; }
+    .brand-mark { display:grid; place-items:center; width:34px; height:34px; border:1px solid rgba(245,166,35,.4); border-radius:11px; color:var(--accent); background:rgba(245,166,35,.09); }
+    .brand-mark svg { width:20px; height:20px; }
+    .back { color:#b6b7bd; font-size:13px; }
+    main { padding:64px 0 72px; }
+    .eyebrow { margin-bottom:18px; color:#b3a17f; font-size:10px; font-weight:700; letter-spacing:.17em; text-transform:uppercase; }
+    h1 { margin:0; font-size:clamp(34px,5vw,46px); line-height:1.15; letter-spacing:-.05em; font-weight:720; }
+    .updated { margin:14px 0 0; color:#777983; font-size:12px; }
+    .intro { margin:26px 0 0; color:#b6b7bd; font-size:15px; }
+    section { margin-top:40px; padding:24px 26px; border:1px solid var(--line); border-radius:15px; background:var(--panel); }
+    h2 { margin:0 0 12px; font-size:16px; letter-spacing:-.02em; }
+    p { margin:0; color:#a4a5ad; font-size:14px; line-height:1.85; }
+    p + p, ul + p, p + ul { margin-top:10px; }
+    ul { margin:0; padding-left:20px; color:#a4a5ad; font-size:14px; line-height:1.85; }
+    li + li { margin-top:6px; }
+    code { padding:1px 6px; border-radius:5px; background:#1d1e24; color:#edbd6a; font:12px ui-monospace,SFMono-Regular,monospace; }
+    footer { border-top:1px solid rgba(255,255,255,.06); color:#777983; font-size:11px; }
+    .footer-inner { min-height:70px; display:flex; align-items:center; justify-content:space-between; gap:14px; }
+    .footer-links { display:flex; gap:18px; }
+    .footer-links a { color:#777983; }
+    .footer-links a:hover { color:var(--ink); text-decoration:none; }
+    @media (max-width:760px) {
+      .wrap { width:min(100% - 34px,560px); }
+      header { height:66px; }
+      section { padding:20px 18px; }
+      .footer-inner { padding:16px 0; align-items:flex-start; flex-direction:column; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <nav class="wrap nav" aria-label="主导航">
+      <a class="brand" href="index.html" aria-label="Annota 首页">
+        <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 19 7.5-14 7.5 14M8.2 13.2h7.6"/><path d="M3 7V3h4M17 3h4v4M21 17v4h-4M7 21H3v-4" opacity=".55"/></svg></span>
+        Annota
+      </a>
+      <a class="back" href="index.html">← 返回首页</a>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <div class="eyebrow">PRIVACY</div>
+    <h1>隐私政策</h1>
+    <p class="updated">最后更新：2026-10-09</p>
+    <p class="intro">Annota 默认在你的电脑上运行。本页说明哪些数据留在本机、哪些数据会在你主动使用组功能时上云，以及我们不做什么。</p>
+
+    <section aria-labelledby="no-telemetry">
+      <h2 id="no-telemetry">一、我们不做什么</h2>
+      <ul>
+        <li>无遥测：不收集使用统计，不向开发者回传任何使用数据。</li>
+        <li>不自动上传：标注、截图、剪贴板内容与崩溃报告都不会在未经你确认的情况下离开本机。</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="local-data">
+      <h2 id="local-data">二、数据保存在本机</h2>
+      <ul>
+        <li>标注数据：保存在本机的标注 store（标注数据目录）。</li>
+        <li>本地数据库：<code>annota.db</code> 保存标注索引与历史记录等元数据。</li>
+        <li>备份：应用数据目录 <code>backups/</code> 每日一份，保留 7 份。</li>
+        <li>运行日志：macOS 位于 <code>~/Library/Logs/annota</code>。日志只在本机保存。</li>
+        <li>偏好设置：同步地址、快捷键、词典模板与信任站点列表，由本地服务保存在本机。</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="cloud-data">
+      <h2 id="cloud-data">三、组数据与云端</h2>
+      <p>个人标注库只保存在本机。只有当你主动创建或加入组，并选择共享方式时，组内标注才会离开本机：</p>
+      <ul>
+        <li>云开发组：组内数据存放在腾讯云开发（CloudBase）中，加入组需要登录。</li>
+        <li>Git 仓库组：组内数据写入你指定的 GitHub 或 Gitee 仓库，仓库访问令牌由你自行保管。</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="api-key">
+      <h2 id="api-key">四、AI 助手的 API key</h2>
+      <p>如果你在设置中填写模型服务的 API key，它只会保存到本机的系统钥匙串，不会写入设置文件，也不会上传到任何服务器。清除后，钥匙串中的记录会被删除。</p>
+    </section>
+
+    <section aria-labelledby="crash">
+      <h2 id="crash">五、崩溃报告</h2>
+      <p>崩溃报告默认只写入本机日志。若你希望把报告发送给开发者以便排查问题，每次都需要你在界面中明确确认，不会自动发送。</p>
+    </section>
+
+    <section aria-labelledby="changes">
+      <h2 id="changes">六、变更与联系</h2>
+      <p>本政策如有变化，会更新本页顶部的日期。对本政策有疑问，请到 <a href="https://github.com/627-hub/annota/issues">GitHub Issues</a> 反馈。</p>
+    </section>
+  </main>
+
+  <footer><div class="wrap footer-inner"><span>Annota · 内容之上的标注层</span><div class="footer-links"><a href="index.html">首页</a><a href="privacy.html" aria-current="page">隐私政策</a><a href="eula.html">许可协议</a><a href="https://github.com/627-hub/annota">GitHub</a></div></div></footer>
+</body>
+</html>

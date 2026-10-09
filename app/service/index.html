@@ -140,6 +140,17 @@
     .settings-feedback { min-height:16px; color:#78c99d; font-size:10px; }
     .settings-feedback[data-state="error"] { color:#f19a9d; }
     .settings-feedback[data-state="busy"] { color:#d7b878; }
+    .secret-block { display:grid; gap:11px; margin-top:18px; padding-top:16px; border-top:1px solid rgba(255,255,255,.07); }
+    .secret-block h4 { margin:0; color:#e0e1e2; font-size:11px; font-weight:630; }
+    .setting-section .secret-note { margin:0; color:#7c838d; font-size:10px; }
+    .danger-button:hover { border-color:rgba(239,115,121,.5); color:#ef9a9e; }
+    .danger-button:disabled, .secondary-button:disabled { opacity:.45; cursor:not-allowed; }
+    .trusted-list { display:grid; gap:7px; margin:0; padding:0; list-style:none; }
+    .trusted-item { display:flex; align-items:center; justify-content:space-between; gap:10px; min-height:40px; padding:0 12px; border:1px solid rgba(255,255,255,.07); border-radius:10px; background:#151619; }
+    .trusted-item code { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#d9dadc; font:11px var(--va-font-mono); }
+    .setting-section .trusted-empty { margin:4px 0 0; color:#7e858e; font-size:10px; }
+    [data-theme="light"] .trusted-item { border-color:#dfe1e6; background:#fff; }
+    [data-theme="light"] .trusted-item code { color:#24262a; }
     .groups-layout { display:grid; gap:14px; margin-top:24px; }
     .group-list { display:grid; gap:8px; }
     .group-login-bar { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:0 0 15px; padding:11px 13px; border:1px solid var(--va-page-border); border-radius:11px; background:var(--va-page-surface); color:var(--va-page-muted); font-size:10px; }
@@ -390,10 +401,27 @@
                   <div class="setting-actions"><button class="primary-button" id="save-runtime-settings" type="submit">保存设置</button><span class="settings-feedback" id="settings-feedback" role="status" aria-live="polite"></span></div>
                 </form>
               </section>
-              <section class="setting-section" aria-labelledby="ai-settings-heading"><h3 id="ai-settings-heading">AI 助手</h3><p>模型密钥仅从服务端环境变量读取；此处不会收集或保存 API key。</p><div class="settings-grid">
+              <section class="setting-section setting-section-wide" aria-labelledby="trusted-sites-heading">
+                <h3 id="trusted-sites-heading">信任的站点</h3>
+                <p>截图、剪贴板与 AI 等高危功能只在这些网站上启用。在想标注的站点上，点工具栏「更多」菜单中的「信任当前站点」即可添加。</p>
+                <ul class="trusted-list" id="trusted-list" aria-labelledby="trusted-sites-heading"></ul>
+                <p class="trusted-empty" id="trusted-empty" hidden>未信任任何站点；在想标注的站点上点工具栏菜单「信任当前站点」即可。</p>
+                <p class="trusted-empty" id="trusted-unavailable" hidden>无法读取站点列表，请确认本地服务已启动后刷新页面。</p>
+              </section>
+              <section class="setting-section" aria-labelledby="ai-settings-heading"><h3 id="ai-settings-heading">AI 助手</h3><p>模型服务可通过服务端环境变量配置，也可在下方把 API key 保存到本机钥匙串。</p><div class="settings-grid">
                 <label class="settings-field" for="ai-base-url"><span>模型服务地址</span><input class="settings-input" id="ai-base-url" type="url" inputmode="url" placeholder="留空使用默认地址" autocomplete="url"><small>可选；非空时须为有效的 http(s) URL。</small></label>
                 <label class="settings-field" for="ai-model"><span>模型名称</span><input class="settings-input" id="ai-model" type="text" maxlength="160" autocomplete="off" placeholder="留空使用默认模型"><small>可选；最多 160 个字符。</small></label>
-              </div><div class="ai-status" id="ai-status" role="status" aria-live="polite"><i aria-hidden="true"></i><span>正在读取模型状态…</span></div></section>
+              </div><div class="ai-status" id="ai-status" role="status" aria-live="polite"><i aria-hidden="true"></i><span>正在读取模型状态…</span></div>
+                <div class="secret-block">
+                  <h4 id="ai-key-heading">API key</h4>
+                  <p class="secret-note">仅存于本机钥匙串，不会写入设置文件或上传。</p>
+                  <div class="ai-status" id="ai-key-status" role="status" aria-live="polite"><i aria-hidden="true"></i><span>正在读取…</span></div>
+                  <form class="settings-form" id="ai-key-form" autocomplete="off">
+                    <label class="settings-field" for="ai-api-key"><span>粘贴新的密钥</span><input class="settings-input" id="ai-api-key" type="password" autocomplete="new-password" spellcheck="false" placeholder="粘贴后点击保存"><small>保存后输入框会清空；此处无法再次查看明文。</small></label>
+                    <div class="setting-actions"><button class="secondary-button" type="submit" id="ai-key-save">保存到本机钥匙串</button><button class="secondary-button danger-button" type="button" id="ai-key-clear">清除</button></div>
+                  </form>
+                </div>
+              </section>
               <section class="setting-section"><h3>外观</h3><p>页面工作区主题。内容页上的标注工具保持深色高对比。</p><div class="setting-actions"><button class="secondary-button" data-theme-choice="dark">深色</button><button class="secondary-button" data-theme-choice="light">浅色</button><button class="secondary-button" data-theme-choice="system">跟随系统</button></div></section>
               <section class="setting-section"><h3>数据与隐私</h3><p>标注默认保存在本地。你可以随时导出完整数据副本。</p><div class="setting-actions"><button class="secondary-button" id="export-settings">导出全部标注</button><button class="secondary-button" id="refresh-library">刷新本地数据</button></div></section>
               <section class="setting-section"><h3>查词网站</h3><p>编辑标注时使用外部词典；默认查词链接可在视频页右下 ⚙ 菜单的「DICTIONARY」里改。词典内容由其服务方维护。</p><div class="setting-actions"><a class="platform-link" href="https://dictionary.cambridge.org/" target="_blank" rel="noopener noreferrer">Cambridge ↗</a><a class="platform-link" href="https://www.youdao.com/" target="_blank" rel="noopener noreferrer">有道 ↗</a><a class="platform-link" href="https://dict.eudic.net/" target="_blank" rel="noopener noreferrer">欧路 ↗</a></div></section>
@@ -445,6 +473,7 @@
       document.querySelectorAll('[data-route]').forEach((link) => link.classList.toggle('is-active', link.dataset.route === route));
       document.getElementById('crumb-label').textContent = 'ANNOTATION SPACE / ' + route.toUpperCase();
       if (route === 'library') renderLibrary();
+      if (route === 'settings' && typeof refreshSecretAndSites === 'function') refreshSecretAndSites();
       if (route === 'groups') {
         renderGroups();
         // 云端「我加入的组」异步合并进本地注册表后重绘一次（跨设备入组本机即可见）
@@ -975,8 +1004,11 @@
         const body = await response.json().catch(() => ({}));
         if (!response.ok || !body.settings) throw new Error(body.error || 'HTTP ' + response.status);
         fillRuntimeSettings(body.settings);
+        serverSettings = cloneJson(body.settings); settingsLoaded = true;
+        renderSecretAndSites();
         setSettingsFeedback('已载入本地服务设置。', 'ready');
       } catch (error) {
+        settingsLoaded = false; renderSecretAndSites();
         setSettingsFeedback('无法读取本地设置：' + (error.message || '服务暂不可用'), 'error');
       }
     }
@@ -1009,6 +1041,7 @@
         aiModelInput.setAttribute('aria-invalid', 'true'); aiModelInput.focus();
         setSettingsFeedback('模型名称不能超过 160 个字符。', 'error'); return;
       }
+      const shortcutValues = {};
       for (const [id, key, label] of [
         ['shortcut-annotate', 'annotate', '标注'], ['shortcut-panel', 'panel', '侧栏'], ['shortcut-overlay', 'overlay', '显示 / 隐藏标注'],
       ]) {
@@ -1018,28 +1051,125 @@
           input.setAttribute('aria-invalid', 'true'); input.focus();
           setSettingsFeedback(label + '快捷键格式无效。请使用修饰键 + 单个字母、数字或 F1–F12，或留空禁用。', 'error'); return;
         }
-        runtimeSettings.shortcuts[key] = value;
+        shortcutValues[key] = value;
       }
-      runtimeSettings.sync.address = address;
-      runtimeSettings.sync.auto = document.getElementById('sync-auto').checked;
-      runtimeSettings.dictUrlTemplate = dictUrlTemplate;
-      runtimeSettings.ai.baseUrl = aiBaseUrl;
-      runtimeSettings.ai.model = aiModel;
+      const syncAuto = document.getElementById('sync-auto').checked;
       const saveButton = document.getElementById('save-runtime-settings');
       saveButton.disabled = true; setSettingsFeedback('正在保存…', 'busy');
       try {
-        const response = await fetch('/api/settings', {
-          method: 'PUT', headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-          body: JSON.stringify(runtimeSettings),
+        // 只改本表单负责的字段；其余字段（如 trustedOrigins）沿用服务端当前值
+        const saved = await putSettings((s) => {
+          s.sync = Object.assign({}, s.sync, { address, auto: syncAuto });
+          s.shortcuts = Object.assign({}, s.shortcuts, shortcutValues);
+          s.dictUrlTemplate = dictUrlTemplate;
+          s.ai = Object.assign({}, s.ai, { baseUrl: aiBaseUrl, model: aiModel });
         });
-        const body = await response.json().catch(() => ({}));
-        if (!response.ok || body.error) throw new Error(body.error || 'HTTP ' + response.status);
-        if (body.settings) fillRuntimeSettings(body.settings);
+        fillRuntimeSettings(saved);
         setSettingsFeedback('设置已保存。视频页下次读取时会应用新的快捷键与同步规则。', 'ready');
       } catch (error) {
         setSettingsFeedback('保存失败：' + (error.message || '本地服务暂不可用'), 'error');
       } finally { saveButton.disabled = false; }
     });
+    // ---------- 设置：服务端原始对象、API key 状态、信任站点 ----------
+    let serverSettings = null;   // 最近一次服务端返回的完整 settings（不含 apiKey）
+    let settingsLoaded = false;
+    const escText = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    function cloneJson(value) { return JSON.parse(JSON.stringify(value)); }
+    function trustedOriginsOf(s) { return s && Array.isArray(s.trustedOrigins) ? s.trustedOrigins.filter((o) => typeof o === 'string') : []; }
+    function hasApiKeyOf(s) { return !!(s && s.ai && s.ai.hasApiKey === true); }
+    async function fetchSettings() {
+      const response = await fetch('/api/settings', { headers: { Accept: 'application/json' } });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || !body.settings) throw new Error(body.error || 'HTTP ' + response.status);
+      return body.settings;
+    }
+    // PUT 是全量覆盖：先 GET 当前完整设置 → mutate 只改目标字段 → 整体回写
+    async function putSettings(mutate) {
+      const next = cloneJson(await fetchSettings());
+      mutate(next);
+      if (next.ai && typeof next.ai === 'object') delete next.ai.hasApiKey;   // 只读字段，不回写
+      const response = await fetch('/api/settings', {
+        method: 'PUT', headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify(next),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok || body.ok === false || body.error) throw new Error(body.error || 'HTTP ' + response.status);
+      const saved = cloneJson(body.settings || next);
+      if (saved.ai && typeof saved.ai === 'object') delete saved.ai.apiKey;   // 明文密钥不在内存里留存
+      serverSettings = saved; settingsLoaded = true;
+      renderSecretAndSites();
+      return saved;
+    }
+    function renderSecretAndSites() {
+      const status = document.getElementById('ai-key-status');
+      const label = status.querySelector('span');
+      const clear = document.getElementById('ai-key-clear');
+      if (!settingsLoaded) {
+        status.removeAttribute('data-state'); label.textContent = '无法读取密钥状态'; clear.disabled = true;
+      } else if (hasApiKeyOf(serverSettings)) {
+        status.dataset.state = 'ready'; label.textContent = '已配置（保存在本机钥匙串）'; clear.disabled = false;
+      } else {
+        status.removeAttribute('data-state'); label.textContent = '未配置'; clear.disabled = true;
+      }
+      const origins = trustedOriginsOf(serverSettings);
+      document.getElementById('trusted-list').innerHTML = origins.map((origin) =>
+        `<li class="trusted-item"><code title="${escText(origin)}">${escText(origin)}</code>` +
+        `<button class="secondary-button" type="button" data-remove-origin="${escText(origin)}" aria-label="移除信任站点 ${escText(origin)}">移除</button></li>`).join('');
+      document.getElementById('trusted-unavailable').hidden = settingsLoaded;
+      document.getElementById('trusted-empty').hidden = !settingsLoaded || origins.length > 0;
+    }
+    async function refreshSecretAndSites() {
+      try { serverSettings = cloneJson(await fetchSettings()); settingsLoaded = true; }
+      catch (_) { settingsLoaded = false; }
+      renderSecretAndSites();
+    }
+    document.getElementById('trusted-list').addEventListener('click', async (event) => {
+      const button = event.target.closest && event.target.closest('[data-remove-origin]');
+      if (!button) return;
+      const origin = button.dataset.removeOrigin;
+      button.disabled = true;
+      try {
+        await putSettings((s) => { s.trustedOrigins = trustedOriginsOf(s).filter((o) => o !== origin); });
+        notify('已移除信任站点 ' + origin);
+      } catch (error) {
+        notify('移除失败：' + (error.message || '本地服务暂不可用'));
+        button.disabled = false;
+      }
+    });
+    document.getElementById('ai-key-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const input = document.getElementById('ai-api-key');
+      const button = document.getElementById('ai-key-save');
+      const key = input.value.trim();
+      if (!key) { input.setAttribute('aria-invalid', 'true'); input.focus(); notify('请先粘贴 API key'); return; }
+      input.removeAttribute('aria-invalid');
+      button.disabled = true;
+      try {
+        await putSettings((s) => { s.ai = Object.assign({}, s.ai, { apiKey: key }); });
+        input.value = '';
+        notify('API key 已保存到本机钥匙串');
+        loadAiStatus();
+      } catch (error) {
+        notify('保存失败：' + (error.message || '本地服务暂不可用'));
+      } finally { button.disabled = false; }
+    });
+    document.getElementById('ai-key-clear').addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      if (!confirm('清除本机钥匙串中保存的 API key？清除后需重新粘贴。')) return;
+      button.disabled = true;
+      try {
+        await putSettings((s) => { s.ai = Object.assign({}, s.ai, { apiKey: '' }); });
+        notify('已清除本机保存的 API key');
+        loadAiStatus();
+      } catch (error) {
+        notify('清除失败：' + (error.message || '本地服务暂不可用'));
+      } finally { renderSecretAndSites(); }
+    });
+    // 切到设置页 / 窗口重新获得焦点时刷新站点列表（工具栏可能刚新增了信任站点）
+    window.addEventListener('focus', () => {
+      if (document.getElementById('screen-settings').classList.contains('is-active')) refreshSecretAndSites();
+    });
+
     async function loadAiStatus() {
       const status = document.getElementById('ai-status');
       const label = status.querySelector('span');
@@ -1051,7 +1181,7 @@
           status.dataset.state = 'ready';
           label.textContent = '已配置' + (body.model ? ' · 模型 ' + String(body.model) : '') + ((body.base || body.baseUrl) ? ' · 地址 ' + String(body.base || body.baseUrl) : '');
         } else {
-          status.dataset.state = 'error'; label.textContent = '未配置模型 · 请通过服务端环境变量设置模型与密钥' + (body.model ? ' · 模型 ' + String(body.model) : '') + ((body.base || body.baseUrl) ? ' · 地址 ' + String(body.base || body.baseUrl) : '');
+          status.dataset.state = 'error'; label.textContent = '未配置模型密钥 · 可在下方保存到本机钥匙串，或通过服务端环境变量设置' + (body.model ? ' · 模型 ' + String(body.model) : '') + ((body.base || body.baseUrl) ? ' · 地址 ' + String(body.base || body.baseUrl) : '');
         }
       } catch (error) {
         status.dataset.state = 'error'; label.textContent = '暂时无法读取 AI 状态：' + (error.message || '本地服务不可用');
