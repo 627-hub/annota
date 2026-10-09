@@ -1355,10 +1355,19 @@ pub fn main() {
                         Err(e2) => {
                             // P1-b#11：不再 panic——退化为内存库（本进程可用、重启为空），
                             // 并置标记供 diag_status 上报，工具栏显示启动横幅。
-                            crate::alog!("ERROR", "[annota] 临时库亦不可用 {fallback:?}: {e2}；降级为内存库");
+                            eprintln!("[annota] 临时库亦不可用 {fallback:?}: {e2}；降级为内存库");
                             crate::alog!("ERROR", "db fallback to memory: {e2}");
                             DB_MEMORY.store(true, std::sync::atomic::Ordering::Relaxed);
-                            store::Db::open_in_memory().expect("内存库初始化失败")
+                            // OCR-fix：内存库也失败时向上返回错误（setup 会带消息中止启动），
+                            // 而非 expect panic——与本注释「不再 panic」的承诺一致
+                            match store::Db::open_in_memory() {
+                                Ok(db) => db,
+                                Err(e3) => {
+                                    let msg = format!("本地数据库不可用（文件/临时/内存均失败）：{e3}");
+                                    crate::alog!("ERROR", "{msg}");
+                                    return Err(msg.into());
+                                }
+                            }
                         }
                     }
                 }

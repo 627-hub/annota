@@ -235,6 +235,8 @@
 
 
     /* 下载提示角标（浮层搬到 overlay.html 后，这里只留「更多」按钮上的小红点） */
+    /* 下载圆点是 absolute，必须挂在相对定位的容器上，否则会跑到最近的定位祖先上 */
+    .tool-menu-wrap { position:relative; }
     .chrome-dot { display:none; position:absolute; top:6px; right:6px; width:7px; height:7px; border-radius:50%; background:var(--va-accent); box-shadow:0 0 6px rgba(245,166,35,.6); pointer-events:none; }
 
     /* ============ 状态横幅（P1：引擎离线 / 内存库降级）：工具栏底部一行，随工具栏高度上报 ============ */
@@ -410,6 +412,17 @@
       });
     }
 
+    // 同上，但返回布尔：true=成功 / false=失败（调用方可据此回滚乐观更新）。
+    function invokeTry(label, cmd, args) {
+      let p;
+      try { p = Promise.resolve(invoke(cmd, args)); } catch (e) { p = Promise.reject(e); }
+      return p.then(() => true, (e) => {
+        console.warn('[annota] ' + label + ' 失败', e);
+        toast(label + '失败：' + reasonText(e), 'error');
+        return false;
+      });
+    }
+
     /* ---- 导航 ---- */
     async function navigate(raw) {
       const value = (raw != null ? raw : input.value).trim();
@@ -445,13 +458,22 @@
     }
     try { shellMode = localStorage.getItem('va.browser.shellMode') === 'edit' ? 'edit' : 'view'; } catch (e) {}
     btnEdit.addEventListener('click', () => {
+      const prev = shellMode;
       shellMode = shellMode === 'edit' ? 'view' : 'edit';
       applyEditUI();
-      invoke('set_shell_mode', { mode: shellMode }).catch(() => {});
+      // 乐观更新：IPC 失败时回滚本地态（否则 UI 与 Rust 后端永久分叉，且失败完全静默）
+      invokeTry('切换编辑模式', 'set_shell_mode', { mode: shellMode }).then((ok) => {
+        if (!ok) { shellMode = prev; applyEditUI(); }
+      });
     });
     applyEditUI();
     // 进入编辑后，新激活/新开的 tab 也要同步态
-    function pushModeToTab() { invoke('set_shell_mode', { mode: shellMode }).catch(() => {}); }
+    function pushModeToTab() {
+      try {
+        Promise.resolve(invoke('set_shell_mode', { mode: shellMode }))
+          .catch((e) => console.warn('[annota] 同步编辑模式失败', e));
+      } catch (e) { console.warn('[annota] 同步编辑模式失败', e); }
+    }
 
     /* ---- 下拉浮层（M7 重做）：菜单 / 历史 / 下载都在独立 overlay webview 里，
        工具栏只负责调 overlay_open。这样打开浮层不会增高工具栏、页面也不会下移。 ---- */
@@ -578,8 +600,19 @@
         document.getElementById('btn-reload').classList.toggle('is-active', !!p.loading);
         applyBookmarkUI();
       });
-      on('download-started', () => { dlDot.style.display = 'block'; });
-      on('download-finished', () => { dlDot.style.display = 'none'; });
+      // 下载角标按 URL 计数：开始加、结束减，全部结束才熄。避免单一 bool 在
+      // 多并发下载时被 finished 提前熄掉，也避免漏掉 finished 后永久点亮。
+      const dlActive = new Set();
+      const syncDlDot = () => { dlDot.style.display = dlActive.size ? 'block' : 'none'; };
+      on('download-started', (ev) => {
+        const u = (ev.payload && ev.payload.url) || ('#' + Date.now());
+        dlActive.add(u); syncDlDot();
+      });
+      on('download-finished', (ev) => {
+        const u = ev.payload && ev.payload.url;
+        if (u) dlActive.delete(u); else dlActive.clear();
+        syncDlDot();
+      });
       // 内容 webview 内切换编辑态（如 Cmd/Ctrl+E）→ 同步工具栏按钮
       on('shell-mode-changed', (ev) => {
         const m = ev.payload && ev.payload.mode === 'edit' ? 'edit' : 'view';
@@ -859,7 +892,11 @@
       }
       suggestions.innerHTML = html;
       suggestions.dataset.open = '1';
-      suggestions.querySelectorAll('.os-item').forEach((el, i) => {
+      // 以 DOM 实际顺序重建 suggItems，保证键盘高亮索引与条目一一对应
+      // （原来按构建顺序 push，只因「书签→历史→搜索」恰好与 DOM 顺序一致才没出错）
+      suggItems = Array.from(suggestions.querySelectorAll('.os-item,.os-search')).map((el) =>
+        el.classList.contains('os-search') ? { search: el.dataset.search } : { url: el.dataset.url });
+      suggestions.querySelectorAll('.os-item').forEach((el) => {
         el.addEventListener('click', () => { navigate(el.dataset.url); suggestions.dataset.open = '0'; });
       });
       suggestions.querySelectorAll('.os-search').forEach((el) => {
@@ -885,6 +922,12 @@
         e.preventDefault();
         suggActive = Math.max(0, suggActive - 1);
         suggestions.querySelectorAll('.os-item,.os-search').forEach((el, i) => el.dataset.active = i === suggActive ? '1' : '0');
+      } else if (e.key === 'Enter' && suggestions.dataset.open === '1' && suggActive >= 0 && suggItems[suggActive]) {
+        // 高亮了候选却回车：走选中项，而不是落到 form submit 去导航原始输入
+        e.preventDefault();
+        const it = suggItems[suggActive];
+        suggestions.dataset.open = '0';
+        navigate(it.url || it.search);
       } else if (e.key === 'Escape') {
         suggestions.dataset.open = '0';
       }
@@ -903,7 +946,17 @@
         banners.reduce((s, b) => s + b.offsetHeight, 0);
       invoke('set_toolbar_height', { height: h }).catch(() => {});
     }
-    window.addEventListener('resize', reportToolbarHeight);
+    // resize 每个 pointer-move tick 都会来一次：4 次强制布局读 + 一次 IPC。
+    // 用 rAF 合帧，每帧最多量一次（拖拽结束前最后一次变化会被下一帧补上）。
+    let toolbarHeightRaf = 0;
+    function reportToolbarHeightSoon() {
+      if (toolbarHeightRaf) return;
+      toolbarHeightRaf = requestAnimationFrame(() => {
+        toolbarHeightRaf = 0;
+        reportToolbarHeight();
+      });
+    }
+    window.addEventListener('resize', reportToolbarHeightSoon);
     setTimeout(reportToolbarHeight, 100);
     setTimeout(reportToolbarHeight, 500);
 
@@ -911,13 +964,13 @@
     document.addEventListener('keydown', (event) => {
       if (!(event.metaKey || event.ctrlKey)) return;
       const k = event.key.toLowerCase();
-      if (k === 't') { event.preventDefault(); invoke('tab_new', {}).catch(() => {}); }
-      else if (k === 'w') { event.preventDefault(); const a = tabsState.find((t) => t.active); if (a) invoke('tab_close', { id: a.id }).catch(() => {}); }
+      if (k === 't') { event.preventDefault(); invokeOr('新建标签页', 'tab_new', {}); }
+      else if (k === 'w') { event.preventDefault(); const a = tabsState.find((t) => t.active); if (a) invokeOr('关闭标签页', 'tab_close', { id: a.id }); }
       else if (k === 'l') { event.preventDefault(); input.focus(); input.select(); }
       else if (k === 'e') { event.preventDefault(); btnEdit.click(); }
       else if (k === 'f') { event.preventDefault(); if (findBar.dataset.open === '1') closeFindBar(); else openFindBar(); }
       else if (k === 'b' && event.shiftKey) { event.preventDefault(); btnBookmarkBar.click(); }
-      else if (k === '0' && event.metaKey) { event.preventDefault(); zoomFactor = 1.0; invoke('set_zoom', { factor: 1.0 }).catch(() => {}); try { localStorage.setItem('va.browser.zoom', '1'); } catch (e) {} }
+      else if (k === '0') { event.preventDefault(); zoomFactor = 1.0; invoke('set_zoom', { factor: 1.0 }).catch(() => {}); try { localStorage.setItem('va.browser.zoom', '1'); } catch (e) {} }
       else if (k === '+' || k === '=') { event.preventDefault(); zoomBy(0.1); }
       else if (k === '-') { event.preventDefault(); zoomBy(-0.1); }
     });

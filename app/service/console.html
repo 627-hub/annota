@@ -85,14 +85,15 @@
       <div class="actions">
         <button class="btn" id="exp-jsonl" type="button">导出 JSONL</button>
         <button class="btn" id="exp-csv" type="button">导出 CSV</button>
-        <button class="btn" id="exp-json" type="button">导出 JSON</button>
+        <button class="btn" id="exp-json" type="button">导出 JSON（训练集）</button>
+        <button class="btn" id="exp-backup" type="button" title="全量 Pack 形态备份，可用下方「导入标注」原样恢复/合并">备份导出（可导入）</button>
       </div>
-      <p class="sub" style="margin:12px 0 0;font-size:12px">带截图的学习卡（Anki）在「我的库 → 批量导出…」按视频逐条生成。</p>
+      <p class="sub" style="margin:12px 0 0;font-size:12px">前三个是逐条训练集（JSONL/CSV/JSON 不可导入）；「备份导出」是全量 Pack 形态，与下方导入互通。带截图的学习卡（Anki）在「我的库 → 批量导出…」按视频逐条生成。</p>
     </section>
 
     <section class="panel" aria-labelledby="import-heading">
       <h2 id="import-heading">导入标注</h2>
-      <p class="sub note">可选择「导出全部数据」得到的 .json，也可选择单个 Pack，或 <code>{"packs":[…]}</code> 形式的文件。每次最多提交 500 个包。</p>
+      <p class="sub note">可选择本页「备份导出（可导入）」的 .json，或「我的库 → 导出全部数据」得到的文件、单个 Pack、<code>{"packs":[…]}</code> 形式。每次最多提交 500 个包。</p>
       <div class="file-row">
         <label class="btn" for="import-file">选择 JSON 文件<input id="import-file" class="sr-only" type="file" accept=".json,application/json"></label>
         <span class="sub" id="import-name">未选择文件</span>
@@ -117,6 +118,7 @@
     const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
 
     let rows = [];
+    let loadedList = [];   // 完整 {id, pack} 列表（备份导出用）
     let mediaCount = 0;
 
     function render(cards, media, words) {
@@ -150,6 +152,13 @@
     $('exp-jsonl').onclick = () => download(rows.map((r) => JSON.stringify(r)).join('\n') + '\n', 'application/x-ndjson;charset=utf-8', 'annota-training.jsonl');
     $('exp-csv').onclick = () => download('\uFEFF' + [CSV_KEYS.join(','), ...rows.map((r) => CSV_KEYS.map((k) => cell(r[k])).join(','))].join('\r\n'), 'text/csv;charset=utf-8', 'annota-training.csv');
     $('exp-json').onclick = () => download(JSON.stringify(rows, null, 2), 'application/json;charset=utf-8', 'annota-training.json');
+    // 备份导出：全量 Pack 形态（{packs:[{mediaId,pack}]}），与「导入标注」完全互通
+    $('exp-backup').onclick = () => {
+      if (!loadedList || !loadedList.length) { alert('请先等待数据加载完成'); return; }
+      const packs = loadedList.map((p) => ({ mediaId: p.id, pack: p.pack }));
+      download(JSON.stringify({ format: 'annota-backup/1', exportedAt: new Date().toISOString(), packs }, null, 2),
+        'application/json;charset=utf-8', 'annota-backup.json');
+    };
 
     async function load() {
       rows = []; mediaCount = 0;   // 复位：重跑 load() 不会重复累加
@@ -165,6 +174,7 @@
           }));
           for (const item of batch) if (item) list.push(item);
         }
+        loadedList = list;   // 供「备份导出」使用
         mediaCount = list.filter((p) => (Array.isArray(p.pack.entries) ? p.pack.entries : []).length > 0).length;
 
         let entries = 0, days = new Set();

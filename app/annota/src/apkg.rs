@@ -74,7 +74,9 @@ pub fn guid_for(values: &[&str]) -> String {
 pub fn deck_id_for(name: &str) -> i64 {
     let digest = Sha256::digest(format!("annota:{}", name).as_bytes());
     let n = u32::from_be_bytes([digest[0], digest[1], digest[2], digest[3]]);
-    1_730_000_000i64 + (n % 10_000_000) as i64
+    // OCR-fix：原基址 1_730_000_000..1_740_000_000 与 MODEL_ID=1_730_000_001 同段——
+    // 不同牌组名可能撞成同一 id 被 Anki 合并；移到 2.73e9 段与 model/notes 隔离
+    2_730_000_000i64 + (n % 10_000_000) as i64
 }
 
 fn model_json(ts: i64) -> serde_json::Value {
@@ -141,6 +143,14 @@ pub fn build_apkg(
     // 改为进程级单调预留：每次导出按需精确预留 [base, base+2N+16) 窗口，并发/连续导出互不相交。
     let mut next_id = fresh_id_base(ts, notes.len() as i64);
     let db_path = std::env::temp_dir().join(format!("annota-{}.anki2", uuid));
+    // OCR-fix：panic/unwind 时也清理临时库（原 cleanup 只在正常返回路径执行）
+    struct TmpGuard(std::path::PathBuf);
+    impl Drop for TmpGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+    let _tmp_guard = TmpGuard(db_path.clone());
 
     let result = (|| -> Result<(), String> {
         {
@@ -225,8 +235,24 @@ pub fn build_apkg(
         zip.write_all(&db_bytes).map_err(|e| e.to_string())?;
 
         let mut map = serde_json::Map::new();
+        // OCR-fix：media 文件名去路径分隔/控制字符并去重——原样写入可污染包或让 Anki 覆盖导入
+        let mut seen_names = std::collections::HashSet::new();
         for (i, m) in media.iter().enumerate() {
-            map.insert(i.to_string(), json!(m.name));
+            let cleaned: String = m
+                .name
+                .replace(['/', '\\'], "_")
+                .chars()
+                .map(|c| if c.is_control() || c == '"' { '_' } else { c })
+                .collect();
+            let base = cleaned.trim();
+            let base = if base.is_empty() { format!("media-{i}") } else { base.to_string() };
+            let mut name = base.clone();
+            let mut n = 1;
+            while !seen_names.insert(name.clone()) {
+                name = format!("({n}) {base}");
+                n += 1;
+            }
+            map.insert(i.to_string(), json!(name));
         }
         zip.start_file("media", opts).map_err(|e| e.to_string())?;
         zip.write_all(serde_json::to_string(&map).map_err(|e| e.to_string())?.as_bytes())

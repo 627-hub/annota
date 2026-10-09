@@ -5,19 +5,41 @@ use std::io::Write;
 use std::path::PathBuf;
 
 pub fn log_dir() -> PathBuf {
-    #[cfg(target_os = "macos")]
-    {
-        if let Some(h) = std::env::var_os("HOME") {
-            return PathBuf::from(h).join("Library/Logs/annota");
+    // OCR-fix：目录只解析一次并缓存（每次 log() 重复 env 查询/拼接是纯浪费）
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(h) = std::env::var_os("HOME") {
+                return PathBuf::from(h).join("Library/Logs/annota");
+            }
         }
-    }
-    #[cfg(target_os = "windows")]
-    {
-        if let Some(p) = std::env::var_os("LOCALAPPDATA") {
-            return PathBuf::from(p).join("Annota/logs");
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(p) = std::env::var_os("LOCALAPPDATA") {
+                return PathBuf::from(p).join("Annota/logs");
+            }
         }
+        // OCR-fix：其它平台不再回落到共享可写的 /tmp（可被预建符号链接转向/读取）——
+        // 改用每用户 state 目录（$XDG_STATE_HOME 或 ~/.local/state）并收紧权限。
+        let dir = std::env::var_os("XDG_STATE_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))
+            .unwrap_or_else(std::env::temp_dir)
+            .join("annota/logs");
+        dir
+    })
+    .clone()
+}
+
+/// 创建日志目录并（unix）收紧到 0700。
+fn ensure_log_dir(dir: &std::path::Path) {
+    let _ = std::fs::create_dir_all(dir);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
     }
-    std::env::temp_dir().join("annota-logs")
 }
 
 const ROTATE_BYTES: u64 = 5 * 1024 * 1024;
@@ -29,11 +51,16 @@ pub fn log(level: &str, msg: &str) {
         return;
     }
     let dir = log_dir();
-    let _ = std::fs::create_dir_all(&dir);
+    ensure_log_dir(&dir);
     let path = dir.join("annota.log");
-    if let Ok(meta) = std::fs::metadata(&path) {
-        if meta.len() > ROTATE_BYTES {
-            let _ = std::fs::rename(&path, dir.join("annota.log.1"));
+    // OCR-fix：轮转 check-then-rename 加进程锁，避免并发 log() 丢轮转/互相覆盖 .1
+    {
+        static ROTATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ROTATE_LOCK.lock();
+        if let Ok(meta) = std::fs::metadata(&path) {
+            if meta.len() > ROTATE_BYTES {
+                let _ = std::fs::rename(&path, dir.join("annota.log.1"));
+            }
         }
     }
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {

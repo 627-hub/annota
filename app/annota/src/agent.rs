@@ -183,13 +183,13 @@ fn emit_tool(handle: &tauri::AppHandle, id: &str, name: &str, args: &Value, stat
 }
 
 /// 执行一个工具调用（写操作走确认；其余直接跑）
-fn invoke_tool(handle: &tauri::AppHandle, id: &str, name: &str, args: Value) -> Value {
+fn invoke_tool(handle: &tauri::AppHandle, id: &str, name: &str, args: Value, caller: &str) -> Value {
     if is_write_tool(name) {
         purge_expired_pending();
         let confirm_id = format!("c{}", SEQ.fetch_add(1, Ordering::Relaxed));
         pending().lock().unwrap_or_else(|e| e.into_inner()).insert(
             confirm_id.clone(),
-            json!({"name": name, "arguments": args.clone(), "at": now_ms()}),
+            json!({"name": name, "arguments": args.clone(), "at": now_ms(), "caller": caller}),
         );
         emit_tool(
             handle,
@@ -344,7 +344,14 @@ pub async fn agent_run(
     messages: Vec<Value>,
 ) -> Result<Value, String> {
     crate::require_local_or_trusted(&app, &w, "AI 助手")?;
-    let cfg = config(&app).ok_or("未配置模型密钥：请在设置中录入 API key（或设置 LLM_API_KEY）")?;
+    // OCR-fix：config() 内含同步 fs 读取 + keyring 调用——下放到 blocking 线程，别卡 async 运行时
+    let app_cfg = app.clone();
+    let cfg = tauri::async_runtime::spawn_blocking(move || config(&app_cfg))
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("未配置模型密钥：请在设置中录入 API key（或设置 LLM_API_KEY）")?;
+    // OCR-fix：写确认绑定发起会话的 webview label，跨会话不可消费（防猜 confirm_id）
+    let caller = w.label().to_string();
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
         .build()
@@ -379,7 +386,7 @@ pub async fn agent_run(
                 .and_then(|s| serde_json::from_str(s).ok())
                 .unwrap_or_else(|| json!({}));
 
-            let result = invoke_tool(&app, &format!("{id}-{i}"), &name, args.clone());
+            let result = invoke_tool(&app, &format!("{id}-{i}"), &name, args.clone(), &caller);
             let compact = compact_tool_result(&name, &result);
             audit.push(json!({"id": id, "name": name, "arguments": args, "result": compact}));
             convo.push(json!({
@@ -432,6 +439,11 @@ pub fn agent_chat(app: tauri::AppHandle, w: tauri::Webview, confirm_id: String) 
     let age = now_ms().saturating_sub(entry.get("at").and_then(Value::as_u64).unwrap_or(0));
     if age >= PENDING_TTL_MS {
         return Err("确认已过期（超过 30 分钟），请重新发起".to_string());
+    }
+    // OCR-fix：确认必须来自发起该写操作的同一 webview（防其他会话猜 confirm_id 消费）
+    let entry_caller = entry.get("caller").and_then(Value::as_str).unwrap_or("");
+    if !entry_caller.is_empty() && entry_caller != w.label() {
+        return Err("该确认属于其他窗口的会话，已拒绝".to_string());
     }
     let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let args = entry.get("arguments").cloned().unwrap_or_else(|| json!({}));

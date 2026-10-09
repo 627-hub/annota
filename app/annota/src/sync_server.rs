@@ -278,7 +278,12 @@ async fn do_backup(store: &Path, db: &Db, dest: &Path) -> Result<(), String> {
             }
         }
     }
-    db.backup_to(&dest.join("annota.db"))?;
+    // OCR-fix：VACUUM INTO 是同步长磁盘操作——放 blocking 线程，不占 tokio worker
+    let dest_db = dest.join("annota.db");
+    let db = db.clone();
+    tauri::async_runtime::spawn_blocking(move || db.backup_to(&dest_db))
+        .await
+        .map_err(|e| format!("backup task: {e}"))??;
     Ok(())
 }
 
@@ -736,6 +741,10 @@ async fn put_anno(
         }
         pack
     };
+    // OCR-fix：机会性清理无人等待的锁项——per-media 锁按需插入且从不删除，长跑无界增长
+    if state.locks.len() > 1024 {
+        state.locks.retain(|_, v| Arc::strong_count(v) > 1);
+    }
 
     json_ok(pack)
 }

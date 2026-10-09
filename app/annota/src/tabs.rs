@@ -105,6 +105,8 @@ pub fn create_tab(
     let id_for_events = id.clone();
     let app_nav = app.clone();
     let mut builder = WebviewBuilder::new(&id, WebviewUrl::External(parsed))
+        // UA 修正：WKWebView 默认 UA 不含 Safari/WebKit 版本号，B 站等站点按 UA 判「浏览器版本过低」拒访。
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15")
         .initialization_script(bridge_js)
         .initialization_script(annotate_js)
         // P1-a#4：桥接脚本用它把 document.title 归属到本 tab（emit annota://page-title）
@@ -198,7 +200,7 @@ pub fn create_tab(
                     }
                     let filename = filename_from_url(&url);
                     // 目标已存在时自动去重，避免同名 URL 静默覆盖。
-                    let target = unique_path(&dir, &filename);
+                    let target = reserve_unique_path(&dir, &filename);   // OCR-fix：create_new 原子占名，防并发下载同名互覆
                     *destination = target.clone();
                     let saved_name = target
                         .file_name()
@@ -455,6 +457,9 @@ fn session_path(app: &AppHandle) -> PathBuf {
 /// 标脏时间戳（ms，0 = 干净）。emit_tabs 每次调用都会置值。
 static SESSION_DIRTY_AT: AtomicI64 = AtomicI64::new(0);
 /// 用户主动选择「不恢复上次会话」：内存标志让防抖线程停写，文件里的 disabled 让下次启动也不恢复。
+/// OCR-fix：会话文件写入（完整快照 vs disabled 标记）的互斥——防防抖线程在 clear 间隙用快照覆盖标记。
+static SESSION_FILE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 static SESSION_DISABLED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
@@ -474,6 +479,8 @@ fn now_millis() -> i64 {
 
 /// 把当前 tab 快照写到会话文件（同步、best-effort；失败只记日志）。
 fn persist_session(app: &AppHandle) {
+    // 与 clear_session 串行化整个「复查+写盘」段（OCR-fix：仅复查仍有竞态窗口）
+    let _file_guard = SESSION_FILE_LOCK.lock();
     // 写盘前必须再查一次 DISABLED：用户点「不恢复上次会话」后，防抖线程可能刚好已通过
     // dirty 检查进入这里，若不复查会用完整快照覆盖 disabled 标记，导致下次启动又恢复。
     if SESSION_DISABLED.load(Ordering::Relaxed) {
@@ -520,7 +527,7 @@ pub fn spawn_session_persister(app: AppHandle) {
         if dirty_at == 0 {
             continue;
         }
-        if now_millis() - dirty_at < 400 {
+        if now_millis().saturating_sub(dirty_at) < 400 {   // OCR-fix：时钟回拨不再永久卡住落盘
             continue; // 距上次变更不足，继续等
         }
         SESSION_DIRTY_AT.store(0, Ordering::Relaxed);
@@ -635,6 +642,7 @@ pub fn restore_tabs(
 /// 语义是「下次启动干净开场」，不是永久关闭：写入 `disabled` 标记后，本次运行内防抖线程停止落盘；
 /// 下次启动 `restore_tabs` 消费掉该标记并清除，此后恢复常规持久化（避免用户被永久卡在「无法恢复」）。
 pub fn clear_session(app: &AppHandle) {
+    let _file_guard = SESSION_FILE_LOCK.lock();
     SESSION_DIRTY_AT.store(0, Ordering::Relaxed);
     SESSION_DISABLED.store(true, Ordering::Relaxed);
     let path = session_path(app);
@@ -689,22 +697,29 @@ fn filename_from_url(u: &url::Url) -> String {
 }
 
 /// 目标已存在时生成不冲突的路径：`name.ext` → `name (1).ext`。
-fn unique_path(dir: &std::path::Path, filename: &str) -> std::path::PathBuf {
-    let candidate = dir.join(filename);
-    if !candidate.exists() {
-        return candidate;
+/// OCR-fix：以 create_new 原子预留下载目标名（exists() 探测+另建存在 TOCTOU，并发同名互覆）。
+/// 预留出的空文件由后续下载内容覆写；WKWebView 下载流程接受已存在路径。
+fn reserve_unique_path(dir: &std::path::Path, filename: &str) -> std::path::PathBuf {
+    let try_create = |name: &str| -> Option<std::path::PathBuf> {
+        let p = dir.join(name);
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&p) {
+            Ok(_) => Some(p),
+            Err(_) => None,
+        }
+    };
+    if let Some(p) = try_create(filename) {
+        return p;
     }
     let (stem, ext) = match filename.rsplit_once('.') {
         Some((s, e)) if !s.is_empty() => (s.to_string(), format!(".{e}")),
         _ => (filename.to_string(), String::new()),
     };
     for n in 1..10_000 {
-        let c = dir.join(format!("{stem} ({n}){ext}"));
-        if !c.exists() {
-            return c;
+        if let Some(p) = try_create(&format!("{stem} ({n}){ext}")) {
+            return p;
         }
     }
-    candidate
+    dir.join(filename)
 }
 
 #[cfg(test)]

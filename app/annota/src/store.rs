@@ -19,6 +19,8 @@ const HISTORY_CAP: i64 = 5000;
 #[derive(Clone)]
 pub struct Db {
     conn: Arc<Mutex<Connection>>,
+    /// 主库文件路径（内存库为 None）。备份走独立连接，避免 VACUUM INTO 长时间占住共享互斥。
+    source: Option<std::path::PathBuf>,
 }
 
 /// Tauri 托管状态：main.rs `.manage(DbState(db))`，钩子内 `app.state::<DbState>()` 取用。
@@ -59,17 +61,17 @@ impl Db {
             std::fs::create_dir_all(parent).map_err(|e| format!("create db dir: {e}"))?;
         }
         let conn = Connection::open(path).map_err(|e| format!("open db: {e}"))?;
-        Self::from_conn(conn)
+        Self::from_conn(conn, Some(path.to_path_buf()))
     }
 
-    /// P1-b#11：文件库/临时库都不可用时的最终兜底——纯内存库（进程级、不落盘）。
+    /// P2-D2：文件库/临时库都不可用时的最终兜底——纯内存库（进程级、不落盘）。
     /// 收藏/历史/下载在本进程内仍可用，重启后为空；避免整个应用起不来。
     pub fn open_in_memory() -> Result<Self, String> {
         let conn = Connection::open_in_memory().map_err(|e| format!("open memory db: {e}"))?;
-        Self::from_conn(conn)
+        Self::from_conn(conn, None)
     }
 
-    fn from_conn(conn: Connection) -> Result<Self, String> {
+    fn from_conn(conn: Connection, source: Option<std::path::PathBuf>) -> Result<Self, String> {
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=NORMAL;
@@ -77,7 +79,7 @@ impl Db {
              PRAGMA foreign_keys=ON;",
         )
         .map_err(|e| format!("pragma: {e}"))?;
-        let db = Db { conn: Arc::new(Mutex::new(conn)) };
+        let db = Db { conn: Arc::new(Mutex::new(conn)), source };
         db.migrate()?;
         Ok(db)
     }
@@ -150,11 +152,20 @@ impl Db {
         if let Some(p) = dest.parent() {
             std::fs::create_dir_all(p).map_err(|e| format!("create backup dir: {e}"))?;
         }
+        // OCR-fix：目标已存在先删（同日重备份语义），而非让 SQLite 报错
+        if dest.exists() {
+            std::fs::remove_file(dest).map_err(|e| format!("remove old backup: {e}"))?;
+        }
         let escaped = dest.to_string_lossy().replace('\'', "''");
-        self.with_conn(|c| {
-            c.execute_batch(&format!("VACUUM INTO '{escaped}'"))
-                .map_err(|e| format!("backup: {e}"))
-        })
+        let sql = format!("VACUUM INTO '{escaped}'");
+        // OCR-fix：优先独立连接执行——VACUUM INTO 是长磁盘操作，走共享互斥会停摆全部 DB 访问
+        match &self.source {
+            Some(src) => {
+                let c = Connection::open(src).map_err(|e| format!("backup open source: {e}"))?;
+                c.execute_batch(&sql).map_err(|e| format!("backup: {e}"))
+            }
+            None => self.with_conn(|c| c.execute_batch(&sql).map_err(|e| format!("backup: {e}"))),
+        }
     }
 
     // ---------- 收藏 ----------
@@ -186,18 +197,14 @@ impl Db {
     /// 新增收藏（同 URL 幂等：已存在则返回 false）。
     pub fn add_bookmark(&self, url: &str, title: &str, favicon: Option<&str>) -> Result<bool, String> {
         self.with_conn(|c| {
-            let exists: i64 = c
-                .query_row("SELECT COUNT(*) FROM bookmarks WHERE url=?1", params![url], |r| r.get(0))
+            // OCR-fix：INSERT OR IGNORE + changes（SELECT-then-INSERT 在第二进程并发下会 UNIQUE 报错而非幂等）
+            let n = c
+                .execute(
+                    "INSERT OR IGNORE INTO bookmarks (url,title,favicon,created_at) VALUES (?1,?2,?3,?4)",
+                    params![url, title, favicon, now_ms()],
+                )
                 .map_err(|e| e.to_string())?;
-            if exists > 0 {
-                return Ok(false);
-            }
-            c.execute(
-                "INSERT INTO bookmarks (url,title,favicon,created_at) VALUES (?1,?2,?3,?4)",
-                params![url, title, favicon, now_ms()],
-            )
-            .map_err(|e| e.to_string())?;
-            Ok(true)
+            Ok(n > 0)
         })
     }
 
@@ -221,9 +228,11 @@ impl Db {
                 params![url, title, now_ms(), tab_id],
             )
             .map_err(|e| e.to_string())?;
+            // OCR-fix：按 visit_at 索引的 OFFSET 子查询裁剪（id NOT IN 每次全表物化，热路径浪费）
             tx.execute(
-                "DELETE FROM history WHERE id NOT IN (
-                     SELECT id FROM history ORDER BY visit_at DESC, id DESC LIMIT ?1)",
+                "DELETE FROM history WHERE id < (
+                     SELECT id FROM history ORDER BY visit_at DESC, id DESC LIMIT 1 OFFSET ?1
+                 )",
                 params![HISTORY_CAP],
             )
             .map_err(|e| e.to_string())?;
