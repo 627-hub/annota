@@ -43,6 +43,7 @@
     "allow-find",
     "allow-overlay",
     "allow-set-toolbar-height",
-    "allow-diag-status"
+    "allow-diag-status",
+    "allow-trust-current-site"
   ]
 }

@@ -62,6 +62,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "image",
+ "keyring",
  "reqwest 0.12.28",
  "rusqlite",
  "serde",
@@ -2582,6 +2583,16 @@ checksum = "0fbe853b403ae61a04233030ae8a79d94975281ed9770a1f9e246732b534b28d"
 dependencies = [
  "bitflags 2.13.2",
  "serde",
+]
+
+[[package]]
+name = "keyring"
+version = "3.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eebcc3aff044e5944a8fbaf69eb277d11986064cba30c468730e8b9909fb551c"
+dependencies = [
+ "log",
+ "zeroize",
 ]
 
 [[package]]

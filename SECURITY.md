@@ -30,9 +30,35 @@
 - 本地页服务（工作区 / 我的库 / 本地数据 API）绑定 `127.0.0.1:8793`，仅回环；内置 MCP server 绑 `127.0.0.1:8794`。
 - 密钥（AI / 翻译等）只从环境变量或本机钥匙串读取，不入发行包、不入仓库。
 
-## 已知边界（有意为之）
+## 已知边界与加固状态
 
-- 为给任意网站加标注，桌面浏览器把桥接命令开放给已加载的页面：截图（`capture_frame`）、写剪贴板（`write_clipboard`）、导航（`navigate_browser`）、受限的本地请求（`va_fetch`），并启用了 `withGlobalTauri`（页面可拿到 `window.__TAURI__` 便捷 API，实际命令仍受 capabilities 白名单约束）。**请在可信网站使用，不要用 Annota 打开来源不明的页面。**
-- `va_fetch` 只允许 `127.0.0.1` / `localhost` / `::1` 上的本地服务，页面无法用它访问任意远端地址。
-- 本地 REST（`/api/bookmarks`、`/api/history`、`/api/downloads` 等）：可选、仅回环、无鉴权、未校验 `Host`/`Origin`（DNS rebinding 风险），**待加固**；仅建议在可信本机环境使用。
-- 平台说明：macOS 正式发布版经 Apple 签名与公证；Windows 安装包未做代码签名，SmartScreen 可能提示。
+### 高危桌面命令（P2-S1，2026-10-09 加固）
+
+为给网页加标注，桥接命令仍开放给已加载的页面，但**每个高危命令在 Rust 侧校验调用方来源**：
+
+- 放行：壳内页面（工具栏/浮层/工作区）与**用户显式信任的站点**（工具栏菜单「信任当前站点」或设置页信任列表，最多 50 个）。
+- 其余远程页面调用一律拒绝并提示如何信任。覆盖：截图（`capture_frame`）、写剪贴板（`write_clipboard`）、导航（`navigate_browser`）、浏览器控制/查找/缩放、标签管理、开发者工具、AI 助手（`agent_run`/`agent_chat`/`agent_cancel`）、安装更新（`install_update`）。
+- 残余边界（低危，暂不校验）：`set_shell_mode` / overlay 开关 / `tabs_snapshot` / `set_toolbar_height` / `bridge_probe_reply`（写操作确认回传通道）——最坏影响为界面骚扰，无数据外泄面。
+- `va_fetch` 仍只允许 `127.0.0.1` / `localhost` / `::1` 本地服务。
+
+### 本地 REST（P2-S2，2026-10-09 加固）
+
+- **Host 校验**：必须是回环名（`127.0.0.1:8793` / `localhost:8793` / `[::1]:8793`），拒 DNS rebinding。
+- **Origin 校验**：带 Origin 的请求（浏览器跨站写入必带）必须来自回环页面，否则 403——恶意页面的 no-cors 写入被拒。
+- **写入只收 `application/json`**（no-cors 只能发 `text/plain`，天然被拒）。
+- 响应**不带 CORS 头**，跨站 JS 读不到响应体。
+- 无 Origin 的特权客户端（curl、userscript 管理器 GM 请求）仍可访问——它们本就不受浏览器同源约束，且与本机用户同信任级。
+- 无 token：同机进程本就能读钥匙串/设置文件，token 不能提升对「同机恶意进程」的防御；待出现远程访问需求时再引入。
+
+### 数据完整性（P2-S3，2026-10-09 加固）
+
+- 标注包每次覆盖前留存一代 `.bak`；损坏文件拒写（409）并保留 `.corrupt` 副本；`POST /api/anno/:id/restore` 可从 `.bak` 恢复；启动自检（`diag_status.corrupt_packs`）上报损坏清单。
+
+### 凭据（P1-c#15）
+
+- LLM API key 解析顺序：环境变量（开发者）→ **macOS 钥匙串 / Windows DPAPI**（in-app 设置页录入，服务名 `Annota`）→ 无。key **不落 settings 文件、不回显**（接口只返回 `hasApiKey` 布尔）。
+
+### 平台说明
+
+- macOS 正式发布版经 Apple 签名与公证；Windows 安装包未做代码签名，SmartScreen 可能提示。
+- 本应用**无遥测**：不上传任何使用数据；崩溃报告仅本地落盘，上传需用户显式确认。

@@ -16,6 +16,7 @@ mod agent;
 mod apkg;
 mod tabs;
 mod store;
+mod logf;
 use agent::{agent_cancel, agent_chat, agent_run};
 use tabs::{TabManager, TabState};
 use store::DbState;
@@ -75,6 +76,99 @@ pub fn page_zoom_script() -> String {
 
 /// P1-b#11：本地库是否已降级为内存模式（文件库+临时库都打不开时）。
 static DB_MEMORY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+// ---------- P2-S1：高危命令的调用方来源校验（本地页 + 用户信任站点） ----------
+
+/// 壳内页面的 origin（工具栏/浮层/工作区）。
+pub(crate) fn is_local_origin(origin: &str) -> bool {
+    let o = origin.trim().trim_end_matches('/');
+    o.starts_with("app://") || o.starts_with("tauri://")
+        || o == "http://tauri.localhost" || o == "https://tauri.localhost"
+        || o == "http://127.0.0.1:8793" || o == "http://localhost:8793" || o == "http://[::1]:8793"
+}
+
+/// 调用方 webview 当前页面的 origin。
+pub(crate) fn caller_origin(w: &tauri::Webview) -> String {
+    w.url()
+        .ok()
+        .map(|u| u.origin().ascii_serialization())
+        .unwrap_or_default()
+}
+
+/// 用户显式信任的站点列表（settings.trustedOrigins）。小文件，按需同步读即可。
+pub(crate) fn trusted_origins(app: &AppHandle) -> Vec<String> {
+    let path = sync_server::resolve_settings_path(app);
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|v| v.get("trustedOrigins").cloned())
+        .and_then(|v| v.as_array().cloned())
+        .map(|arr| arr.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+        .unwrap_or_default()
+}
+
+/// 高危命令守卫：调用方必须是壳内页面，或该页面 origin 在用户信任列表中。
+pub(crate) fn require_local_or_trusted(
+    app: &AppHandle,
+    w: &tauri::Webview,
+    what: &str,
+) -> Result<(), String> {
+    let origin = caller_origin(w);
+    if origin.is_empty() {
+        return Err(format!("{what} 需要可识别的页面来源，已拒绝"));
+    }
+    if is_local_origin(&origin) {
+        return Ok(());
+    }
+    if trusted_origins(app).iter().any(|t| t == &origin) {
+        return Ok(());
+    }
+    Err(format!(
+        "{what} 需要先信任当前站点：请在工具栏菜单点「信任当前站点」或将 {origin} 加入设置里的信任列表"
+    ))
+}
+
+// P2-S1：把当前活动标签页的 origin 加入信任列表（仅工具栏可调用）。
+#[tauri::command]
+fn trust_current_site(app: tauri::AppHandle, w: tauri::Webview) -> Result<String, String> {
+    let caller = caller_origin(&w);
+    if !is_local_origin(&caller) {
+        return Err("只能从工具栏信任站点".to_string());
+    }
+    let target = tabs::active_webview(&app)
+        .ok()
+        .and_then(|v| v.url().ok())
+        .ok_or_else(|| "没有可识别的活动标签页".to_string())?;
+    if !matches!(target.scheme(), "http" | "https") {
+        return Err("只能信任 http(s) 站点".to_string());
+    }
+    let origin = target.origin().ascii_serialization();
+    let path = sync_server::resolve_settings_path(&app);
+    let mut v: Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .unwrap_or_else(|| json!({}));
+    {
+        let obj = v.as_object_mut().ok_or_else(|| "settings 结构异常".to_string())?;
+        let arr = obj
+            .entry("trustedOrigins")
+            .or_insert_with(|| json!([]))
+            .as_array_mut()
+            .ok_or_else(|| "trustedOrigins 结构异常".to_string())?;
+        if !arr.iter().any(|x| x.as_str() == Some(origin.as_str())) {
+            if arr.len() >= 50 {
+                return Err("信任列表已满（50），请先在设置中移除不用的站点".to_string());
+            }
+            arr.push(json!(origin.clone()));
+        }
+    }
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    std::fs::write(&path, serde_json::to_vec_pretty(&v).unwrap_or_default())
+        .map_err(|e| format!("写入设置失败：{e}"))?;
+    Ok(origin)
+}
 // 下拉浮层（菜单 / 历史 / 下载面板）的 overlay webview。
 // 它按需创建 → 永远是最后添加的子 webview → 天然盖在所有 tab 之上，
 // 因此**不需要增高工具栏、也不需要移动页面**（早期方案增高工具栏会把内容整体下推 420px）。
@@ -238,7 +332,8 @@ fn do_write_clipboard(
 
 // ---------- Tauri 命令 ----------
 #[tauri::command]
-async fn capture_frame(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+async fn capture_frame(app: tauri::AppHandle, w: tauri::Webview) -> Result<serde_json::Value, String> {
+    require_local_or_trusted(&app, &w, "截图")?;
     let windows = tauri_plugin_screenshots::get_screenshotable_windows()
         .await
         .map_err(|e| e.to_string())?;
@@ -278,10 +373,12 @@ async fn capture_frame(app: tauri::AppHandle) -> Result<serde_json::Value, Strin
 #[tauri::command]
 async fn write_clipboard(
     app: tauri::AppHandle,
+    w: tauri::Webview,
     image: Option<String>,
     text: Option<String>,
     html: Option<String>,
 ) -> Result<serde_json::Value, String> {
+    require_local_or_trusted(&app, &w, "写剪贴板")?;
     do_write_clipboard(&app, image, text, html)
 }
 
@@ -317,7 +414,8 @@ fn resolve_nav_url(raw: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
-async fn navigate_browser(app: tauri::AppHandle, url: String) -> Result<(), String> {
+async fn navigate_browser(app: tauri::AppHandle, w: tauri::Webview, url: String) -> Result<(), String> {
+    require_local_or_trusted(&app, &w, "导航")?;
     let target = resolve_nav_url(&url)?;
     let parsed = url::Url::parse(&target).map_err(|e| e.to_string())?;
     let webview = tabs::active_webview(&app)?;
@@ -326,7 +424,8 @@ async fn navigate_browser(app: tauri::AppHandle, url: String) -> Result<(), Stri
 }
 
 #[tauri::command]
-fn browser_action(app: tauri::AppHandle, action: String) -> Result<(), String> {
+fn browser_action(app: tauri::AppHandle, w: tauri::Webview, action: String) -> Result<(), String> {
+    require_local_or_trusted(&app, &w, "浏览器控制")?;
     let script = match action.as_str() {
         "back" => "history.back()",
         "forward" => "history.forward()",
@@ -485,7 +584,8 @@ fn tabs_snapshot(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
 
 // 开发者工具（M6d）：打开当前活动标签页的 devtools（WKWebView 需 Safari 16.4+）。
 #[tauri::command]
-fn open_devtools(app: tauri::AppHandle) -> Result<(), String> {
+fn open_devtools(app: tauri::AppHandle, w: tauri::Webview) -> Result<(), String> {
+    require_local_or_trusted(&app, &w, "开发者工具")?;
     let webview = tabs::active_webview(&app)?;
     webview.open_devtools();
     Ok(())
@@ -503,7 +603,8 @@ fn set_toolbar_height(app: tauri::AppHandle, height: f64) -> Result<(), String> 
 
 // 页面内查找（M7）：在当前活动标签页执行查找，并统计总匹配数 emit 给工具栏（P1-a#5）。
 #[tauri::command]
-fn find_in_page(app: tauri::AppHandle, text: String, forward: bool) -> Result<(), String> {
+fn find_in_page(app: tauri::AppHandle, w: tauri::Webview, text: String, forward: bool) -> Result<(), String> {
+    require_local_or_trusted(&app, &w, "页内查找")?;
     let webview = tabs::active_webview(&app)?;
     // window.find(text, caseSensitive, backwards, wrapAround, wholeWord, searchInFrames, showDialog)
     // 注意方向是第 3 位 backwards（要取反），且 showDialog 必须为 false ——
@@ -537,20 +638,23 @@ fn find_in_page(app: tauri::AppHandle, text: String, forward: bool) -> Result<()
 
 // 缩放控制（M7）：记入全局并设置当前活动标签页的页面缩放（P1-a#6）。
 #[tauri::command]
-fn set_zoom(app: tauri::AppHandle, factor: f64) -> Result<(), String> {
+fn set_zoom(app: tauri::AppHandle, w: tauri::Webview, factor: f64) -> Result<(), String> {
+    require_local_or_trusted(&app, &w, "缩放")?;
     let factor = factor.clamp(0.25, 5.0);
     PAGE_ZOOM_BITS.store(factor.to_bits(), std::sync::atomic::Ordering::Relaxed);
     let webview = tabs::active_webview(&app)?;
     webview.eval(&page_zoom_script()).map_err(|e| e.to_string())
 }
 
-// P1-b#9：本地同步服务状态（启动失败原因 + 是否在跑 + 库是否内存降级）。
+// P1-b#9 + P2-S3：本地同步服务状态 + 库降级标记 + 损坏标注包扫描。
 #[tauri::command]
-fn diag_status() -> serde_json::Value {
+fn diag_status(app: tauri::AppHandle) -> serde_json::Value {
+    let store = sync_server::resolve_store_path(&app);
     json!({
         "running": sync_server::server_running(),
         "error": sync_server::server_error(),
         "db_memory": DB_MEMORY.load(std::sync::atomic::Ordering::Relaxed),
+        "corrupt_packs": sync_server::scan_corrupt_packs(&store),
     })
 }
 
@@ -575,7 +679,8 @@ fn restart_server(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
 
 // ---------- 标签页命令（M3） ----------
 #[tauri::command]
-fn tab_new(app: tauri::AppHandle, url: Option<String>) -> Result<String, String> {
+fn tab_new(app: tauri::AppHandle, w: tauri::Webview, url: Option<String>) -> Result<String, String> {
+    require_local_or_trusted(&app, &w, "新建标签")?;
     let window = app.get_window("main").ok_or_else(|| "主窗口不存在".to_string())?;
     let size = window.inner_size().map_err(|e| e.to_string())?;
     let sf = window.scale_factor().map_err(|e| e.to_string())?;
@@ -598,7 +703,8 @@ fn tab_new(app: tauri::AppHandle, url: Option<String>) -> Result<String, String>
 }
 
 #[tauri::command]
-fn tab_activate(app: tauri::AppHandle, id: String) -> Result<(), String> {
+fn tab_activate(app: tauri::AppHandle, w: tauri::Webview, id: String) -> Result<(), String> {
+    require_local_or_trusted(&app, &w, "切换标签")?;
     tabs::activate_tab(&app, &id)?;
     // P1-a#6：切 tab 后把全局缩放重放到新激活的 webview（标签数字与实际一致）
     if let Ok(wv) = tabs::active_webview(&app) {
@@ -609,7 +715,8 @@ fn tab_activate(app: tauri::AppHandle, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn tab_close(app: tauri::AppHandle, id: String) -> Result<(), String> {
+fn tab_close(app: tauri::AppHandle, w: tauri::Webview, id: String) -> Result<(), String> {
+    require_local_or_trusted(&app, &w, "关闭标签")?;
     tabs::close_tab(&app, &id)?;
     let _ = apply_layout(&app);
     Ok(())
@@ -617,7 +724,8 @@ fn tab_close(app: tauri::AppHandle, id: String) -> Result<(), String> {
 
 // M6a：清除会话文件，下次启动不再恢复上次标签页。
 #[tauri::command]
-fn tab_session_clear(app: tauri::AppHandle) -> Result<(), String> {
+fn tab_session_clear(app: tauri::AppHandle, w: tauri::Webview) -> Result<(), String> {
+    require_local_or_trusted(&app, &w, "清除会话")?;
     tabs::clear_session(&app);
     Ok(())
 }
@@ -1051,7 +1159,8 @@ fn make_mcp_tools() -> tauri_plugin_mcp_server::McpBuilder {
 
 // 用户确认后：下载并安装更新，然后重启应用（由工具栏「更多」菜单触发）。
 #[tauri::command]
-async fn install_update(app: AppHandle) -> Result<String, String> {
+async fn install_update(app: AppHandle, w: tauri::Webview) -> Result<String, String> {
+    require_local_or_trusted(&app, &w, "安装更新")?;
     let updater = app.updater().map_err(|e| e.to_string())?;
     let update = updater
         .check()
@@ -1074,8 +1183,9 @@ fn spawn_debug_hooks(handle: AppHandle) {
         let h = handle.clone();
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+            let wv = h.get_webview("toolbar").expect("toolbar webview（agent 测试钩子需要）");
             let messages = vec![json!({"role": "user", "content": prompt})];
-            match agent_run(h, messages).await {
+            match agent_run(h, wv, messages).await {
                 Ok(res) => println!("[annota][agent-test] OK {}", res),
                 Err(e) => println!("[annota][agent-test] ERR {e}"),
             }
@@ -1084,6 +1194,10 @@ fn spawn_debug_hooks(handle: AppHandle) {
     if std::env::var("ANNOTA_TABS_TEST").is_ok() {
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            // P2-S1 后命令带 Webview 守卫；测试钩子以工具栏身份直接调用底层命令。
+            let wv = handle
+                .get_webview("toolbar")
+                .expect("toolbar webview（测试钩子需要）");
             let snap = |h: &AppHandle| {
                 let st = h.state::<tabs::TabState>();
                 let m = st.lock().unwrap();
@@ -1091,15 +1205,15 @@ fn spawn_debug_hooks(handle: AppHandle) {
             };
             println!("[annota][tabs-test] start {:?}", snap(&handle));
             for u in ["https://example.com/", "https://www.bilibili.com/"] {
-                match tab_new(handle.clone(), Some(u.to_string())) {
+                match tab_new(handle.clone(), wv.clone(), Some(u.to_string())) {
                     Ok(id) => println!("[annota][tabs-test] created {id} -> {:?}", snap(&handle)),
                     Err(e) => println!("[annota][tabs-test] tab_new ERR {e}"),
                 }
             }
-            if let Err(e) = tab_activate(handle.clone(), tabs::FIRST_TAB_ID.to_string()) {
+            if let Err(e) = tab_activate(handle.clone(), wv.clone(), tabs::FIRST_TAB_ID.to_string()) {
                 println!("[annota][tabs-test] activate ERR {e}");
             } else { println!("[annota][tabs-test] activated first {:?}", snap(&handle)); }
-            match tab_close(handle.clone(), tabs::FIRST_TAB_ID.to_string()) {
+            match tab_close(handle.clone(), wv, tabs::FIRST_TAB_ID.to_string()) {
                 Ok(_) => println!("[annota][tabs-test] closed first -> {:?}", snap(&handle)),
                 Err(e) => println!("[annota][tabs-test] tab_close ERR {e}"),
             }
@@ -1110,6 +1224,9 @@ fn spawn_debug_hooks(handle: AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn main() {
+    // P2-O2：panic 落盘 + 关键事件进滚动日志（仅本机，无遥测）
+    logf::install_panic_hook();
+    logf::log("INFO", "annota starting");
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_screenshots::init())
@@ -1134,6 +1251,7 @@ pub fn main() {
             set_zoom,
             diag_status,
             restart_server,
+            trust_current_site,
             agent_run,
             agent_chat,
             agent_cancel,
@@ -1169,6 +1287,7 @@ pub fn main() {
                             // P1-b#11：不再 panic——退化为内存库（本进程可用、重启为空），
                             // 并置标记供 diag_status 上报，工具栏显示启动横幅。
                             eprintln!("[annota] 临时库亦不可用 {fallback:?}: {e2}；降级为内存库");
+                            crate::alog!("ERROR", "db fallback to memory: {e2}");
                             DB_MEMORY.store(true, std::sync::atomic::Ordering::Relaxed);
                             store::Db::open_in_memory().expect("内存库初始化失败")
                         }

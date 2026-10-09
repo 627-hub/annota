@@ -285,6 +285,12 @@
           "markdownDescription": "Enables the tab_new command without any pre-configured scope."
         },
         {
+          "description": "Allows the toolbar to add the active tab's origin to the trusted-sites list (S1 guard for high-risk commands).",
+          "type": "string",
+          "const": "allow-trust-current-site",
+          "markdownDescription": "Allows the toolbar to add the active tab's origin to the trusted-sites list (S1 guard for high-risk commands)."
+        },
+        {
           "description": "Enables the va_fetch command without any pre-configured scope.",
           "type": "string",
           "const": "allow-va-fetch",

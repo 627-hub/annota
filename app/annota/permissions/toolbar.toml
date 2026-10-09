@@ -11,3 +11,8 @@ commands.allow = ["set_toolbar_height"]
 identifier = "allow-diag-status"
 description = "Allows the toolbar to read local server/database diagnostics (bind failure reason, memory-db degrade) and retry starting the local sync server."
 commands.allow = ["diag_status", "restart_server"]
+
+[[permission]]
+identifier = "allow-trust-current-site"
+description = "Allows the toolbar to add the active tab's origin to the trusted-sites list (S1 guard for high-risk commands)."
+commands.allow = ["trust_current_site"]

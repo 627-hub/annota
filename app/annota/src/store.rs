@@ -87,7 +87,27 @@ impl Db {
         f(&conn)
     }
 
+    /// P2-D3：带版本号的迁移框架。user_version=1 为当前 schema；
+    /// 未来加字段时：version<2 的库跑 v2 迁移并升版本；高版本库拒开（防旧应用写坏新库）。
     fn migrate(&self) -> Result<(), String> {
+        let version: i64 = self.with_conn(|c| {
+            c.query_row("PRAGMA user_version", [], |r| r.get(0))
+                .map_err(|e| e.to_string())
+        })?;
+        if version > 1 {
+            return Err(format!("数据库版本 {version} 高于本应用支持的 1，请升级 Annota"));
+        }
+        if version < 1 {
+            self.migrate_v1()?;
+            self.with_conn(|c| {
+                c.execute_batch("PRAGMA user_version = 1")
+                    .map_err(|e| e.to_string())
+            })?;
+        }
+        Ok(())
+    }
+
+    fn migrate_v1(&self) -> Result<(), String> {
         self.with_conn(|c| {
             c.execute_batch(
                 "CREATE TABLE IF NOT EXISTS bookmarks (
@@ -122,6 +142,18 @@ impl Db {
                  CREATE INDEX IF NOT EXISTS idx_downloads_created ON downloads(created_at DESC);",
             )
             .map_err(|e| format!("migrate: {e}"))
+        })
+    }
+
+    /// P2-D2：在线一致性备份（VACUUM INTO，WAL 安全）。生成单文件新库。
+    pub fn backup_to(&self, dest: &Path) -> Result<(), String> {
+        if let Some(p) = dest.parent() {
+            std::fs::create_dir_all(p).map_err(|e| format!("create backup dir: {e}"))?;
+        }
+        let escaped = dest.to_string_lossy().replace('\'', "''");
+        self.with_conn(|c| {
+            c.execute_batch(&format!("VACUUM INTO '{escaped}'"))
+                .map_err(|e| format!("backup: {e}"))
         })
     }
 
