@@ -33,7 +33,7 @@ fn spawn_update_check(app: &AppHandle) {
             match h.updater() {
                 Ok(updater) => match updater.check().await {
                     Ok(Some(update)) => {
-                        println!("[annota] update available: {} -> {}", update.current_version, update.version);
+                        crate::alog!("INFO", "[annota] update available: {} -> {}", update.current_version, update.version);
                         let payload = json!({
                             "version": update.version,
                             "currentVersion": update.current_version,
@@ -41,10 +41,10 @@ fn spawn_update_check(app: &AppHandle) {
                         });
                         let _ = h.emit("annota://update-available", payload);
                     }
-                    Ok(None) => println!("[annota] up to date"),
-                    Err(e) => println!("[annota] update check failed: {e}"),
+                    Ok(None) => crate::alog!("INFO", "[annota] up to date"),
+                    Err(e) => crate::alog!("INFO", "[annota] update check failed: {e}"),
                 },
-                Err(e) => println!("[annota] updater unavailable: {e}"),
+                Err(e) => crate::alog!("INFO", "[annota] updater unavailable: {e}"),
             }
             tokio::time::sleep(std::time::Duration::from_secs(24 * 60 * 60)).await;
         }
@@ -384,7 +384,7 @@ async fn write_clipboard(
 
 #[tauri::command]
 fn bridge_probe_reply(keys: Vec<String>) {
-    println!("[annota] bridge probe keys: {keys:?}");
+    crate::alog!("INFO", "[annota] bridge probe keys: {keys:?}");
 }
 
 fn resolve_nav_url(raw: &str) -> Result<String, String> {
@@ -821,7 +821,7 @@ fn setup_webviews(window: &tauri::Window, app: &AppHandle) -> Result<(), String>
     if restored == 0 {
         let start_url = "http://127.0.0.1:8793/".to_string();
         let id = tabs::create_tab(app, window, start_url, Vec::new(), BRIDGE_JS, ANNOTATE_JS, pos, vp)?;
-        println!("[annota] first tab created: {id}");
+        crate::alog!("INFO", "[annota] first tab created: {id}");
     }
 
     // M6a：后台防抖落盘会话（emit_tabs 标脏 → 400ms 后写 tabs.json）
@@ -1276,17 +1276,17 @@ pub fn main() {
                 Err(e) => {
                     // 可恢复场景（目录只读 / 文件损坏 / ANNOTA_DB 指向不可写处）不要拖垮整个应用：
                     // 回退到临时目录再试一次，仍失败才终止。
-                    eprintln!("[annota] 打开本地库失败 {db_path:?}: {e}；回退到临时目录");
+                    crate::alog!("ERROR", "[annota] 打开本地库失败 {db_path:?}: {e}；回退到临时目录");
                     let fallback = std::env::temp_dir().join("Annota").join("annota.db");
                     match store::Db::open(&fallback) {
                         Ok(db) => {
-                            eprintln!("[annota] 已回退到临时库 {fallback:?}");
+                            crate::alog!("ERROR", "[annota] 已回退到临时库 {fallback:?}");
                             db
                         }
                         Err(e2) => {
                             // P1-b#11：不再 panic——退化为内存库（本进程可用、重启为空），
                             // 并置标记供 diag_status 上报，工具栏显示启动横幅。
-                            eprintln!("[annota] 临时库亦不可用 {fallback:?}: {e2}；降级为内存库");
+                            crate::alog!("ERROR", "[annota] 临时库亦不可用 {fallback:?}: {e2}；降级为内存库");
                             crate::alog!("ERROR", "db fallback to memory: {e2}");
                             DB_MEMORY.store(true, std::sync::atomic::Ordering::Relaxed);
                             store::Db::open_in_memory().expect("内存库初始化失败")
@@ -1321,7 +1321,7 @@ pub fn main() {
 
             // 监听桥接就绪事件，确认 JS 注入成功
             let _id2 = app.listen("annota-bridge-ready", |_event| {
-                println!("[annota] __ANNOTA__ bridge ready");
+                crate::alog!("INFO", "[annota] __ANNOTA__ bridge ready");
             });
 
             // P1-a#4：桥接脚本报页面标题 → 更新 TabState + 回填历史标题

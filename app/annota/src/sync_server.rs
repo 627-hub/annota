@@ -194,7 +194,6 @@ pub async fn run_server(
         Ok(l) => l,
         Err(e) => {
             let msg = format!("本地服务端口 {addr} 绑定失败：{e}（可能已被占用）");
-            eprintln!("[annota] {msg}");
             crate::alog!("ERROR", "{msg}");
             set_server_error(&msg);
             return;
@@ -202,7 +201,6 @@ pub async fn run_server(
     };
     clear_server_error();
     set_server_running(true);
-    println!("[annota] sync server listening on http://{}", addr);
     crate::alog!("INFO", "sync server listening on {addr}");
     // P2-D2：启动后台做每日备份（packs + 库），失败静默不阻塞服务
     {
@@ -212,7 +210,6 @@ pub async fn run_server(
     }
     if let Err(e) = axum::serve(listener, app).await {
         set_server_error(&format!("本地服务异常退出：{e}"));
-        eprintln!("[annota] sync server error: {}", e);
         crate::alog!("ERROR", "sync server error: {e}");
     }
     set_server_running(false);

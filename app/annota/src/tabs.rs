@@ -105,7 +105,7 @@ pub fn create_tab(
         .initialization_script(&format!("window.__ANNOTA_TAB_ID__='{}';", id))
         .auto_resize()
         .on_navigation(move |u| {
-            println!("[annota] tab {id_for_nav} navigation: {u}");
+            crate::alog!("INFO", "[annota] tab {id_for_nav} navigation: {u}");
             true
         })
         .on_page_load(move |wv, payload| {
@@ -148,7 +148,7 @@ pub fn create_tab(
                         .unwrap_or_else(|_| std::env::temp_dir())
                         .join("Annota");
                     if let Err(e) = std::fs::create_dir_all(&dir) {
-                        eprintln!("[annota] 创建下载目录失败 {dir:?}: {e}");
+                        crate::alog!("ERROR", "[annota] 创建下载目录失败 {dir:?}: {e}");
                     }
                     let filename = filename_from_url(&url);
                     // 目标已存在时自动去重，避免同名 URL 静默覆盖。
@@ -416,7 +416,7 @@ fn persist_session(app: &AppHandle) {
     let path = session_path(app);
     if let Some(parent) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            eprintln!("[annota] 创建会话目录失败 {parent:?}: {e}");
+            crate::alog!("ERROR", "[annota] 创建会话目录失败 {parent:?}: {e}");
             return;
         }
     }
@@ -427,7 +427,7 @@ fn persist_session(app: &AppHandle) {
         std::fs::rename(&tmp, &path)
     };
     if let Err(e) = write() {
-        eprintln!("[annota] 写会话文件失败 {path:?}: {e}");
+        crate::alog!("ERROR", "[annota] 写会话文件失败 {path:?}: {e}");
         let _ = std::fs::remove_file(&tmp);
     }
 }
@@ -520,7 +520,7 @@ pub fn restore_tabs(
             SESSION_DISABLED.store(false, Ordering::Relaxed);
             let path = session_path(app);
             let _ = std::fs::remove_file(&path);
-            println!("[annota] 会话：已按上次请求跳过恢复（此后重新启用）");
+            crate::alog!("INFO", "[annota] 会话：已按上次请求跳过恢复（此后重新启用）");
             return Ok(0);
         }
         Session::None => return Ok(0),
@@ -530,7 +530,7 @@ pub fn restore_tabs(
         // 单个 tab 恢复失败（如 URL 已失效）不阻断其余 tab。
         match create_tab(app, window, url, Vec::new(), bridge_js, annotate_js, position, size) {
             Ok(_) => restored += 1,
-            Err(e) => eprintln!("[annota] 恢复 tab 失败（跳过）：{e}"),
+            Err(e) => crate::alog!("ERROR", "[annota] 恢复 tab 失败（跳过）：{e}"),
         }
     }
     if restored == 0 {
@@ -547,7 +547,7 @@ pub fn restore_tabs(
             let _ = activate_tab(app, &id);
         }
     }
-    println!("[annota] 会话恢复：{restored} 个 tab（来自 {}）", session_path(app).display());
+    crate::alog!("INFO", "[annota] 会话恢复：{restored} 个 tab（来自 {}）", session_path(app).display());
     Ok(restored)
 }
 
@@ -561,7 +561,7 @@ pub fn clear_session(app: &AppHandle) {
     let path = session_path(app);
     if let Some(parent) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            eprintln!("[annota] 创建会话目录失败 {parent:?}: {e}");
+            crate::alog!("ERROR", "[annota] 创建会话目录失败 {parent:?}: {e}");
             return;
         }
     }
@@ -569,12 +569,12 @@ pub fn clear_session(app: &AppHandle) {
     let bytes = match serde_json::to_vec_pretty(&payload) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("[annota] 序列化会话禁用标记失败: {e}");
+            crate::alog!("ERROR", "[annota] 序列化会话禁用标记失败: {e}");
             return;
         }
     };
     if let Err(e) = std::fs::write(&path, bytes) {
-        eprintln!("[annota] 写会话禁用标记失败 {path:?}: {e}");
+        crate::alog!("ERROR", "[annota] 写会话禁用标记失败 {path:?}: {e}");
     }
 }
 
