@@ -521,6 +521,12 @@
       updateLabel.textContent = v ? ('更新到 ' + v) : '有新版本';
       updatePill.setAttribute('title', '点击下载并安装 Annota ' + v + '（安装后自动重启）');
       updatePill.dataset.on = '1';
+      // 诊断探针：角标实际渲染时上报 computed 样式与几何（bridge_probe_reply → Rust 日志）
+      try {
+        const cs = getComputedStyle(updatePill);
+        const r = updatePill.getBoundingClientRect();
+        tauri().invoke('bridge_probe_reply', { keys: ['update-pill-shown', String(v), `display=${cs.display} vis=${cs.visibility} rect=${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.width)}x${Math.round(r.height)} on=${updatePill.dataset.on}`] });
+      } catch (e) {}
     }
     updatePill.addEventListener('click', async () => {
       updatePill.dataset.state = 'busy'; updateLabel.textContent = '正在下载…';

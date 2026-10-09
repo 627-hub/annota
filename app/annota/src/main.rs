@@ -33,6 +33,20 @@ fn spawn_update_check(app: &AppHandle) {
         tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         loop {
             let h = handle.clone();
+            // 假更新钩子：ANNOTA_UPDATE_TEST=版本号 → 不发真实请求直接 emit（E2E 验证用）
+            if let Ok(fake) = std::env::var("ANNOTA_UPDATE_TEST") {
+                if !fake.is_empty() {
+                    crate::alog!("INFO", "[annota] ANNOTA_UPDATE_TEST active -> fake update {fake}");
+                    let payload = json!({ "version": fake, "currentVersion": "test", "notes": "fake" });
+                    if let Ok(mut g) = LATEST_UPDATE.lock() { *g = Some(payload.clone()); }
+                    match h.emit("annota://update-available", payload) {
+                        Ok(_) => crate::alog!("INFO", "[annota] update event emitted to webviews"),
+                        Err(e) => crate::alog!("ERROR", "[annota] update event emit FAILED: {e}"),
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(24 * 60 * 60)).await;
+                    continue;
+                }
+            }
             match h.updater() {
                 Ok(updater) => match updater.check().await {
                     Ok(Some(update)) => {
@@ -45,7 +59,12 @@ fn spawn_update_check(app: &AppHandle) {
                         if let Ok(mut g) = LATEST_UPDATE.lock() {
                             *g = Some(payload.clone());
                         }
-                        let _ = h.emit("annota://update-available", payload);
+                        // 假更新钩子（ANNOTA_UPDATE_TEST=版本号）：跳过真实检查直接走 emit，
+                        // 用于本地端到端验证「事件→角标」链路，不设 env 时零影响。
+                        match h.emit("annota://update-available", payload) {
+                            Ok(_) => crate::alog!("INFO", "[annota] update event emitted to webviews"),
+                            Err(e) => crate::alog!("ERROR", "[annota] update event emit FAILED: {e}"),
+                        }
                     }
                     Ok(None) => crate::alog!("INFO", "[annota] up to date"),
                     Err(e) => crate::alog!("INFO", "[annota] update check failed: {e}"),
