@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Annota",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "identifier": "app.annota",
   "build": {
     "frontendDist": "public"
@@ -21,13 +21,17 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIzNjIyN0JDRkY0NzJBMTMKUldRVEtrZi92Q2RpSTAwK0VoQmlOVmt2enJKbm9ZOXI2cUNpMFdjelFEU25zZFZDY0VEYTJPNmUK",
       "endpoints": [
+        "https://github.com/627-hub/annota/releases/latest/download/latest.json",
         "https://tencentcloudtest-d2eg4lu85c76fb0-1414056833.tcloudbaseapp.com/app/latest.json"
       ]
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["dmg", "nsis"],
+    "targets": [
+      "dmg",
+      "nsis"
+    ],
     "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",

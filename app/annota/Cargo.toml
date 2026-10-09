@@ -1,6 +1,6 @@
 [package]
 name = "annota"
-version = "0.2.0"
+version = "0.2.1"
 description = "Annota · 内容标注浏览器"
 authors = ["Annota"]
 edition = "2021"
