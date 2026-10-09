@@ -42,6 +42,7 @@
     "allow-devtools",
     "allow-find",
     "allow-overlay",
-    "allow-set-toolbar-height"
+    "allow-set-toolbar-height",
+    "allow-diag-status"
   ]
 }

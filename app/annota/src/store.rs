@@ -59,6 +59,17 @@ impl Db {
             std::fs::create_dir_all(parent).map_err(|e| format!("create db dir: {e}"))?;
         }
         let conn = Connection::open(path).map_err(|e| format!("open db: {e}"))?;
+        Self::from_conn(conn)
+    }
+
+    /// P1-b#11：文件库/临时库都不可用时的最终兜底——纯内存库（进程级、不落盘）。
+    /// 收藏/历史/下载在本进程内仍可用，重启后为空；避免整个应用起不来。
+    pub fn open_in_memory() -> Result<Self, String> {
+        let conn = Connection::open_in_memory().map_err(|e| format!("open memory db: {e}"))?;
+        Self::from_conn(conn)
+    }
+
+    fn from_conn(conn: Connection) -> Result<Self, String> {
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=NORMAL;
@@ -180,6 +191,22 @@ impl Db {
                 "DELETE FROM history WHERE id NOT IN (
                      SELECT id FROM history ORDER BY visit_at DESC, id DESC LIMIT ?1)",
                 params![HISTORY_CAP],
+            )
+            .map_err(|e| e.to_string())?;
+            Ok(())
+        })
+    }
+
+    /// 页面标题加载完成后回填最近一条同 URL 的历史记录（add_history 入库时标题尚未知）。
+    pub fn update_history_title(&self, url: &str, title: &str) -> Result<(), String> {
+        if title.trim().is_empty() {
+            return Ok(());
+        }
+        self.with_conn(|c| {
+            c.execute(
+                "UPDATE history SET title = ?1
+                 WHERE id = (SELECT id FROM history WHERE url = ?2 ORDER BY visit_at DESC, id DESC LIMIT 1)",
+                params![title, url],
             )
             .map_err(|e| e.to_string())?;
             Ok(())
@@ -419,5 +446,22 @@ mod tests {
         assert_eq!(list[0]["size"], 1234);
         db.clear_downloads().unwrap();
         assert_eq!(db.list_downloads().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn memory_db_fallback_and_history_title() {
+        // P1-b#11：内存库兜底（文件库/临时库都失败时的最终降级路径）
+        let db = Db::open_in_memory().expect("memory db");
+        db.add_history("https://v.example.com/watch/1", "", Some("tab-1")).unwrap();
+        assert_eq!(db.list_history(10).unwrap().len(), 1);
+        // P1-a#4：标题回填到最近一条同 URL 记录
+        db.update_history_title("https://v.example.com/watch/1", "示例视频").unwrap();
+        let list = db.list_history(10).unwrap();
+        assert_eq!(list[0]["title"], "示例视频");
+        // 空标题不覆盖已有标题
+        db.update_history_title("https://v.example.com/watch/1", "").unwrap();
+        assert_eq!(db.list_history(10).unwrap()[0]["title"], "示例视频");
+        // 不存在的 URL 不报错
+        db.update_history_title("https://nowhere/", "x").unwrap();
     }
 }

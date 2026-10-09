@@ -57,6 +57,24 @@ static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 // 初始值 96 = 标签条 40 + 导航条 56（书签栏展开时 JS 会 emit 更高值）。
 // Rust 标准库无 AtomicF64，用 AtomicU64 存 f64 的 bit pattern。
 static TOOLBAR_HEIGHT_BITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(96.0f64.to_bits());
+// P1-a#6：全局页面缩放（body.style.zoom）。切 tab / 页面加载完成后由 Rust 重放，
+// 解决「缩放只作用当前 webview、切 tab / reload 后打回 100%」的不一致。
+static PAGE_ZOOM_BITS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1.0f64.to_bits());
+
+pub fn page_zoom() -> f64 {
+    f64::from_bits(PAGE_ZOOM_BITS.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// 重放缩放的脚本（切 tab、页面 load 完成后调用）。
+pub fn page_zoom_script() -> String {
+    format!(
+        "(function(){{try{{document.body.style.zoom='{}';}}catch(e){{}}}})()",
+        page_zoom()
+    )
+}
+
+/// P1-b#11：本地库是否已降级为内存模式（文件库+临时库都打不开时）。
+static DB_MEMORY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 // 下拉浮层（菜单 / 历史 / 下载面板）的 overlay webview。
 // 它按需创建 → 永远是最后添加的子 webview → 天然盖在所有 tab 之上，
 // 因此**不需要增高工具栏、也不需要移动页面**（早期方案增高工具栏会把内容整体下推 420px）。
@@ -139,6 +157,21 @@ const BRIDGE_JS: &str = r#"
   window.vaFetch = function (method, url, body) {
     return invoke('va_fetch', { method: method || 'GET', url: url, body: body });
   };
+
+  // P1-a#4：轮询上报页面标题（SPA / 延迟改标题也能跟上），归属到本 tab。
+  (function () {
+    var last = null;
+    function report() {
+      try {
+        var tid = window.__ANNOTA_TAB_ID__ || '';
+        if (!tid) return;
+        var t = document.title || '';
+        if (t !== last) { last = t; emit('annota://page-title', { id: tid, title: t, url: location.href }); }
+      } catch (e) {}
+    }
+    setInterval(function () { report(); }, 1200);
+    document.addEventListener('DOMContentLoaded', report);
+  })();
 
   emit('annota-bridge-ready', {});
 })();
@@ -468,31 +501,76 @@ fn set_toolbar_height(app: tauri::AppHandle, height: f64) -> Result<(), String> 
     Ok(())
 }
 
-// 页面内查找（M7）：在当前活动标签页执行查找。
+// 页面内查找（M7）：在当前活动标签页执行查找，并统计总匹配数 emit 给工具栏（P1-a#5）。
 #[tauri::command]
 fn find_in_page(app: tauri::AppHandle, text: String, forward: bool) -> Result<(), String> {
     let webview = tabs::active_webview(&app)?;
     // window.find(text, caseSensitive, backwards, wrapAround, wholeWord, searchInFrames, showDialog)
     // 注意方向是第 3 位 backwards（要取反），且 showDialog 必须为 false ——
     // 否则点「上一个」会弹出 WebKit 原生查找对话框。
+    // 窗口查找只负责「跳到下一个」；总数另用 TreeWalker 精确统计（跨节点的匹配会算作近似值）。
     let script = format!(
-        "(function(){{try{{window.find({},false,!{},true,false,false,false);}}catch(e){{}}}})()",
-        serde_json::to_string(&text).unwrap_or_else(|_| "\"\"".to_string()),
-        forward
+        r#"(function(){{
+  try{{ window.find({q},false,!{fwd},true,false,false,false); }}catch(e){{}}
+  try{{
+    var n=0, q={q};
+    if(q){{
+      var lower=String(q).toLowerCase();
+      var root=document.body||document.documentElement;
+      var walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);
+      var node;
+      while((node=walker.nextNode())){{
+        var v=node.nodeValue; if(!v) continue;
+        var s=v.toLowerCase(), i=0;
+        while((i=s.indexOf(lower,i))!==-1){{ n++; i+=lower.length; }}
+      }}
+    }}
+    var t=window.__TAURI_INTERNALS__||window.__TAURI__;
+    if(t&&t.event&&t.event.emit) t.event.emit('annota://find-count',{{count:n,text:q}});
+  }}catch(e){{}}
+}})();"#,
+        q = serde_json::to_string(&text).unwrap_or_else(|_| "\"\"".to_string()),
+        fwd = forward
     );
-    webview.eval(script).map_err(|e| e.to_string())
+    webview.eval(&script).map_err(|e| e.to_string())
 }
 
-// 缩放控制（M7）：设置当前活动标签页的页面缩放。
+// 缩放控制（M7）：记入全局并设置当前活动标签页的页面缩放（P1-a#6）。
 #[tauri::command]
 fn set_zoom(app: tauri::AppHandle, factor: f64) -> Result<(), String> {
-    let webview = tabs::active_webview(&app)?;
     let factor = factor.clamp(0.25, 5.0);
-    let script = format!(
-        "(function(){{try{{document.body.style.zoom='{}';}}catch(e){{}}}})()",
-        factor
-    );
-    webview.eval(script).map_err(|e| e.to_string())
+    PAGE_ZOOM_BITS.store(factor.to_bits(), std::sync::atomic::Ordering::Relaxed);
+    let webview = tabs::active_webview(&app)?;
+    webview.eval(&page_zoom_script()).map_err(|e| e.to_string())
+}
+
+// P1-b#9：本地同步服务状态（启动失败原因 + 是否在跑 + 库是否内存降级）。
+#[tauri::command]
+fn diag_status() -> serde_json::Value {
+    json!({
+        "running": sync_server::server_running(),
+        "error": sync_server::server_error(),
+        "db_memory": DB_MEMORY.load(std::sync::atomic::Ordering::Relaxed),
+    })
+}
+
+// P1-b#9：重试启动本地同步服务（用户在工具栏点「重试」时调用）。
+#[tauri::command]
+fn restart_server(app: tauri::AppHandle) -> Result<serde_json::Value, String> {
+    if sync_server::server_running() {
+        return Ok(json!({ "running": true }));
+    }
+    use tauri::Manager;
+    let db = app.state::<DbState>().0.clone();
+    let store_path = sync_server::resolve_store_path(&app);
+    let root_path = sync_server::resolve_project_root();
+    let notes_dir = sync_server::resolve_notes_dir(&app);
+    let settings_path = sync_server::resolve_settings_path(&app);
+    sync_server::clear_server_error();
+    tauri::async_runtime::spawn(sync_server::run_server(
+        store_path, root_path, notes_dir, settings_path, db,
+    ));
+    Ok(json!({ "running": false, "retrying": true }))
 }
 
 // ---------- 标签页命令（M3） ----------
@@ -522,6 +600,10 @@ fn tab_new(app: tauri::AppHandle, url: Option<String>) -> Result<String, String>
 #[tauri::command]
 fn tab_activate(app: tauri::AppHandle, id: String) -> Result<(), String> {
     tabs::activate_tab(&app, &id)?;
+    // P1-a#6：切 tab 后把全局缩放重放到新激活的 webview（标签数字与实际一致）
+    if let Ok(wv) = tabs::active_webview(&app) {
+        let _ = wv.eval(&page_zoom_script());
+    }
     let _ = apply_layout(&app);
     Ok(())
 }
@@ -531,11 +613,6 @@ fn tab_close(app: tauri::AppHandle, id: String) -> Result<(), String> {
     tabs::close_tab(&app, &id)?;
     let _ = apply_layout(&app);
     Ok(())
-}
-
-#[tauri::command]
-fn tab_move(app: tauri::AppHandle, id: String, to_index: usize) -> Result<(), String> {
-    tabs::move_tab(&app, &id, to_index)
 }
 
 // M6a：清除会话文件，下次启动不再恢复上次标签页。
@@ -989,6 +1066,48 @@ async fn install_update(app: AppHandle) -> Result<String, String> {
     app.restart();
 }
 
+/// P1-b#14：debug 测试钩子从 main() 抽离（ANNOTA_AGENT_TEST / ANNOTA_TABS_TEST），
+/// 仅 debug 构建编译，产线 main() 不再混测试代码。
+#[cfg(debug_assertions)]
+fn spawn_debug_hooks(handle: AppHandle) {
+    if let Ok(prompt) = std::env::var("ANNOTA_AGENT_TEST") {
+        let h = handle.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+            let messages = vec![json!({"role": "user", "content": prompt})];
+            match agent_run(h, messages).await {
+                Ok(res) => println!("[annota][agent-test] OK {}", res),
+                Err(e) => println!("[annota][agent-test] ERR {e}"),
+            }
+        });
+    }
+    if std::env::var("ANNOTA_TABS_TEST").is_ok() {
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            let snap = |h: &AppHandle| {
+                let st = h.state::<tabs::TabState>();
+                let m = st.lock().unwrap();
+                (m.tabs.iter().map(|t| t.id.clone()).collect::<Vec<_>>(), m.active_id())
+            };
+            println!("[annota][tabs-test] start {:?}", snap(&handle));
+            for u in ["https://example.com/", "https://www.bilibili.com/"] {
+                match tab_new(handle.clone(), Some(u.to_string())) {
+                    Ok(id) => println!("[annota][tabs-test] created {id} -> {:?}", snap(&handle)),
+                    Err(e) => println!("[annota][tabs-test] tab_new ERR {e}"),
+                }
+            }
+            if let Err(e) = tab_activate(handle.clone(), tabs::FIRST_TAB_ID.to_string()) {
+                println!("[annota][tabs-test] activate ERR {e}");
+            } else { println!("[annota][tabs-test] activated first {:?}", snap(&handle)); }
+            match tab_close(handle.clone(), tabs::FIRST_TAB_ID.to_string()) {
+                Ok(_) => println!("[annota][tabs-test] closed first -> {:?}", snap(&handle)),
+                Err(e) => println!("[annota][tabs-test] tab_close ERR {e}"),
+            }
+            println!("[annota][tabs-test] done");
+        });
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn main() {
     tauri::Builder::default()
@@ -1013,6 +1132,8 @@ pub fn main() {
             open_devtools,
             find_in_page,
             set_zoom,
+            diag_status,
+            restart_server,
             agent_run,
             agent_chat,
             agent_cancel,
@@ -1020,7 +1141,6 @@ pub fn main() {
             tab_new,
             tab_activate,
             tab_close,
-            tab_move,
             tab_session_clear
         ])
         .setup(|app| {
@@ -1046,8 +1166,11 @@ pub fn main() {
                             db
                         }
                         Err(e2) => {
-                            eprintln!("[annota] 临时库亦不可用 {fallback:?}: {e2}");
-                            panic!("无法初始化本地数据库 annota.db");
+                            // P1-b#11：不再 panic——退化为内存库（本进程可用、重启为空），
+                            // 并置标记供 diag_status 上报，工具栏显示启动横幅。
+                            eprintln!("[annota] 临时库亦不可用 {fallback:?}: {e2}；降级为内存库");
+                            DB_MEMORY.store(true, std::sync::atomic::Ordering::Relaxed);
+                            store::Db::open_in_memory().expect("内存库初始化失败")
                         }
                     }
                 }
@@ -1082,55 +1205,31 @@ pub fn main() {
                 println!("[annota] __ANNOTA__ bridge ready");
             });
 
+            // P1-a#4：桥接脚本报页面标题 → 更新 TabState + 回填历史标题
+            {
+                let handle = app.handle().clone();
+                let _id3 = app.listen("annota://page-title", move |event| {
+                    let Ok(v) = serde_json::from_str::<Value>(event.payload()) else { return };
+                    let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let url = v.get("url").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    if !id.is_empty() {
+                        tabs::set_tab_title(&handle, &id, &title);
+                    }
+                    if url.starts_with("http://") || url.starts_with("https://") {
+                        if let Some(st) = handle.try_state::<DbState>() {
+                            let _ = st.0.update_history_title(&url, &title);
+                        }
+                    }
+                });
+            }
+
             // 自动更新：启动后延迟检查 + 24h 轮询
             spawn_update_check(app.handle());
 
-            // 测试钩子：ANNOTA_AGENT_TEST=1 时后台跑一轮 agent，打印结果（仅 debug）
+            // 测试钩子（P1-b#14：已抽离到 spawn_debug_hooks，仅 debug 构建编译）
             #[cfg(debug_assertions)]
-            if let Ok(prompt) = std::env::var("ANNOTA_AGENT_TEST") {
-                let handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
-                    let messages = vec![json!({"role": "user", "content": prompt})];
-                    match agent_run(handle, messages).await {
-                        Ok(res) => println!("[annota][agent-test] OK {}", res),
-                        Err(e) => println!("[annota][agent-test] ERR {e}"),
-                    }
-                });
-            }
-
-            // 测试钩子：ANNOTA_TABS_TEST=1 时自动新建/切换/关闭标签，打印结果（仅 debug）
-            #[cfg(debug_assertions)]
-            if std::env::var("ANNOTA_TABS_TEST").is_ok() {
-                let handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    use tauri::Manager;
-                    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                    let snap = |h: &AppHandle| {
-                        let st = h.state::<tabs::TabState>();
-                        let m = st.lock().unwrap();
-                        (m.tabs.iter().map(|t| t.id.clone()).collect::<Vec<_>>(), m.active_id())
-                    };
-                    println!("[annota][tabs-test] start {:?}", snap(&handle));
-                    // 新建两个 tab
-                    for u in ["https://example.com/", "https://www.bilibili.com/"] {
-                        match tab_new(handle.clone(), Some(u.to_string())) {
-                            Ok(id) => println!("[annota][tabs-test] created {id} -> {:?}", snap(&handle)),
-                            Err(e) => println!("[annota][tabs-test] tab_new ERR {e}"),
-                        }
-                    }
-                    // 切回第一个
-                    if let Err(e) = tab_activate(handle.clone(), tabs::FIRST_TAB_ID.to_string()) {
-                        println!("[annota][tabs-test] activate ERR {e}");
-                    } else { println!("[annota][tabs-test] activated first {:?}", snap(&handle)); }
-                    // 关闭第一个
-                    match tab_close(handle.clone(), tabs::FIRST_TAB_ID.to_string()) {
-                        Ok(_) => println!("[annota][tabs-test] closed first -> {:?}", snap(&handle)),
-                        Err(e) => println!("[annota][tabs-test] tab_close ERR {e}"),
-                    }
-                    println!("[annota][tabs-test] done");
-                });
-            }
+            spawn_debug_hooks(app.handle().clone());
 
             let _ = window;
             Ok(())

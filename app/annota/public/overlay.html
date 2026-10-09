@@ -67,10 +67,15 @@
     .chrome-badge.downloading { color:#f5c66a; background:rgba(245,166,35,.14); }
     .chrome-badge.failed { color:#ef9a9e; background:rgba(239,115,121,.14); }
     .chrome-empty { padding:46px 16px; text-align:center; color:#727781; font-size:12px; }
+    /* 轻量 toast（P1-b#12）：浮层内右下角 */
+    .toast-stack { position:fixed; right:8px; bottom:8px; z-index:var(--va-z-toast); display:flex; flex-direction:column; align-items:flex-end; gap:6px; max-width:calc(100% - 16px); pointer-events:none; }
+    .toast { max-width:100%; padding:6px 10px; border:1px solid rgba(255,255,255,.1); border-left:3px solid var(--va-warning); border-radius:8px; background:#1e1f24; color:#e7e9ec; font:11.5px/1.45 var(--va-font-ui); box-shadow:0 8px 24px rgba(0,0,0,.4); overflow-wrap:anywhere; user-select:text; }
+    .toast[data-leaving="1"] { opacity:0; transition:opacity 200ms ease; }
   </style>
 </head>
 <body>
   <div class="backdrop" id="backdrop"></div>
+  <div class="toast-stack" id="toast-stack" aria-live="polite"></div>
 
   <!-- 菜单 -->
   <div class="menu" id="menu" role="menu">
@@ -207,8 +212,11 @@
         '<div class="chrome-item-sub">' + esc(it.url) + '</div></div>' +
         '<div class="chrome-item-time">' + fmtAgo(it.visit_at) + '</div></div>').join('');
       list.querySelectorAll('.chrome-item').forEach((el) => el.addEventListener('click', () => {
-        invoke('navigate_browser', { url: el.dataset.url }).catch(() => {});
-        closeMe();
+        // 成功才收起浮层；失败留在面板上，让 toast 可见
+        invoke('navigate_browser', { url: el.dataset.url }).then(
+          () => closeMe(),
+          (e) => { console.warn('[annota] 打开历史记录失败', e); toast('打开失败：' + reasonText(e)); }
+        );
       }));
     }
     async function renderDownloads() {
@@ -232,8 +240,38 @@
         if (p && window.__ANNOTA__ && window.__ANNOTA__.copyToClipboard) window.__ANNOTA__.copyToClipboard({ text: p }).catch(() => {});
       }));
     }
-    async function clearHistory() { try { await window.vaFetch('DELETE', API + '/api/history'); } catch (e) {} renderHistory(); }
-    async function clearDownloads() { try { await window.vaFetch('DELETE', API + '/api/downloads'); } catch (e) {} renderDownloads(); }
+    // P1-b#12：清空失败不再静默，给出 toast（浮层内右下角，2-3 秒消失）
+    function reasonText(e) {
+      if (e == null) return '未知错误';
+      if (typeof e === 'string') return e;
+      if (e instanceof Error) return e.message || String(e);
+      if (typeof e === 'object') {
+        if (typeof e.message === 'string' && e.message) return e.message;
+        if (typeof e.error === 'string' && e.error) return e.error;
+        try { return JSON.stringify(e); } catch (x) { return String(e); }
+      }
+      return String(e);
+    }
+    function toast(msg) {
+      const stack = document.getElementById('toast-stack');
+      if (!stack) return;
+      const el = document.createElement('div');
+      el.className = 'toast'; el.dataset.kind = 'error'; el.setAttribute('role', 'alert');
+      el.textContent = msg;
+      stack.appendChild(el);
+      while (stack.children.length > 2) stack.firstElementChild.remove();
+      setTimeout(() => { el.dataset.leaving = '1'; setTimeout(() => el.remove(), 220); }, 3000);
+    }
+    async function clearHistory() {
+      try { const r = await window.vaFetch('DELETE', API + '/api/history'); if (r && r.ok === false) toast('清空历史失败：HTTP ' + (r.status || '?')); }
+      catch (e) { console.warn('[annota] 清空历史失败', e); toast('清空历史失败：' + reasonText(e)); }
+      renderHistory();
+    }
+    async function clearDownloads() {
+      try { const r = await window.vaFetch('DELETE', API + '/api/downloads'); if (r && r.ok === false) toast('清空下载记录失败：HTTP ' + (r.status || '?')); }
+      catch (e) { console.warn('[annota] 清空下载记录失败', e); toast('清空下载记录失败：' + reasonText(e)); }
+      renderDownloads();
+    }
 
     // ---------- 显示入口 ----------
     // 复用同一个 overlay webview 切换内容时，Rust 会 eval 调这个。

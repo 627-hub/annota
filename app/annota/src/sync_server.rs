@@ -181,13 +181,47 @@ pub async fn run_server(
     let listener = match tokio::net::TcpListener::bind(&addr).await {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("[annota] sync server failed to bind {}: {}", addr, e);
+            let msg = format!("本地服务端口 {addr} 绑定失败：{e}（可能已被占用）");
+            eprintln!("[annota] {msg}");
+            set_server_error(&msg);
             return;
         }
     };
+    clear_server_error();
+    set_server_running(true);
     println!("[annota] sync server listening on http://{}", addr);
     if let Err(e) = axum::serve(listener, app).await {
+        set_server_error(&format!("本地服务异常退出：{e}"));
         eprintln!("[annota] sync server error: {}", e);
+    }
+    set_server_running(false);
+}
+
+// ---------- P1-b#9：服务状态（供工具栏 diag_status / restart_server） ----------
+static SERVER_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static SERVER_ERROR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub fn server_running() -> bool {
+    SERVER_RUNNING.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn set_server_running(v: bool) {
+    SERVER_RUNNING.store(v, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn server_error() -> Option<String> {
+    SERVER_ERROR.lock().ok().and_then(|g| g.clone())
+}
+
+pub fn set_server_error(msg: &str) {
+    if let Ok(mut g) = SERVER_ERROR.lock() {
+        *g = Some(msg.to_string());
+    }
+}
+
+pub fn clear_server_error() {
+    if let Ok(mut g) = SERVER_ERROR.lock() {
+        *g = None;
     }
 }
 
@@ -460,8 +494,11 @@ async fn list(State(state): State<AppState>) -> Response {
 }
 
 async fn get_anno(State(state): State<AppState>, AxumPath(media_id): AxumPath<String>) -> Response {
-    let pack = read_pack(&state.store, &media_id).await;
-    json_ok(pack)
+    match read_pack(&state.store, &media_id).await {
+        Ok(pack) => json_ok(pack),
+        // P1-b#10：损坏时 4xx + 原因，让前端显式告警，而不是拿到空包静默继续
+        Err(e) => json_error(StatusCode::CONFLICT, &e),
+    }
 }
 
 async fn put_anno(
@@ -495,7 +532,11 @@ async fn put_anno(
 
     let pack = {
         let _guard = lock.lock().await;
-        let cur = read_pack(&state.store, &media_id).await;
+        // P1-b#10：损坏文件拒写（409），避免合并覆盖导致永久丢数据；用户先处理 .corrupt 副本
+        let cur = match read_pack(&state.store, &media_id).await {
+            Ok(v) => v,
+            Err(e) => return json_error(StatusCode::CONFLICT, &e),
+        };
         let existing = cur.get("entries").and_then(|v| v.as_array()).cloned().unwrap_or_default();
         let incoming_entries = incoming
             .get("entries")
@@ -1038,20 +1079,34 @@ fn merge_entries(a: &[Value], b: &[Value]) -> Vec<Value> {
     out
 }
 
-async fn read_pack(store: &Path, key: &str) -> Value {
+/// P1-b#10：读标注包。文件存在但解析失败 → 备份 `.corrupt` 副本并返回 Err。
+/// 绝不静默返回空包——否则随后的 PUT 会用「空 + 本次内容」覆盖掉损坏文件，数据永久丢失。
+async fn read_pack(store: &Path, key: &str) -> Result<Value, String> {
     let p = key_to_file(store, key);
     if p.is_file() {
-        if let Ok(bytes) = fs::read(&p).await {
-            if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
-                return v;
+        let bytes = match fs::read(&p).await {
+            Ok(b) => b,
+            Err(e) => return Err(format!("读取标注文件失败：{e}")),
+        };
+        match serde_json::from_slice::<Value>(&bytes) {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                // 留存损坏原件副本（带时间戳），供人工恢复；原文件不再被写入。
+                let ts = Local::now().format("%Y%m%d%H%M%S");
+                let bak = p.with_extension(format!("json.corrupt-{ts}"));
+                let _ = fs::write(&bak, &bytes).await;
+                return Err(format!(
+                    "标注文件损坏（原文件已只读留存：{}）：{e}",
+                    bak.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+                ));
             }
         }
     }
-    json!({
+    Ok(json!({
         "format": "video-annotate/0.1",
         "media": { "videoId": key },
         "entries": [],
-    })
+    }))
 }
 
 async fn write_pack(store: &Path, key: &str, pack: &Value) -> Result<PathBuf, String> {
@@ -1287,5 +1342,33 @@ mod r2_merge_tests {
         let q = json!({ "id": "q", "word": "w", "quote": { "exact": "one" } });
         let b = json!({ "id": "b", "word": "w", "box": { "x": 0.1, "y": 0.1, "w": 0.2, "h": 0.2 }, "t": 1.0 });
         assert_eq!(merge_entries(&[q], &[b]).len(), 2, "quote 与 box 是不同锚点");
+    }
+
+    // P1-b#10：损坏 pack 不静默清零——返回 Err + 留 .corrupt 副本
+    #[tokio::test]
+    async fn corrupt_pack_is_preserved_and_rejected() {
+        let dir = std::env::temp_dir().join(format!("annota-corrupt-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let key = "vid1";
+        let p = key_to_file(&dir, key);
+        std::fs::write(&p, b"{ not json").unwrap();
+
+        let r = read_pack(&dir, key).await;
+        assert!(r.is_err(), "损坏文件应返回 Err 而非空包");
+        let corruptions: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".corrupt-"))
+            .collect();
+        assert_eq!(corruptions.len(), 1, "应留一份 .corrupt 副本");
+
+        // 健康文件正常读
+        std::fs::write(&p, br#"{"entries":[]}"#).unwrap();
+        let ok = read_pack(&dir, key).await.unwrap();
+        assert!(ok.get("entries").is_some());
+
+        // 不存在 → 默认空包（非损坏，正常路径）
+        let missing = read_pack(&dir, "nope").await.unwrap();
+        assert_eq!(missing["entries"].as_array().unwrap().len(), 0);
     }
 }

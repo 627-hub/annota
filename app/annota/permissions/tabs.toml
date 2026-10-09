@@ -1,4 +1,4 @@
 [[permission]]
 identifier = "allow-tab-manage"
 description = "Allows the toolbar to create, activate, close and reorder browser tabs."
-commands.allow = ["tab_new", "tab_activate", "tab_close", "tab_move", "tab_session_clear"]
+commands.allow = ["tab_new", "tab_activate", "tab_close", "tab_session_clear"]

@@ -51,7 +51,6 @@ fn main() {
                     "tab_new",
                     "tab_activate",
                     "tab_close",
-                    "tab_move",
                 ]),
             ),
     )

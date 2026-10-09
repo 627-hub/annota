@@ -7,3 +7,7 @@ commands.allow = ["overlay_open", "overlay_close", "tabs_snapshot"]
 identifier = "allow-set-toolbar-height"
 description = "Allows the toolbar to report its measured height so the shell can lay out the browser content area."
 commands.allow = ["set_toolbar_height"]
+[[permission]]
+identifier = "allow-diag-status"
+description = "Allows the toolbar to read local server/database diagnostics (bind failure reason, memory-db degrade) and retry starting the local sync server."
+commands.allow = ["diag_status", "restart_server"]

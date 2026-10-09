@@ -27,6 +27,26 @@ fn pending() -> &'static std::sync::Mutex<std::collections::HashMap<String, Valu
     PENDING.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
+/// P1-b#13：待确认队列 TTL（30 分钟）。启动时静态 map 天然为空；
+/// 每次入队前清一次过期项，读取（确认）时再校验年龄。
+const PENDING_TTL_MS: u64 = 30 * 60 * 1000;
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn purge_expired_pending() {
+    if let Ok(mut m) = pending().lock() {
+        let now = now_ms();
+        m.retain(|_, v| {
+            v.get("at").and_then(Value::as_u64).map(|at| now.saturating_sub(at) < PENDING_TTL_MS).unwrap_or(true)
+        });
+    }
+}
+
 /// 需要用户确认后才执行的写操作
 pub fn is_write_tool(name: &str) -> bool {
     matches!(name, "propose_annotation" | "start_annotation" | "copy_to_clipboard")
@@ -93,8 +113,8 @@ fn system_prompt() -> String {
     let app = crate::APP_HANDLE.get();
     let mut ctx = String::new();
     if let Some(app) = app {
-        use tauri::Manager;
-        if let Some(wv) = app.get_webview("browser") {
+        // P1-a#8：取当前激活标签页，而非写死的首个 webview
+        if let Ok(wv) = crate::tabs::active_webview(app) {
             if let Ok(url) = wv.url() {
                 ctx.push_str(&format!("当前页面：{url}\n"));
             }
@@ -127,10 +147,11 @@ fn emit_tool(handle: &tauri::AppHandle, id: &str, name: &str, args: &Value, stat
 /// 执行一个工具调用（写操作走确认；其余直接跑）
 fn invoke_tool(handle: &tauri::AppHandle, id: &str, name: &str, args: Value) -> Value {
     if is_write_tool(name) {
+        purge_expired_pending();
         let confirm_id = format!("c{}", SEQ.fetch_add(1, Ordering::Relaxed));
         pending().lock().unwrap().insert(
             confirm_id.clone(),
-            json!({"name": name, "arguments": args.clone()}),
+            json!({"name": name, "arguments": args.clone(), "at": now_ms()}),
         );
         emit_tool(
             handle,
@@ -354,6 +375,10 @@ pub fn agent_chat(confirm_id: String) -> Result<Value, String> {
         .unwrap()
         .remove(&confirm_id)
         .ok_or("确认已过期")?;
+    let age = now_ms().saturating_sub(entry.get("at").and_then(Value::as_u64).unwrap_or(0));
+    if age >= PENDING_TTL_MS {
+        return Err("确认已过期（超过 30 分钟），请重新发起".to_string());
+    }
     let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let args = entry.get("arguments").cloned().unwrap_or_else(|| json!({}));
     Ok(call_tool(name, args))
@@ -363,4 +388,29 @@ pub fn agent_chat(confirm_id: String) -> Result<Value, String> {
 #[tauri::command]
 pub fn agent_cancel(confirm_id: String) -> bool {
     pending().lock().unwrap().remove(&confirm_id).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_ttl_purge_and_reject() {
+        let old = now_ms().saturating_sub(PENDING_TTL_MS + 60_000);
+        {
+            let mut m = pending().lock().unwrap();
+            m.insert("ctest-old".into(), json!({"name":"copy_to_clipboard","arguments":{},"at":old}));
+            m.insert("ctest-new".into(), json!({"name":"copy_to_clipboard","arguments":{},"at":now_ms()}));
+        }
+        purge_expired_pending();
+        {
+            let m = pending().lock().unwrap();
+            assert!(!m.contains_key("ctest-old"), "过期项应被清理");
+            assert!(m.contains_key("ctest-new"), "未过期项应保留");
+        }
+        // 过期项即使没被 purge 掉，agent_chat 也要按年龄拒绝（P1-b#13 双保险）
+        pending().lock().unwrap().insert("ctest-exp".into(), json!({"name":"copy_to_clipboard","arguments":{},"at":old}));
+        assert!(agent_chat("ctest-exp".into()).is_err(), "过期确认应拒绝");
+        assert!(!agent_cancel("ctest-exp".into()), "过期项已被 agent_chat 移除");
+    }
 }

@@ -34,6 +34,9 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
 
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
 [features]
 # 保持静默窗口（release 模式）
 custom-protocol = ["tauri/custom-protocol"]

@@ -23,6 +23,8 @@ pub const MAX_RESTORE: usize = 12;
 
 pub struct Tab {
     pub id: String,
+    /// P1-a#4：页面标题（由桥接脚本上报；会话恢复时不持久化，加载后重新上报）。
+    pub title: String,
 }
 
 pub struct TabManager {
@@ -86,7 +88,7 @@ pub fn create_tab(
             mgr.seq += 1;
             format!("tab-{}", mgr.seq)
         };
-        mgr.tabs.push(Tab { id: id.clone() });
+        mgr.tabs.push(Tab { id: id.clone(), title: String::new() });
         mgr.active = mgr.tabs.len() - 1;
         let seq = mgr.seq;
         (id, seq)
@@ -99,14 +101,20 @@ pub fn create_tab(
     let mut builder = WebviewBuilder::new(&id, WebviewUrl::External(parsed))
         .initialization_script(bridge_js)
         .initialization_script(annotate_js)
+        // P1-a#4：桥接脚本用它把 document.title 归属到本 tab（emit annota://page-title）
+        .initialization_script(&format!("window.__ANNOTA_TAB_ID__='{}';", id))
         .auto_resize()
         .on_navigation(move |u| {
             println!("[annota] tab {id_for_nav} navigation: {u}");
             true
         })
-        .on_page_load(move |_wv, payload| {
+        .on_page_load(move |wv, payload| {
             let url = payload.url().to_string();
             let started = matches!(payload.event(), tauri::webview::PageLoadEvent::Started);
+            // P1-a#6：页面每完成一次加载就重放全局缩放（reload / 站内跳转后不打回 100%）
+            if !started {
+                let _ = wv.eval(&crate::page_zoom_script());
+            }
             // M6：页面加载完成时记一条历史（仅 http(s)）。
             if !started && (url.starts_with("http://") || url.starts_with("https://")) {
                 if let Some(st) = app_evt.try_state::<DbState>() {
@@ -278,28 +286,8 @@ pub fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
 }
 
 /// 移动 tab 顺序（toolbar 拖拽）。
-pub fn move_tab(app: &AppHandle, id: &str, to_index: usize) -> Result<(), String> {
-    {
-        let state = app.state::<TabState>();
-        let mut mgr = state.lock().map_err(|_| "标签状态锁中毒".to_string())?;
-        let from = mgr.index_of(id).ok_or_else(|| format!("标签不存在：{id}"))?;
-        let to = to_index.min(mgr.tabs.len().saturating_sub(1));
-        if from != to {
-            let t = mgr.tabs.remove(from);
-            mgr.tabs.insert(to, t);
-            // 修正激活下标：被移动的正是激活页，或激活页夹在 from..to 之间（删除/插入各引起一次位移）。
-            if mgr.active == from {
-                mgr.active = to;
-            } else if from < mgr.active && mgr.active <= to {
-                mgr.active -= 1;
-            } else if to <= mgr.active && mgr.active < from {
-                mgr.active += 1;
-            }
-        }
-    }
-    emit_tabs(app);
-    Ok(())
-}
+// P1-a#7：move_tab 已随 main.rs 的 tab_move 死命令一并移除（前端无拖拽排序；
+// 将来接拖拽时再恢复，恢复点见 git 历史 5311043 之前的实现）。
 
 /// 向工具栏广播标签列表（全量）。
 pub fn emit_tabs(app: &AppHandle) {
@@ -311,21 +299,25 @@ pub fn emit_tabs(app: &AppHandle) {
 
 /// tab 快照：`(列表, 激活下标)`。取 URL 会派发到 UI 线程，故必须先释放锁再查。
 fn snapshot(app: &AppHandle) -> (Vec<Value>, Option<usize>) {
-    let (ids, active_id) = {
+    let (titles, active_id) = {
         let state = app.state::<TabState>();
         let locked = state.lock();
         match locked {
             Ok(mgr) => (
-                mgr.tabs.iter().map(|t| t.id.clone()).collect::<Vec<_>>(),
+                mgr.tabs
+                    .iter()
+                    .map(|t| (t.id.clone(), t.title.clone()))
+                    .collect::<Vec<_>>(),
                 mgr.active_id(),
             ),
             Err(_) => (Vec::new(), None),
         }
     };
+    let ids: Vec<String> = titles.iter().map(|(id, _)| id.clone()).collect();
     let active = active_id.as_deref().and_then(|id| ids.iter().position(|x| x == id));
-    let list: Vec<Value> = ids
+    let list: Vec<Value> = titles
         .iter()
-        .map(|id| {
+        .map(|(id, title)| {
             let url = app
                 .get_webview(id)
                 .and_then(|w| w.url().ok())
@@ -334,12 +326,30 @@ fn snapshot(app: &AppHandle) -> (Vec<Value>, Option<usize>) {
             json!({
                 "id": id,
                 "url": url,
-                "title": "",
+                "title": title,
                 "active": active_id.as_deref() == Some(id.as_str()),
             })
         })
         .collect();
     (list, active)
+}
+
+/// P1-a#4：写入 tab 标题并广播（由桥接脚本的 annota://page-title 事件驱动）。
+pub fn set_tab_title(app: &AppHandle, id: &str, title: &str) {
+    let changed = {
+        let state = app.state::<TabState>();
+        let mut mgr = match state.lock() { Ok(m) => m, Err(_) => return };
+        match mgr.tabs.iter_mut().find(|t| t.id == id) {
+            Some(t) if t.title != title => {
+                t.title = title.to_string();
+                true
+            }
+            _ => false,
+        }
+    };
+    if changed {
+        emit_tabs(app);
+    }
 }
 
 // ---------- M6a · 会话恢复 ----------

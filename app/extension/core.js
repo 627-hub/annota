@@ -1,6 +1,6 @@
 /* ===== data: build id ===== */
 window.VA_BUILD=1791527133;
-window.VA_US_VER="0.1.0.46";
+window.VA_US_VER="0.1.0.47";
 window.VA_DIST_BASE="https://tencentcloudtest-d2eg4lu85c76fb0-1414056833.tcloudbaseapp.com";
 /* ===== src/geometry.js ===== */
 /* video-annotate · geometry
