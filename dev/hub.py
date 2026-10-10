@@ -219,10 +219,11 @@ def main():
     local_base = "http://127.0.0.1:%d" % PORT
 
     # 先起服务（静态 + 同步同端口），隧道模式需要它已监听
+    # M8-1：Python sync_server.py 已删（被 Tauri 内置 Rust 服务替代，跑在 8793）
     owned = _procs
     if not port_open(PORT):
-        owned.append(subprocess.Popen([sys.executable, os.path.join(ROOT, "app", "service", "sync_server.py")], cwd=ROOT))
-        time.sleep(1.0)
+        print("端口 %d 未监听——请先启动 Annota 桌面应用（内置同步服务）。" % PORT)
+        print("（旧版 Python sync_server.py 已移除，服务由 Tauri app 提供）")
 
     tunnel_url, hint = None, ""
     if a.tunnel:
