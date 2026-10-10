@@ -29,6 +29,7 @@ const SERVICE_INDEX: &str = include_str!("../../service/index.html");
 const APP_TOKENS_CSS: &str = include_str!("../public/tokens.css");
 
 #[derive(Clone)]
+/// REST 服务共享状态：存储路径 + DB + per-media 锁。
 pub struct AppState {
     store: PathBuf,
     root: PathBuf,
@@ -133,6 +134,7 @@ pub fn resolve_settings_path(app: &AppHandle) -> PathBuf {
         .join("settings.json")
 }
 
+/// 构建 axum Router（供 run_server 与集成测试共用）。
 pub fn build_app(state: AppState) -> Router {
     let mut app = Router::new()
         .route("/", get(root_handler))
@@ -171,6 +173,7 @@ pub fn build_app(state: AppState) -> Router {
     app.with_state(state)
 }
 
+/// 启动本地 REST 服务（127.0.0.1:8793）。绑定失败时记入 server_error 不 panic。
 pub async fn run_server(
     store: PathBuf,
     root: PathBuf,
@@ -248,6 +251,15 @@ fn json_error(status: StatusCode, message: &str) -> Response {
     (status, Json(json!({ "error": message }))).into_response()
 }
 
+/// 结构化错误响应：保留 "error" 字段（向后兼容），新增 "code" 字段（前端分支用）。
+fn json_error_app(status: StatusCode, err: &crate::error::AppError) -> Response {
+    (
+        status,
+        Json(json!({ "error": err.message, "code": err.code })),
+    )
+        .into_response()
+}
+
 /// P2-D2：每日备份（备份目录 backups/<YYYYMMDD>/，保留最近 7 份）。
 /// packs 复制 + 库 VACUUM INTO（WAL 在线一致）。当天已有备份则跳过。
 async fn backup_daily(store: &Path, db: &Db) {
@@ -267,15 +279,15 @@ async fn backup_daily(store: &Path, db: &Db) {
     prune_backups(&backups, 7).await;
 }
 
-async fn do_backup(store: &Path, db: &Db, dest: &Path) -> Result<(), String> {
-    fs::create_dir_all(dest).await.map_err(|e| e.to_string())?;
+async fn do_backup(store: &Path, db: &Db, dest: &Path) -> Result<(), crate::error::AppError> {
+    fs::create_dir_all(dest).await.map_err(crate::error::AppError::internal)?;
     if let Ok(rd) = std::fs::read_dir(store) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
             if name.ends_with(".json") && !name.contains(".bak") && !name.contains(".corrupt") {
                 fs::copy(e.path(), dest.join(&name))
                     .await
-                    .map_err(|e| format!("copy pack {name}: {e}"))?;
+                    .map_err(|e| crate::error::AppError::internal(format!("copy pack {name}: {e}")))?;
             }
         }
     }
@@ -284,7 +296,7 @@ async fn do_backup(store: &Path, db: &Db, dest: &Path) -> Result<(), String> {
     let db = db.clone();
     tauri::async_runtime::spawn_blocking(move || db.backup_to(&dest_db))
         .await
-        .map_err(|e| format!("backup task: {e}"))??;
+        .map_err(|e| crate::error::AppError::internal(format!("backup task: {e}")))??;
     Ok(())
 }
 
@@ -407,14 +419,14 @@ fn json_ok(value: Value) -> Response {
 
 // ---------- M6 · 收藏 / 历史 / 下载 ----------
 // rusqlite 是同步阻塞 API：统一放到 blocking 线程池执行，避免占用 tokio async worker。
-async fn blocking<T, F>(f: F) -> Result<T, String>
+async fn blocking<T, F>(f: F) -> Result<T, crate::error::AppError>
 where
     T: Send + 'static,
-    F: FnOnce() -> Result<T, String> + Send + 'static,
+    F: FnOnce() -> Result<T, crate::error::AppError> + Send + 'static,
 {
     tokio::task::spawn_blocking(f)
         .await
-        .map_err(|e| format!("db task join: {e}"))?
+        .map_err(|e| crate::error::AppError::internal(format!("db task join: {e}")))?
 }
 
 #[derive(serde::Deserialize)]
@@ -430,7 +442,7 @@ async fn get_bookmarks(State(state): State<AppState>) -> Response {
     let db = state.db.clone();
     match blocking(move || db.list_bookmarks()).await {
         Ok(list) => json_ok(json!({ "ok": true, "bookmarks": list })),
-        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+        Err(e) => json_error_app(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
 }
 
@@ -444,7 +456,7 @@ async fn post_bookmark(State(state): State<AppState>, Json(input): Json<Bookmark
     let favicon = input.favicon;
     match blocking(move || db.add_bookmark(&url, &title, favicon.as_deref())).await {
         Ok(created) => json_ok(json!({ "ok": true, "created": created })),
-        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+        Err(e) => json_error_app(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
 }
 
@@ -459,7 +471,7 @@ async fn delete_bookmark(
     let db = state.db.clone();
     match blocking(move || db.remove_bookmark(&url)).await {
         Ok(removed) => json_ok(json!({ "ok": true, "removed": removed })),
-        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+        Err(e) => json_error_app(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
 }
 
@@ -474,7 +486,7 @@ async fn get_history(
     let db = state.db.clone();
     match blocking(move || db.list_history(limit)).await {
         Ok(list) => json_ok(json!({ "ok": true, "history": list })),
-        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+        Err(e) => json_error_app(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
 }
 
@@ -482,7 +494,7 @@ async fn delete_history(State(state): State<AppState>) -> Response {
     let db = state.db.clone();
     match blocking(move || db.clear_history()).await {
         Ok(()) => json_ok(json!({ "ok": true })),
-        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+        Err(e) => json_error_app(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
 }
 
@@ -490,7 +502,7 @@ async fn get_downloads(State(state): State<AppState>) -> Response {
     let db = state.db.clone();
     match blocking(move || db.list_downloads()).await {
         Ok(list) => json_ok(json!({ "ok": true, "downloads": list })),
-        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+        Err(e) => json_error_app(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
 }
 
@@ -498,7 +510,7 @@ async fn delete_downloads(State(state): State<AppState>) -> Response {
     let db = state.db.clone();
     match blocking(move || db.clear_downloads()).await {
         Ok(()) => json_ok(json!({ "ok": true })),
-        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+        Err(e) => json_error_app(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
 }
 
@@ -510,7 +522,7 @@ async fn get_omnibox(
     let db = state.db.clone();
     match blocking(move || db.search_omnibox(&q)).await {
         Ok(result) => json_ok(json!({ "ok": true, "result": result })),
-        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+        Err(e) => json_error_app(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
 }
 
@@ -534,25 +546,25 @@ fn default_settings() -> Value {
     })
 }
 
-fn normalized_shortcut(value: Option<&Value>, default: &str) -> Result<String, String> {
+fn normalized_shortcut(value: Option<&Value>, default: &str) -> Result<String, crate::error::AppError> {
     let raw = value.and_then(Value::as_str).unwrap_or(default).trim().to_ascii_lowercase();
     if raw.is_empty() {
         return Ok(String::new());
     }
     if raw.len() > 32 {
-        return Err(crate::i18n::t("err.shortcut_too_long"));
+        return Err(crate::error::AppError::key("err.shortcut_too_long"));
     }
     let parts: Vec<&str> = raw.split('+').collect();
     let key = parts.last().copied().unwrap_or("");
     let valid_key = key.len() == 1 && key.chars().all(|c| c.is_ascii_alphanumeric())
         || (key.starts_with('f') && key[1..].parse::<u8>().map(|n| (1..=12).contains(&n)).unwrap_or(false));
     if !valid_key {
-        return Err(crate::i18n::tf("err.shortcut_unsupported", &[("raw", raw.as_str())]));
+        return Err(crate::error::AppError::keyf("err.shortcut_unsupported", &[("raw", raw.as_str())]));
     }
     let mut seen = std::collections::HashSet::new();
     for modifier in parts.iter().take(parts.len().saturating_sub(1)) {
         if !matches!(*modifier, "alt" | "ctrl" | "meta" | "shift") || !seen.insert(*modifier) {
-            return Err(crate::i18n::tf(
+            return Err(crate::error::AppError::keyf(
                 "err.shortcut_modifier_invalid",
                 &[("raw", raw.as_str())],
             ));
@@ -561,15 +573,15 @@ fn normalized_shortcut(value: Option<&Value>, default: &str) -> Result<String, S
     Ok(raw)
 }
 
-fn normalize_settings(input: &Value) -> Result<Value, String> {
+fn normalize_settings(input: &Value) -> Result<Value, crate::error::AppError> {
     let defaults = default_settings();
     let sync = input.get("sync").unwrap_or(&defaults["sync"]);
     let address = sync.get("address").and_then(Value::as_str).unwrap_or("").trim();
     if !address.is_empty() {
         let parsed =
-            url::Url::parse(address).map_err(|_| crate::i18n::t("err.sync_addr_invalid"))?;
+            url::Url::parse(address).map_err(|_| crate::error::AppError::key("err.sync_addr_invalid"))?;
         if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
-            return Err(crate::i18n::t("err.sync_addr_invalid"));
+            return Err(crate::error::AppError::key("err.sync_addr_invalid"));
         }
     }
     let shortcuts = input.get("shortcuts").unwrap_or(&defaults["shortcuts"]);
@@ -580,33 +592,33 @@ fn normalize_settings(input: &Value) -> Result<Value, String> {
         .trim();
     if !dict_template.is_empty() {
         if !dict_template.contains("{word}") {
-            return Err(crate::i18n::t("err.dict_template_missing_word"));
+            return Err(crate::error::AppError::key("err.dict_template_missing_word"));
         }
         let sample = dict_template.replace("{word}", "annota");
         let parsed = url::Url::parse(&sample)
-            .map_err(|_| crate::i18n::t("err.dict_template_invalid"))?;
+            .map_err(|_| crate::error::AppError::key("err.dict_template_invalid"))?;
         if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
-            return Err(crate::i18n::t("err.dict_template_invalid"));
+            return Err(crate::error::AppError::key("err.dict_template_invalid"));
         }
     }
     let ai = input.get("ai").unwrap_or(&defaults["ai"]);
     let ai_base = ai.get("baseUrl").and_then(Value::as_str).unwrap_or("").trim();
     if !ai_base.is_empty() {
         let parsed = url::Url::parse(ai_base)
-            .map_err(|_| crate::i18n::t("err.ai_base_invalid"))?;
+            .map_err(|_| crate::error::AppError::key("err.ai_base_invalid"))?;
         if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
-            return Err(crate::i18n::t("err.ai_base_invalid"));
+            return Err(crate::error::AppError::key("err.ai_base_invalid"));
         }
     }
     let ai_model = ai.get("model").and_then(Value::as_str).unwrap_or("").trim();
     if ai_model.len() > 160 {
-        return Err(crate::i18n::t("err.ai_model_too_long"));
+        return Err(crate::error::AppError::key("err.ai_model_too_long"));
     }
     // P2-S1：用户信任的站点 origin 列表（高危命令的放行名单）
     let mut trusted: Vec<String> = Vec::new();
     if let Some(arr) = input.get("trustedOrigins").and_then(Value::as_array) {
         if arr.len() > 50 {
-            return Err(crate::i18n::t("err.trust_list_full"));
+            return Err(crate::error::AppError::key("err.trust_list_full"));
         }
         for item in arr {
             let raw = item.as_str().unwrap_or("").trim();
@@ -616,10 +628,10 @@ fn normalize_settings(input: &Value) -> Result<Value, String> {
             let parsed = url::Url::parse(raw)
                 .map_err(|_| crate::i18n::tf("err.trust_origin_invalid", &[("raw", raw)]))?;
             if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
-                return Err(crate::i18n::tf("err.trust_origin_not_http", &[("raw", raw)]));
+                return Err(crate::error::AppError::keyf("err.trust_origin_not_http", &[("raw", raw)]));
             }
             if !parsed.path().is_empty() && parsed.path() != "/" {
-                return Err(crate::i18n::tf("err.trust_origin_has_path", &[("raw", raw)]));
+                return Err(crate::error::AppError::keyf("err.trust_origin_has_path", &[("raw", raw)]));
             }
             let origin = parsed.origin().ascii_serialization();
             if !trusted.contains(&origin) {
@@ -681,7 +693,7 @@ async fn put_settings(State(state): State<AppState>, body: Bytes) -> Response {
         .map(|s| s.to_string());
     let settings = match normalize_settings(&incoming) {
         Ok(v) => v,
-        Err(e) => return json_error(StatusCode::BAD_REQUEST, &e),
+        Err(e) => return json_error_app(StatusCode::BAD_REQUEST, &e),
     };
     if let Some(key) = api_key_op {
         let r = if key.trim().is_empty() {
@@ -692,7 +704,7 @@ async fn put_settings(State(state): State<AppState>, body: Bytes) -> Response {
         if let Err(e) = r {
             return json_error(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                &crate::i18n::tf("err.keychain_write_failed", &[("e", &e)]),
+                &crate::i18n::tf("err.keychain_write_failed", &[("e", &e.to_string())]),
             );
         }
     }
@@ -730,7 +742,7 @@ async fn get_anno(State(state): State<AppState>, AxumPath(media_id): AxumPath<St
     match read_pack(&state.store, &media_id).await {
         Ok(pack) => json_ok(pack),
         // P1-b#10：损坏时 4xx + 原因，让前端显式告警，而不是拿到空包静默继续
-        Err(e) => json_error(StatusCode::CONFLICT, &e),
+        Err(e) => json_error_app(StatusCode::CONFLICT, &e),
     }
 }
 
@@ -782,7 +794,7 @@ async fn put_anno(
         // P1-b#10：损坏文件拒写（409），避免合并覆盖导致永久丢数据；用户先处理 .corrupt 副本
         let cur = match read_pack(&state.store, &media_id).await {
             Ok(v) => v,
-            Err(e) => return json_error(StatusCode::CONFLICT, &e),
+            Err(e) => return json_error_app(StatusCode::CONFLICT, &e),
         };
         let existing = cur.get("entries").and_then(|v| v.as_array()).cloned().unwrap_or_default();
         let incoming_entries = incoming
@@ -867,7 +879,7 @@ async fn note(State(state): State<AppState>, body: Bytes) -> Response {
             "path": path.to_string_lossy(),
             "dir": state.notes_dir.to_string_lossy(),
         })),
-        Err(e) => json_error(StatusCode::INTERNAL_SERVER_ERROR, &e),
+        Err(e) => json_error_app(StatusCode::INTERNAL_SERVER_ERROR, &e),
     }
 }
 
@@ -1337,13 +1349,13 @@ fn merge_entries(a: &[Value], b: &[Value]) -> Vec<Value> {
 
 /// P1-b#10：读标注包。文件存在但解析失败 → 备份 `.corrupt` 副本并返回 Err。
 /// 绝不静默返回空包——否则随后的 PUT 会用「空 + 本次内容」覆盖掉损坏文件，数据永久丢失。
-async fn read_pack(store: &Path, key: &str) -> Result<Value, String> {
+async fn read_pack(store: &Path, key: &str) -> Result<Value, crate::error::AppError> {
     let p = key_to_file(store, key);
     if p.is_file() {
         let bytes = match fs::read(&p).await {
             Ok(b) => b,
             Err(e) => {
-                return Err(crate::i18n::tf("err.pack_read_failed", &[("e", &e.to_string())]))
+                return Err(crate::error::AppError::keyf("err.pack_read_failed", &[("e", &e.to_string())]))
             }
         };
         match serde_json::from_slice::<Value>(&bytes) {
@@ -1358,7 +1370,7 @@ async fn read_pack(store: &Path, key: &str) -> Result<Value, String> {
                     .and_then(|n| n.to_str())
                     .unwrap_or("")
                     .to_string();
-                return Err(crate::i18n::tf(
+                return Err(crate::error::AppError::keyf(
                     "err.pack_corrupt",
                     &[("bak", &bak_name), ("e", &e.to_string())],
                 ));
@@ -1372,17 +1384,17 @@ async fn read_pack(store: &Path, key: &str) -> Result<Value, String> {
     }))
 }
 
-async fn write_pack(store: &Path, key: &str, pack: &Value) -> Result<PathBuf, String> {
+async fn write_pack(store: &Path, key: &str, pack: &Value) -> Result<PathBuf, crate::error::AppError> {
     fs::create_dir_all(store)
         .await
-        .map_err(|e| format!("create store: {e}"))?;
+        .map_err(|e| crate::error::AppError::internal(format!("create store: {e}")))?;
     let path = key_to_file(store, key);
     let tmp_name = format!("{}.{}.part", sanitize_key(key), uuid::Uuid::new_v4());
     let tmp = store.join(tmp_name);
-    let json = serde_json::to_vec_pretty(pack).map_err(|e| e.to_string())?;
+    let json = serde_json::to_vec_pretty(pack).map_err(crate::error::AppError::internal)?;
     fs::write(&tmp, json)
         .await
-        .map_err(|e| format!("write tmp: {e}"))?;
+        .map_err(|e| crate::error::AppError::internal(format!("write tmp: {e}")))?;
     // P2-S3：覆盖前留存一代 .bak（可经 /api/anno/:id/restore 恢复）
     if path.is_file() {
         let bak = path.with_extension("json.bak");
@@ -1390,7 +1402,7 @@ async fn write_pack(store: &Path, key: &str, pack: &Value) -> Result<PathBuf, St
     }
     fs::rename(&tmp, &path)
         .await
-        .map_err(|e| format!("rename tmp: {e}"))?;
+        .map_err(|e| crate::error::AppError::internal(format!("rename tmp: {e}")))?;
     let _ = fs::remove_file(&tmp).await;
     Ok(path)
 }
@@ -1517,7 +1529,7 @@ async fn restore_anno(State(state): State<AppState>, AxumPath(media_id): AxumPat
     json_ok(json!({ "ok": true }))
 }
 
-async fn save_note(notes_dir: &Path, rec: &Value) -> Result<PathBuf, String> {
+async fn save_note(notes_dir: &Path, rec: &Value) -> Result<PathBuf, crate::error::AppError> {
     fs::create_dir_all(notes_dir)
         .await
         .map_err(|e| format!("create notes dir: {e}"))?;
@@ -1587,7 +1599,7 @@ async fn save_note(notes_dir: &Path, rec: &Value) -> Result<PathBuf, String> {
     file.write_all(serde_json::to_string(&line).map_err(|e| e.to_string())?.as_bytes())
         .await
         .map_err(|e| format!("append data.jsonl: {e}"))?;
-    file.write_all(b"\n").await.map_err(|e| e.to_string())?;
+    file.write_all(b"\n").await.map_err(crate::error::AppError::internal)?;
 
     Ok(npath)
 }

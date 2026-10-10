@@ -134,7 +134,7 @@ pub fn build_apkg(
     notes: &[Note],
     media: &[Media],
     timestamp: Option<i64>,
-) -> Result<(), String> {
+) -> Result<(), crate::error::AppError> {
     let ts = timestamp.unwrap_or_else(|| chrono::Local::now().timestamp());
     let deck_id = deck_id_for(deck_name);
     let uuid = uuid::Uuid::new_v4();
@@ -152,10 +152,10 @@ pub fn build_apkg(
     }
     let _tmp_guard = TmpGuard(db_path.clone());
 
-    let result = (|| -> Result<(), String> {
+    let result = (|| -> Result<(), crate::error::AppError> {
         {
-            let conn = Connection::open(&db_path).map_err(|e| e.to_string())?;
-            conn.execute_batch(SCHEMA).map_err(|e| e.to_string())?;
+            let conn = Connection::open(&db_path).map_err(crate::error::AppError::internal)?;
+            conn.execute_batch(SCHEMA).map_err(crate::error::AppError::internal)?;
 
             let conf = json!({
                 "activeDecks": [1], "addToCur": true, "collapseTime": 1200, "curDeck": 1,
@@ -185,7 +185,7 @@ pub fn build_apkg(
                 "INSERT INTO col VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
                 params![1i64, ts, ts * 1000, ts * 1000, 11i64, 0i64, 0i64, 0i64, conf, "{}", decks, dconf, "{}"],
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(crate::error::AppError::internal)?;
 
             let mut decks_map = serde_json::Map::new();
             decks_map.insert(
@@ -196,13 +196,13 @@ pub fn build_apkg(
             );
             decks_map.insert(deck_id.to_string(), default_deck(deck_id, deck_name));
             let all_decks = serde_json::Value::Object(decks_map).to_string();
-            conn.execute("UPDATE col SET decks=?1", params![all_decks]).map_err(|e| e.to_string())?;
+            conn.execute("UPDATE col SET decks=?1", params![all_decks]).map_err(crate::error::AppError::internal)?;
             let mut models_map = serde_json::Map::new();
             let mut model = model_json(ts);
             model["did"] = json!(deck_id);   // 模型默认牌组指向本次实际牌组
             models_map.insert(MODEL_ID.to_string(), model);
             let models = serde_json::Value::Object(models_map).to_string();
-            conn.execute("UPDATE col SET models=?1", params![models]).map_err(|e| e.to_string())?;
+            conn.execute("UPDATE col SET models=?1", params![models]).map_err(crate::error::AppError::internal)?;
 
             for note in notes {
                 let flds = format!("{}\u{1f}{}", note.front, note.back);
@@ -211,28 +211,28 @@ pub fn build_apkg(
                     "INSERT INTO notes VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
                     params![next_id, note.guid, MODEL_ID, ts, -1i64, tags, flds, note.sort, 0i64, 0i64, ""],
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(crate::error::AppError::internal)?;
                 let nid = conn.last_insert_rowid();
                 next_id += 1;
                 conn.execute(
                     "INSERT INTO cards VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
                     params![next_id, nid, deck_id, 0i64, ts, -1i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64, ""],
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(crate::error::AppError::internal)?;
                 next_id += 1;
             }
         }
 
         if let Some(parent) = out_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            std::fs::create_dir_all(parent).map_err(crate::error::AppError::internal)?;
         }
-        let file = std::fs::File::create(out_path).map_err(|e| e.to_string())?;
+        let file = std::fs::File::create(out_path).map_err(crate::error::AppError::internal)?;
         let mut zip = zip::ZipWriter::new(file);
         let opts = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated);
-        let db_bytes = std::fs::read(&db_path).map_err(|e| e.to_string())?;
-        zip.start_file("collection.anki2", opts).map_err(|e| e.to_string())?;
-        zip.write_all(&db_bytes).map_err(|e| e.to_string())?;
+        let db_bytes = std::fs::read(&db_path).map_err(crate::error::AppError::internal)?;
+        zip.start_file("collection.anki2", opts).map_err(crate::error::AppError::internal)?;
+        zip.write_all(&db_bytes).map_err(crate::error::AppError::internal)?;
 
         let mut map = serde_json::Map::new();
         // OCR-fix：media 文件名去路径分隔/控制字符并去重——原样写入可污染包或让 Anki 覆盖导入
@@ -254,14 +254,14 @@ pub fn build_apkg(
             }
             map.insert(i.to_string(), json!(name));
         }
-        zip.start_file("media", opts).map_err(|e| e.to_string())?;
-        zip.write_all(serde_json::to_string(&map).map_err(|e| e.to_string())?.as_bytes())
-            .map_err(|e| e.to_string())?;
+        zip.start_file("media", opts).map_err(crate::error::AppError::internal)?;
+        zip.write_all(serde_json::to_string(&map).map_err(crate::error::AppError::internal)?.as_bytes())
+            .map_err(crate::error::AppError::internal)?;
         for (i, m) in media.iter().enumerate() {
-            zip.start_file(i.to_string(), opts).map_err(|e| e.to_string())?;
-            zip.write_all(&m.bytes).map_err(|e| e.to_string())?;
+            zip.start_file(i.to_string(), opts).map_err(crate::error::AppError::internal)?;
+            zip.write_all(&m.bytes).map_err(crate::error::AppError::internal)?;
         }
-        zip.finish().map_err(|e| e.to_string())?;
+        zip.finish().map_err(crate::error::AppError::internal)?;
         Ok(())
     })();
 

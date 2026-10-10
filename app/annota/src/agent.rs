@@ -7,6 +7,7 @@
 //!
 //! 聊天端点：OpenAI 兼容的 {base}/chat/completions。
 
+use crate::error::AppError;
 use crate::run_tool;
 use serde_json::{json, Value};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -71,21 +72,21 @@ pub fn keychain_llm_key() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-pub fn keychain_set_llm_key(key: &str) -> Result<(), String> {
+pub fn keychain_set_llm_key(key: &str) -> Result<(), crate::error::AppError> {
     keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
-        .map_err(|e| e.to_string())?
+        .map_err(crate::error::AppError::internal)?
         .set_password(key.trim())
-        .map_err(|e| e.to_string())
+        .map_err(crate::error::AppError::internal)
 }
 
-pub fn keychain_delete_llm_key() -> Result<(), String> {
+pub fn keychain_delete_llm_key() -> Result<(), crate::error::AppError> {
     match keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT) {
         Ok(entry) => match entry.delete_credential() {
             Ok(()) => Ok(()),
             Err(keyring::Error::NoEntry) => Ok(()),
-            Err(e) => Err(e.to_string()),
+            Err(e) => Err(crate::error::AppError::internal(e)),
         },
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(crate::error::AppError::internal(e)),
     }
 }
 
@@ -208,7 +209,7 @@ fn invoke_tool(handle: &tauri::AppHandle, id: &str, name: &str, args: Value, cal
             value
         }
         Err(err) => {
-            let value = json!({"error": err});
+            let value = json!({"error": err.to_string()});
             emit_tool(handle, id, name, &args, "error", &value);
             value
         }
@@ -219,7 +220,7 @@ fn invoke_tool(handle: &tauri::AppHandle, id: &str, name: &str, args: Value, cal
 pub fn call_tool(name: &str, args: Value) -> Value {
     match run_tool(name, &args) {
         Ok(text) => serde_json::from_str::<Value>(&text).unwrap_or_else(|_| json!(text)),
-        Err(err) => json!({"error": err}),
+        Err(err) => json!({"error": err.to_string()}),
     }
 }
 
@@ -281,7 +282,7 @@ fn client_messages(convo: &[Value]) -> Vec<Value> {
         .collect()
 }
 
-async fn call_llm(client: &reqwest::Client, cfg: &LlmConfig, messages: &Value) -> Result<Value, String> {
+async fn call_llm(client: &reqwest::Client, cfg: &LlmConfig, messages: &Value) -> Result<Value, AppError> {
     let body = json!({
         "model": cfg.model,
         "messages": messages,
@@ -289,7 +290,7 @@ async fn call_llm(client: &reqwest::Client, cfg: &LlmConfig, messages: &Value) -
         "tool_choice": "auto",
         "stream": false
     });
-    let mut last_err = crate::i18n::t("err.llm_request_failed");
+    let mut last_err = AppError::key("err.llm_request_failed");
     for url in chat_urls(&cfg.base) {
         let resp = client
             .post(&url)
@@ -298,21 +299,21 @@ async fn call_llm(client: &reqwest::Client, cfg: &LlmConfig, messages: &Value) -
             .send()
             .await;
         match resp {
-            Err(e) => last_err = e.to_string(),
+            Err(e) => last_err = AppError::internal(e),
             Ok(r) => {
                 let status = r.status();
                 let text = r.text().await.unwrap_or_default();
                 if !status.is_success() {
-                    last_err = format!("HTTP {status}: {}", truncate(&text, 300));
+                    last_err = AppError::internal(format!("HTTP {status}: {}", truncate(&text, 300)));
                     continue;
                 }
                 match serde_json::from_str::<Value>(&text) {
                     Ok(v) if v.get("choices").is_some() => return Ok(v),
                     Ok(_) => {
-                        last_err = crate::i18n::tf("err.llm_no_choices", &[("url", url.as_str())])
+                        last_err = AppError::keyf("err.llm_no_choices", &[("url", url.as_str())])
                     }
                     Err(e) => {
-                        last_err = crate::i18n::tf(
+                        last_err = AppError::keyf(
                             "err.llm_parse_failed",
                             &[("url", url.as_str()), ("e", &e.to_string())],
                         )
@@ -349,20 +350,20 @@ pub async fn agent_run(
     app: tauri::AppHandle,
     w: tauri::Webview,
     messages: Vec<Value>,
-) -> Result<Value, String> {
+) -> Result<Value, AppError> {
     crate::require_local_or_trusted(&app, &w, &crate::i18n::t("perm.ai_agent"))?;
     // OCR-fix：config() 内含同步 fs 读取 + keyring 调用——下放到 blocking 线程，别卡 async 运行时
     let app_cfg = app.clone();
     let cfg = tauri::async_runtime::spawn_blocking(move || config(&app_cfg))
         .await
-        .map_err(|e| e.to_string())?
-        .ok_or(crate::i18n::t("err.llm_key_missing"))?;
+        .map_err(AppError::internal)?
+        .ok_or_else(|| AppError::key("err.llm_key_missing"))?;
     // OCR-fix：写确认绑定发起会话的 webview label，跨会话不可消费（防猜 confirm_id）
     let caller = w.label().to_string();
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(120))
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(AppError::internal)?;
 
     let mut convo: Vec<Value> = vec![json!({"role": "system", "content": system_prompt()})];
     // OCR-fix：旧 take(40) 保留的是**最旧**消息、丢掉最新上下文——保留最新 40 条
@@ -439,21 +440,21 @@ pub async fn agent_run(
 
 /// 直接执行一次已确认的工具
 #[tauri::command]
-pub fn agent_chat(app: tauri::AppHandle, w: tauri::Webview, confirm_id: String) -> Result<Value, String> {
+pub fn agent_chat(app: tauri::AppHandle, w: tauri::Webview, confirm_id: String) -> Result<Value, AppError> {
     crate::require_local_or_trusted(&app, &w, &crate::i18n::t("perm.ai_agent"))?;
     let entry = pending()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove(&confirm_id)
-        .ok_or(crate::i18n::t("err.confirm_expired"))?;
+        .ok_or_else(|| AppError::key("err.confirm_expired"))?;
     let age = now_ms().saturating_sub(entry.get("at").and_then(Value::as_u64).unwrap_or(0));
     if age >= PENDING_TTL_MS {
-        return Err(crate::i18n::t("err.confirm_expired_detailed"));
+        return Err(AppError::key("err.confirm_expired_detailed"));
     }
     // OCR-fix：确认必须来自发起该写操作的同一 webview（防其他会话猜 confirm_id 消费）
     let entry_caller = entry.get("caller").and_then(Value::as_str).unwrap_or("");
     if !entry_caller.is_empty() && entry_caller != w.label() {
-        return Err(crate::i18n::t("err.confirm_cross_session"));
+        return Err(AppError::key("err.confirm_cross_session"));
     }
     let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let args = entry.get("arguments").cloned().unwrap_or_else(|| json!({}));

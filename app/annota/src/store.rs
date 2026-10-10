@@ -14,15 +14,19 @@ use std::sync::{Arc, Mutex};
 use tauri::AppHandle;
 use tauri::Manager;
 
+use crate::error::AppError;
+
 const HISTORY_CAP: i64 = 5000;
 
 #[derive(Clone)]
+/// 本地持久化连接（SQLite，收藏/历史/下载三表）。内部 Arc<Mutex<Connection>>，可 Clone 跨线程共享。
 pub struct Db {
     conn: Arc<Mutex<Connection>>,
     /// 主库文件路径（内存库为 None）。备份走独立连接，避免 VACUUM INTO 长时间占住共享互斥。
     source: Option<std::path::PathBuf>,
 }
 
+/// Tauri 托管状态：main.rs `.manage(DbState(db))`，钩子内 `app.state::<DbState>()` 取用。
 /// Tauri 托管状态：main.rs `.manage(DbState(db))`，钩子内 `app.state::<DbState>()` 取用。
 pub struct DbState(pub Db);
 
@@ -56,51 +60,53 @@ pub fn resolve_db_path(app: &AppHandle, store: &Path) -> PathBuf {
 }
 
 impl Db {
-    pub fn open(path: &Path) -> Result<Self, String> {
+    /// 打开（或创建）数据库文件并跑迁移。
+    pub fn open(path: &Path) -> Result<Self, AppError> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("create db dir: {e}"))?;
+            std::fs::create_dir_all(parent).map_err(|e| AppError::internal(format!("create db dir: {e}")))?;
         }
-        let conn = Connection::open(path).map_err(|e| format!("open db: {e}"))?;
+        let conn = Connection::open(path).map_err(|e| AppError::internal(format!("open db: {e}")))?;
         Self::from_conn(conn, Some(path.to_path_buf()))
     }
 
     /// P2-D2：文件库/临时库都不可用时的最终兜底——纯内存库（进程级、不落盘）。
     /// 收藏/历史/下载在本进程内仍可用，重启后为空；避免整个应用起不来。
-    pub fn open_in_memory() -> Result<Self, String> {
-        let conn = Connection::open_in_memory().map_err(|e| format!("open memory db: {e}"))?;
+    /// 纯内存库（进程级、不落盘）。文件库不可用时的最终兜底。
+    pub fn open_in_memory() -> Result<Self, AppError> {
+        let conn = Connection::open_in_memory().map_err(|e| AppError::internal(format!("open memory db: {e}")))?;
         Self::from_conn(conn, None)
     }
 
-    fn from_conn(conn: Connection, source: Option<std::path::PathBuf>) -> Result<Self, String> {
+    fn from_conn(conn: Connection, source: Option<std::path::PathBuf>) -> Result<Self, AppError> {
         conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=NORMAL;
              PRAGMA busy_timeout=5000;
              PRAGMA foreign_keys=ON;",
         )
-        .map_err(|e| format!("pragma: {e}"))?;
+        .map_err(|e| AppError::internal(format!("pragma: {e}")))?;
         let db = Db { conn: Arc::new(Mutex::new(conn)), source };
         db.migrate()?;
         Ok(db)
     }
 
-    fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
+    fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> Result<T, AppError>) -> Result<T, AppError> {
         let conn = self
             .conn
             .lock()
-            .map_err(|_| crate::i18n::t("err.db_lock_poisoned"))?;
+            .map_err(|_| AppError::key("err.db_lock_poisoned"))?;
         f(&conn)
     }
 
     /// P2-D3：带版本号的迁移框架。user_version=1 为当前 schema；
     /// 未来加字段时：version<2 的库跑 v2 迁移并升版本；高版本库拒开（防旧应用写坏新库）。
-    fn migrate(&self) -> Result<(), String> {
+    fn migrate(&self) -> Result<(), AppError> {
         let version: i64 = self.with_conn(|c| {
             c.query_row("PRAGMA user_version", [], |r| r.get(0))
-                .map_err(|e| e.to_string())
+                .map_err(AppError::internal)
         })?;
         if version > 1 {
-            return Err(crate::i18n::tf(
+            return Err(AppError::keyf(
                 "err.db_version_too_new",
                 &[("version", &version.to_string())],
             ));
@@ -109,13 +115,13 @@ impl Db {
             self.migrate_v1()?;
             self.with_conn(|c| {
                 c.execute_batch("PRAGMA user_version = 1")
-                    .map_err(|e| e.to_string())
+                    .map_err(AppError::internal)
             })?;
         }
         Ok(())
     }
 
-    fn migrate_v1(&self) -> Result<(), String> {
+    fn migrate_v1(&self) -> Result<(), AppError> {
         self.with_conn(|c| {
             c.execute_batch(
                 "CREATE TABLE IF NOT EXISTS bookmarks (
@@ -149,40 +155,41 @@ impl Db {
                  );
                  CREATE INDEX IF NOT EXISTS idx_downloads_created ON downloads(created_at DESC);",
             )
-            .map_err(|e| format!("migrate: {e}"))
+            .map_err(|e| AppError::internal(format!("migrate: {e}")))
         })
     }
 
     /// P2-D2：在线一致性备份（VACUUM INTO，WAL 安全）。生成单文件新库。
-    pub fn backup_to(&self, dest: &Path) -> Result<(), String> {
+    /// 在线一致性备份（VACUUM INTO，WAL 安全）。生成单文件新库。
+    pub fn backup_to(&self, dest: &Path) -> Result<(), AppError> {
         if let Some(p) = dest.parent() {
-            std::fs::create_dir_all(p).map_err(|e| format!("create backup dir: {e}"))?;
+            std::fs::create_dir_all(p).map_err(|e| AppError::internal(format!("create backup dir: {e}")))?;
         }
         // OCR-fix：目标已存在先删（同日重备份语义），而非让 SQLite 报错
         if dest.exists() {
-            std::fs::remove_file(dest).map_err(|e| format!("remove old backup: {e}"))?;
+            std::fs::remove_file(dest).map_err(|e| AppError::internal(format!("remove old backup: {e}")))?;
         }
         let escaped = dest.to_string_lossy().replace('\'', "''");
         let sql = format!("VACUUM INTO '{escaped}'");
         // OCR-fix：优先独立连接执行——VACUUM INTO 是长磁盘操作，走共享互斥会停摆全部 DB 访问
         match &self.source {
             Some(src) => {
-                let c = Connection::open(src).map_err(|e| format!("backup open source: {e}"))?;
-                c.execute_batch(&sql).map_err(|e| format!("backup: {e}"))
+                let c = Connection::open(src).map_err(|e| AppError::internal(format!("backup open source: {e}")))?;
+                c.execute_batch(&sql).map_err(|e| AppError::internal(format!("backup: {e}")))
             }
-            None => self.with_conn(|c| c.execute_batch(&sql).map_err(|e| format!("backup: {e}"))),
+            None => self.with_conn(|c| c.execute_batch(&sql).map_err(|e| AppError::internal(format!("backup: {e}")))),
         }
     }
 
     // ---------- 收藏 ----------
-    pub fn list_bookmarks(&self) -> Result<Vec<Value>, String> {
+    pub fn list_bookmarks(&self) -> Result<Vec<Value>, AppError> {
         self.with_conn(|c| {
             let mut stmt = c
                 .prepare(
                     "SELECT id,url,title,favicon,folder,created_at,sort
                      FROM bookmarks ORDER BY created_at DESC, id DESC",
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(AppError::internal)?;
             let rows = stmt
                 .query_map([], |r| {
                     Ok(json!({
@@ -195,13 +202,13 @@ impl Db {
                         "sort": r.get::<_, i64>(6)?,
                     }))
                 })
-                .map_err(|e| e.to_string())?;
-            rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+                .map_err(AppError::internal)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(AppError::internal)
         })
     }
 
     /// 新增收藏（同 URL 幂等：已存在则返回 false）。
-    pub fn add_bookmark(&self, url: &str, title: &str, favicon: Option<&str>) -> Result<bool, String> {
+    pub fn add_bookmark(&self, url: &str, title: &str, favicon: Option<&str>) -> Result<bool, AppError> {
         self.with_conn(|c| {
             // OCR-fix：INSERT OR IGNORE + changes（SELECT-then-INSERT 在第二进程并发下会 UNIQUE 报错而非幂等）
             let n = c
@@ -209,31 +216,31 @@ impl Db {
                     "INSERT OR IGNORE INTO bookmarks (url,title,favicon,created_at) VALUES (?1,?2,?3,?4)",
                     params![url, title, favicon, now_ms()],
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(AppError::internal)?;
             Ok(n > 0)
         })
     }
 
-    pub fn remove_bookmark(&self, url: &str) -> Result<bool, String> {
+    pub fn remove_bookmark(&self, url: &str) -> Result<bool, AppError> {
         self.with_conn(|c| {
             let n = c
                 .execute("DELETE FROM bookmarks WHERE url=?1", params![url])
-                .map_err(|e| e.to_string())?;
+                .map_err(AppError::internal)?;
             Ok(n > 0)
         })
     }
 
     // ---------- 历史 ----------
     /// 写入一条历史；随后裁剪到 HISTORY_CAP 条。
-    pub fn add_history(&self, url: &str, title: &str, tab_id: Option<&str>) -> Result<(), String> {
+    pub fn add_history(&self, url: &str, title: &str, tab_id: Option<&str>) -> Result<(), AppError> {
         self.with_conn(|c| {
             // OCR-fix：插入与裁剪放同一事务——此前两语句间崩溃会留下超帽状态
-            let tx = c.unchecked_transaction().map_err(|e| e.to_string())?;
+            let tx = c.unchecked_transaction().map_err(AppError::internal)?;
             tx.execute(
                 "INSERT INTO history (url,title,visit_at,tab_id) VALUES (?1,?2,?3,?4)",
                 params![url, title, now_ms(), tab_id],
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(AppError::internal)?;
             // OCR-fix：按 visit_at 索引的 OFFSET 子查询裁剪（id NOT IN 每次全表物化，热路径浪费）
             tx.execute(
                 "DELETE FROM history WHERE id < (
@@ -241,14 +248,14 @@ impl Db {
                  )",
                 params![HISTORY_CAP],
             )
-            .map_err(|e| e.to_string())?;
-            tx.commit().map_err(|e| e.to_string())?;
+            .map_err(AppError::internal)?;
+            tx.commit().map_err(AppError::internal)?;
             Ok(())
         })
     }
 
     /// 页面标题加载完成后回填最近一条同 URL 的历史记录（add_history 入库时标题尚未知）。
-    pub fn update_history_title(&self, url: &str, title: &str) -> Result<(), String> {
+    pub fn update_history_title(&self, url: &str, title: &str) -> Result<(), AppError> {
         if title.trim().is_empty() {
             return Ok(());
         }
@@ -258,19 +265,19 @@ impl Db {
                  WHERE id = (SELECT id FROM history WHERE url = ?2 ORDER BY visit_at DESC, id DESC LIMIT 1)",
                 params![title, url],
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(AppError::internal)?;
             Ok(())
         })
     }
 
-    pub fn list_history(&self, limit: i64) -> Result<Vec<Value>, String> {
+    pub fn list_history(&self, limit: i64) -> Result<Vec<Value>, AppError> {
         self.with_conn(|c| {
             let mut stmt = c
                 .prepare(
                     "SELECT id,url,title,visit_at,tab_id FROM history
                      ORDER BY visit_at DESC, id DESC LIMIT ?1",
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(AppError::internal)?;
             let rows = stmt
                 .query_map(params![limit.max(0)], |r| {
                     Ok(json!({
@@ -281,28 +288,28 @@ impl Db {
                         "tab_id": r.get::<_, Option<String>>(4)?,
                     }))
                 })
-                .map_err(|e| e.to_string())?;
-            rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+                .map_err(AppError::internal)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(AppError::internal)
         })
     }
 
-    pub fn clear_history(&self) -> Result<(), String> {
+    pub fn clear_history(&self) -> Result<(), AppError> {
         self.with_conn(|c| {
-            c.execute("DELETE FROM history", []).map_err(|e| e.to_string())?;
+            c.execute("DELETE FROM history", []).map_err(AppError::internal)?;
             Ok(())
         })
     }
 
     // ---------- 下载 ----------
     /// 记一条下载（status=downloading），返回 rowid。
-    pub fn add_download(&self, url: &str, filename: &str, path: Option<&str>) -> Result<i64, String> {
+    pub fn add_download(&self, url: &str, filename: &str, path: Option<&str>) -> Result<i64, AppError> {
         self.with_conn(|c| {
             c.execute(
                 "INSERT INTO downloads (url,filename,path,status,created_at)
                  VALUES (?1,?2,?3,'downloading',?4)",
                 params![url, filename, path, now_ms()],
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(AppError::internal)?;
             Ok(c.last_insert_rowid())
         })
     }
@@ -314,7 +321,7 @@ impl Db {
         path: Option<&str>,
         size: i64,
         status: &str,
-    ) -> Result<(), String> {
+    ) -> Result<(), AppError> {
         self.with_conn(|c| {
             c.execute(
                 "UPDATE downloads
@@ -324,19 +331,19 @@ impl Db {
                      ORDER BY id DESC LIMIT 1)",
                 params![status, path, size, url],
             )
-            .map_err(|e| e.to_string())?;
+            .map_err(AppError::internal)?;
             Ok(())
         })
     }
 
-    pub fn list_downloads(&self) -> Result<Vec<Value>, String> {
+    pub fn list_downloads(&self) -> Result<Vec<Value>, AppError> {
         self.with_conn(|c| {
             let mut stmt = c
                 .prepare(
                     "SELECT id,url,filename,path,status,size,created_at FROM downloads
                      ORDER BY created_at DESC, id DESC LIMIT 200",
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(AppError::internal)?;
             let rows = stmt
                 .query_map([], |r| {
                     Ok(json!({
@@ -349,21 +356,21 @@ impl Db {
                         "created_at": r.get::<_, i64>(6)?,
                     }))
                 })
-                .map_err(|e| e.to_string())?;
-            rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())
+                .map_err(AppError::internal)?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(AppError::internal)
         })
     }
 
-    pub fn clear_downloads(&self) -> Result<(), String> {
+    pub fn clear_downloads(&self) -> Result<(), AppError> {
         self.with_conn(|c| {
-            c.execute("DELETE FROM downloads", []).map_err(|e| e.to_string())?;
+            c.execute("DELETE FROM downloads", []).map_err(AppError::internal)?;
             Ok(())
         })
     }
 
     // ---------- omnibox 智能搜索 ----------
     /// 搜索历史与收藏，返回 {history: [...], bookmarks: [...]}，各限 5 条。
-    pub fn search_omnibox(&self, q: &str) -> Result<Value, String> {
+    pub fn search_omnibox(&self, q: &str) -> Result<Value, AppError> {
         let q = q.trim();
         if q.is_empty() {
             return Ok(json!({ "history": [], "bookmarks": [] }));
@@ -378,7 +385,7 @@ impl Db {
                      WHERE url LIKE ?1 ESCAPE '\\' OR title LIKE ?1 ESCAPE '\\'
                      ORDER BY visit_at DESC LIMIT 5",
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(AppError::internal)?;
             let history = stmt
                 .query_map(params![pattern], |r| {
                     Ok(json!({
@@ -387,9 +394,9 @@ impl Db {
                         "visit_at": r.get::<_, i64>(2)?,
                     }))
                 })
-                .map_err(|e| e.to_string())?
+                .map_err(AppError::internal)?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| e.to_string())?;
+                .map_err(AppError::internal)?;
 
             let mut stmt = c
                 .prepare(
@@ -397,7 +404,7 @@ impl Db {
                      WHERE url LIKE ?1 ESCAPE '\\' OR title LIKE ?1 ESCAPE '\\'
                      ORDER BY created_at DESC LIMIT 5",
                 )
-                .map_err(|e| e.to_string())?;
+                .map_err(AppError::internal)?;
             let bookmarks = stmt
                 .query_map(params![pattern], |r| {
                     Ok(json!({
@@ -406,9 +413,9 @@ impl Db {
                         "favicon": r.get::<_, Option<String>>(2)?,
                     }))
                 })
-                .map_err(|e| e.to_string())?
+                .map_err(AppError::internal)?
                 .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| e.to_string())?;
+                .map_err(AppError::internal)?;
 
             Ok(json!({ "history": history, "bookmarks": bookmarks }))
         })

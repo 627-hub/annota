@@ -15,12 +15,14 @@ use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Webview, WebviewUrl};
 use tauri::webview::{DownloadEvent, WebviewBuilder};
 
+use crate::error::AppError;
 use crate::store::DbState;
 
 pub const FIRST_TAB_ID: &str = "browser";
 /// 单次会话最多恢复的 tab 数（与前端 12 tab 上限对齐）。
 pub const MAX_RESTORE: usize = 12;
 
+/// 单个标签页的状态（id = webview label）。
 pub struct Tab {
     pub id: String,
     /// P1-a#4：页面标题（由桥接脚本上报；会话恢复时不持久化，加载后重新上报）。
@@ -32,6 +34,7 @@ pub struct Tab {
     pub url: String,
 }
 
+/// 标签页管理器：tabs 列表 + 活动下标 + id 序列。存于 tauri::State(Mutex<TabManager>)。
 pub struct TabManager {
     pub tabs: Vec<Tab>,
     pub active: usize,
@@ -56,15 +59,15 @@ impl TabManager {
 pub type TabState = Mutex<TabManager>;
 
 /// 取激活 tab 的 webview（所有「当前页」操作的唯一入口）。
-pub fn active_webview(app: &AppHandle) -> Result<Webview, String> {
+pub fn active_webview(app: &AppHandle) -> Result<Webview, AppError> {
     let state = app.state::<TabState>();
     let id = state
         .lock()
-        .map_err(|_| crate::i18n::t("err.tab_lock_poisoned"))?
+        .map_err(|_| AppError::key("err.tab_lock_poisoned"))?
         .active_id()
-        .ok_or_else(|| crate::i18n::t("err.no_active_tab"))?;
+        .ok_or_else(|| AppError::key("err.no_active_tab"))?;
     app.get_webview(&id)
-        .ok_or_else(|| crate::i18n::tf("err.tab_webview_missing", &[("id", id.as_str())]))
+        .ok_or_else(|| AppError::keyf("err.tab_webview_missing", &[("id", id.as_str())]))
 }
 
 /// 新建一个 tab webview，加入状态并激活它。`init_script` 为注入脚本（桥 + 标注层）。
@@ -79,21 +82,21 @@ pub fn create_tab(
     annotate_js: &str,
     position: PhysicalPosition<i32>,
     size: PhysicalSize<u32>,
-) -> Result<String, String> {
+) -> Result<String, AppError> {
     // 后建的 webview 盖在先建的上面：新 tab 会遮住已打开的浮层（菜单/面板）。
     // 代数 +1，让 overlay 下次打开时重建；这里同时把浮层关掉，避免它悬在旧位置。
     crate::bump_tab_gen();
     let _ = app.get_webview(crate::OVERLAY_ID).map(|w| w.close());
     // OCR-fix：先校验 URL——在任何共享状态变更之前失败即退出，
     // 避免旧实现「先 push 再 parse」失败时留下幽灵 Tab（snapshot 会报、active_webview 会选中）。
-    let parsed = url::Url::parse(&url).map_err(|e| e.to_string())?;
+    let parsed = url::Url::parse(&url).map_err(AppError::internal)?;
     // 预留 id：只推进 seq、不 push；真正的状态提交放在 webview 构建成功之后。
     // （并发首个 tab 的 id 冲突窗口仅存在于启动瞬间——彼时无页面可触发并发创建，可接受。）
     let id = {
         let state = app.state::<TabState>();
         let mut mgr = state
             .lock()
-            .map_err(|_| crate::i18n::t("err.tab_lock_poisoned"))?;
+            .map_err(|_| AppError::key("err.tab_lock_poisoned"))?;
         if mgr.tabs.is_empty() {
             FIRST_TAB_ID.to_string()
         } else {
@@ -255,14 +258,14 @@ pub fn create_tab(
 
     let new_wv = window
         .add_child(builder, position, size)
-        .map_err(|e| e.to_string())?;
+        .map_err(AppError::internal)?;
 
     // webview 构建成功后才提交状态（失败路径不留幽灵条目）
     {
         let state = app.state::<TabState>();
         let mut mgr = state
             .lock()
-            .map_err(|_| crate::i18n::t("err.tab_lock_poisoned"))?;
+            .map_err(|_| AppError::key("err.tab_lock_poisoned"))?;
         mgr.tabs.push(Tab { id: id.clone(), title: String::new(), url: url.clone() });
         mgr.active = mgr.tabs.len() - 1;
     }
@@ -272,7 +275,7 @@ pub fn create_tab(
         let state = app.state::<TabState>();
         let mgr = state
             .lock()
-            .map_err(|_| crate::i18n::t("err.tab_lock_poisoned"))?;
+            .map_err(|_| AppError::key("err.tab_lock_poisoned"))?;
         mgr.tabs.iter().map(|t| t.id.clone()).collect()
     };
     for tid in &ids {
@@ -291,15 +294,15 @@ pub fn create_tab(
 }
 
 /// 切换激活 tab：目标 show+focus，其余 hide；并通知工具栏。
-pub fn activate_tab(app: &AppHandle, id: &str) -> Result<(), String> {
+pub fn activate_tab(app: &AppHandle, id: &str) -> Result<(), AppError> {
     let ids: Vec<String> = {
         let state = app.state::<TabState>();
         let mut mgr = state
             .lock()
-            .map_err(|_| crate::i18n::t("err.tab_lock_poisoned"))?;
+            .map_err(|_| AppError::key("err.tab_lock_poisoned"))?;
         let idx = mgr
             .index_of(id)
-            .ok_or_else(|| crate::i18n::tf("err.tab_not_found", &[("id", id)]))?;
+            .ok_or_else(|| AppError::keyf("err.tab_not_found", &[("id", id)]))?;
         mgr.active = idx;
         mgr.tabs.iter().map(|t| t.id.clone()).collect()
     };
@@ -318,18 +321,18 @@ pub fn activate_tab(app: &AppHandle, id: &str) -> Result<(), String> {
 }
 
 /// 关闭 tab：销毁其 webview，从状态移除；激活相邻 tab。最后一个 tab 不允许关闭。
-pub fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
+pub fn close_tab(app: &AppHandle, id: &str) -> Result<(), AppError> {
     let (next_active, remaining) = {
         let state = app.state::<TabState>();
         let mut mgr = state
             .lock()
-            .map_err(|_| crate::i18n::t("err.tab_lock_poisoned"))?;
+            .map_err(|_| AppError::key("err.tab_lock_poisoned"))?;
         if mgr.tabs.len() <= 1 {
-            return Err(crate::i18n::t("err.keep_at_least_one_tab"));
+            return Err(AppError::key("err.keep_at_least_one_tab"));
         }
         let idx = mgr
             .index_of(id)
-            .ok_or_else(|| crate::i18n::tf("err.tab_not_found", &[("id", id)]))?;
+            .ok_or_else(|| AppError::keyf("err.tab_not_found", &[("id", id)]))?;
         mgr.tabs.remove(idx);
         if mgr.active >= mgr.tabs.len() {
             mgr.active = mgr.tabs.len() - 1;
@@ -612,7 +615,7 @@ pub fn restore_tabs(
     annotate_js: &str,
     position: PhysicalPosition<i32>,
     size: PhysicalSize<u32>,
-) -> Result<usize, String> {
+) -> Result<usize, AppError> {
     let (entries, active) = match read_session(app) {
         Session::Restore(entries, active) => (entries, active),
         Session::SkipOnce => {
@@ -642,7 +645,7 @@ pub fn restore_tabs(
             let state = app.state::<TabState>();
             let mgr = state
                 .lock()
-                .map_err(|_| crate::i18n::t("err.tab_lock_poisoned"))?;
+                .map_err(|_| AppError::key("err.tab_lock_poisoned"))?;
             mgr.tabs.get(idx.min(mgr.tabs.len().saturating_sub(1))).map(|t| t.id.clone())
         };
         if let Some(id) = target {
