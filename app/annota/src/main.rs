@@ -17,6 +17,9 @@ mod apkg;
 mod tabs;
 mod store;
 mod logf;
+mod i18n;
+#[cfg(test)]
+mod integration;
 use agent::{agent_cancel, agent_chat, agent_run};
 use tabs::TabManager;
 use store::DbState;
@@ -178,7 +181,7 @@ pub(crate) fn require_local_or_trusted(
 ) -> Result<(), String> {
     let origin = caller_origin(app, w);
     if origin.is_empty() {
-        return Err(format!("{what} 需要可识别的页面来源，已拒绝"));
+        return Err(crate::i18n::tf("err.guard_needs_recognizable", &[("what", what)]));
     }
     if is_local_origin(&origin) {
         return Ok(());
@@ -186,8 +189,9 @@ pub(crate) fn require_local_or_trusted(
     if trusted_origins(app).iter().any(|t| t == &origin) {
         return Ok(());
     }
-    Err(format!(
-        "{what} 需要先信任当前站点：请在工具栏菜单点「信任当前站点」或将 {origin} 加入设置里的信任列表"
+    Err(crate::i18n::tf(
+        "err.guard_needs_trust",
+        &[("what", what), ("origin", &origin)],
     ))
 }
 
@@ -196,17 +200,18 @@ pub(crate) fn require_local_or_trusted(
 fn trust_current_site(app: tauri::AppHandle, w: tauri::Webview) -> Result<String, String> {
     let caller = caller_origin(&app, &w);
     if caller.is_empty() || !is_local_origin(&caller) {
-        return Err("只能从工具栏信任站点".to_string());
+        return Err(crate::i18n::t("err.trust_only_toolbar"));
     }
     let target_s = tabs::active_tab_url(&app);
-    let target = url::Url::parse(&target_s).map_err(|_| "没有可识别的活动标签页".to_string())?;
+    let target =
+        url::Url::parse(&target_s).map_err(|_| crate::i18n::t("err.trust_no_active_tab"))?;
     if !matches!(target.scheme(), "http" | "https") {
-        return Err("只能信任 http(s) 站点".to_string());
+        return Err(crate::i18n::t("err.trust_http_only"));
     }
     // 本地服务页/壳内页无需也不会进信任列表（避免列表被 127.0.0.1 污染）
     let origin = origin_from_url(&target);
     if is_local_origin(&origin) {
-        return Err("本地页面无需信任".to_string());
+        return Err(crate::i18n::t("err.trust_local_page"));
     }
     let path = sync_server::resolve_settings_path(&app);
     let mut v: Value = std::fs::read_to_string(&path)
@@ -214,15 +219,17 @@ fn trust_current_site(app: tauri::AppHandle, w: tauri::Webview) -> Result<String
         .and_then(|t| serde_json::from_str::<Value>(&t).ok())
         .unwrap_or_else(|| json!({}));
     {
-        let obj = v.as_object_mut().ok_or_else(|| "settings 结构异常".to_string())?;
+        let obj = v
+            .as_object_mut()
+            .ok_or_else(|| crate::i18n::t("err.trust_settings_broken"))?;
         let arr = obj
             .entry("trustedOrigins")
             .or_insert_with(|| json!([]))
             .as_array_mut()
-            .ok_or_else(|| "trustedOrigins 结构异常".to_string())?;
+            .ok_or_else(|| crate::i18n::t("err.trust_list_struct_broken"))?;
         if !arr.iter().any(|x| x.as_str() == Some(origin.as_str())) {
             if arr.len() >= 50 {
-                return Err("信任列表已满（50），请先在设置中移除不用的站点".to_string());
+                return Err(crate::i18n::t("err.trust_list_full_50"));
             }
             arr.push(json!(origin.clone()));
         }
@@ -231,8 +238,10 @@ fn trust_current_site(app: tauri::AppHandle, w: tauri::Webview) -> Result<String
         let _ = std::fs::create_dir_all(parent);
     }
     // OCR-fix：序列化失败必须报错——旧实现 unwrap_or_default 会写空文件清掉信任列表
-    let bytes = serde_json::to_vec_pretty(&v).map_err(|e| format!("序列化设置失败：{e}"))?;
-    std::fs::write(&path, bytes).map_err(|e| format!("写入设置失败：{e}"))?;
+    let bytes = serde_json::to_vec_pretty(&v)
+        .map_err(|e| crate::i18n::tf("err.trust_serialize_failed", &[("e", &e.to_string())]))?;
+    std::fs::write(&path, bytes)
+        .map_err(|e| crate::i18n::tf("err.trust_write_failed", &[("e", &e.to_string())]))?;
     Ok(origin)
 }
 // 下拉浮层（菜单 / 历史 / 下载面板）的 overlay webview。
@@ -349,7 +358,7 @@ fn capture_annota_window() -> Result<(u32, u32, Vec<u8>), String> {
             w.app_name().as_deref().unwrap_or("").eq_ignore_ascii_case("Annota")
                 || w.title().as_deref().unwrap_or("").contains("Annota")
         })
-        .ok_or_else(|| "未找到 Annota 窗口".to_string())?;
+        .ok_or_else(|| crate::i18n::t("err.window_not_found"))?;
 
     let img = win.capture_image().map_err(|e| e.to_string())?;
     let mut buf = Vec::new();
@@ -399,7 +408,7 @@ fn do_write_clipboard(
 // ---------- Tauri 命令 ----------
 #[tauri::command]
 async fn capture_frame(app: tauri::AppHandle, w: tauri::Webview) -> Result<serde_json::Value, String> {
-    require_local_or_trusted(&app, &w, "截图")?;
+    require_local_or_trusted(&app, &w, &crate::i18n::t("perm.screenshot"))?;
     let windows = tauri_plugin_screenshots::get_screenshotable_windows()
         .await
         .map_err(|e| e.to_string())?;
@@ -411,7 +420,7 @@ async fn capture_frame(app: tauri::AppHandle, w: tauri::Webview) -> Result<serde
                 || w.title.contains("Annota")
                 || w.name.contains("Annota")
         })
-        .ok_or_else(|| "未找到 Annota 窗口".to_string())?;
+        .ok_or_else(|| crate::i18n::t("err.window_not_found"))?;
 
     let path: PathBuf = tauri_plugin_screenshots::get_window_screenshot(app, annota_window.id)
         .await
@@ -444,7 +453,7 @@ async fn write_clipboard(
     text: Option<String>,
     html: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    require_local_or_trusted(&app, &w, "写剪贴板")?;
+    require_local_or_trusted(&app, &w, &crate::i18n::t("perm.write_clipboard"))?;
     do_write_clipboard(&app, image, text, html)
 }
 
@@ -456,7 +465,7 @@ fn bridge_probe_reply(keys: Vec<String>) {
 fn resolve_nav_url(raw: &str) -> Result<String, String> {
     let raw = raw.trim();
     if raw.is_empty() {
-        return Err("URL 为空".to_string());
+        return Err(crate::i18n::t("err.url_empty"));
     }
     if raw.starts_with("http://") || raw.starts_with("https://") {
         return Ok(raw.to_string());
@@ -481,7 +490,7 @@ fn resolve_nav_url(raw: &str) -> Result<String, String> {
 
 #[tauri::command]
 async fn navigate_browser(app: tauri::AppHandle, w: tauri::Webview, url: String) -> Result<(), String> {
-    require_local_or_trusted(&app, &w, "导航")?;
+    require_local_or_trusted(&app, &w, &crate::i18n::t("perm.navigate"))?;
     let target = resolve_nav_url(&url)?;
     let parsed = url::Url::parse(&target).map_err(|e| e.to_string())?;
     let webview = tabs::active_webview(&app)?;
@@ -491,12 +500,12 @@ async fn navigate_browser(app: tauri::AppHandle, w: tauri::Webview, url: String)
 
 #[tauri::command]
 fn browser_action(app: tauri::AppHandle, w: tauri::Webview, action: String) -> Result<(), String> {
-    require_local_or_trusted(&app, &w, "浏览器控制")?;
+    require_local_or_trusted(&app, &w, &crate::i18n::t("perm.browser_control"))?;
     let script = match action.as_str() {
         "back" => "history.back()",
         "forward" => "history.forward()",
         "reload" => "location.reload()",
-        _ => return Err("不支持的浏览器操作".to_string()),
+        _ => return Err(crate::i18n::t("err.browser_action_unsupported")),
     };
     let webview = tabs::active_webview(&app)?;
     webview.eval(script).map_err(|e| e.to_string())
@@ -506,7 +515,7 @@ fn browser_action(app: tauri::AppHandle, w: tauri::Webview, action: String) -> R
 // 注入的 browser-shell.js 暴露 window.VA_BROWSER_SHELL.setMode；未注入时静默无操作。
 #[tauri::command]
 fn set_shell_mode(app: tauri::AppHandle, w: tauri::Webview, mode: String) -> Result<(), String> {
-    require_local_or_trusted(&app, &w, "编辑态切换")?;
+    require_local_or_trusted(&app, &w, &crate::i18n::t("perm.shell_mode"))?;
     let m = if mode == "edit" { "edit" } else { "view" };
     let webview = tabs::active_webview(&app)?;
     let script = format!(
@@ -543,7 +552,7 @@ fn wv_set_geometry(
 // 现改为：浮层是独立 child webview，按需创建 → 永远最后添加 → 盖在所有 tab 之上；
 // 工具栏高度与页面布局完全不变。
 fn overlay_geometry(app: &AppHandle, kind: &str) -> Result<(u32, u32, i32, i32), String> {
-    let window = app.get_window("main").ok_or_else(|| "主窗口不存在".to_string())?;
+    let window = app.get_window("main").ok_or_else(|| crate::i18n::t("err.main_window_missing"))?;
     let size = window.inner_size().map_err(|e| e.to_string())?;
     let sf = window.scale_factor().map_err(|e| e.to_string())?;
     let top = titlebar_inset(&window, sf) as i32;
@@ -566,7 +575,7 @@ fn overlay_geometry(app: &AppHandle, kind: &str) -> Result<(u32, u32, i32, i32),
 /// 打开浮层。`kind` = `menu` | `history` | `downloads`。
 #[tauri::command]
 fn overlay_open(app: tauri::AppHandle, w: tauri::Webview, kind: String) -> Result<(), String> {
-    require_local_or_trusted(&app, &w, "打开菜单面板")?;
+    require_local_or_trusted(&app, &w, &crate::i18n::t("perm.overlay_open"))?;
     let kind = normalize_overlay_kind(&kind);
     // 已有 overlay：若没有更新的 tab 盖住它就复用，否则销毁重建
     // （后建的 webview 在上层，复用会藏在页面下面看不见）。
@@ -594,7 +603,7 @@ fn overlay_open(app: tauri::AppHandle, w: tauri::Webview, kind: String) -> Resul
         "window.__VA_OVERLAY_KIND__ = {};",
         serde_json::to_string(kind).unwrap_or_else(|_| "\"menu\"".into())
     );
-    let window = app.get_window("main").ok_or_else(|| "主窗口不存在".to_string())?;
+    let window = app.get_window("main").ok_or_else(|| crate::i18n::t("err.main_window_missing"))?;
     // 注意：不要用 on_navigation(|_| false) —— 它会连 webview 自身的初始加载一起拦掉，
     // 结果是一个 URL 为空的空白透明 webview（表现为「点了没反应/看不见」）。
     // 浮层不需要跳转能力：它是本地页面，无任何 <a href>；真要防外跳，用 tauri.conf 的
@@ -614,7 +623,7 @@ fn overlay_open(app: tauri::AppHandle, w: tauri::Webview, kind: String) -> Resul
 
 #[tauri::command]
 fn overlay_close(app: tauri::AppHandle, w: tauri::Webview) -> Result<(), String> {
-    require_local_or_trusted(&app, &w, "关闭菜单面板")?;
+    require_local_or_trusted(&app, &w, &crate::i18n::t("perm.overlay_close"))?;
     if let Some(wv) = app.get_webview(OVERLAY_ID) {
         let _ = wv.close();
     }
@@ -629,7 +638,7 @@ fn overlay_close(app: tauri::AppHandle, w: tauri::Webview) -> Result<(), String>
 #[tauri::command]
 fn tabs_snapshot(app: tauri::AppHandle, w: tauri::Webview) -> Result<serde_json::Value, String> {
     // OCR-fix：快照含全部打开页 URL——必须过 S1 守卫（此前远程页面可枚举标签）
-    require_local_or_trusted(&app, &w, "标签快照")?;
+    require_local_or_trusted(&app, &w, &crate::i18n::t("perm.tabs_snapshot"))?;
     // P2-fix：读 TabState 缓存快照（不再逐个回调 Webview::url()——崩溃根因）
     let (list, _) = tabs::snapshot(&app);
     Ok(json!({ "ok": true, "tabs": list }))
@@ -638,11 +647,11 @@ fn tabs_snapshot(app: tauri::AppHandle, w: tauri::Webview) -> Result<serde_json:
 // 开发者工具（M6d）：打开当前活动标签页的 devtools（WKWebView 需 Safari 16.4+）。
 #[tauri::command]
 fn open_devtools(app: tauri::AppHandle, w: tauri::Webview) -> Result<(), String> {
-    require_local_or_trusted(&app, &w, "开发者工具")?;
+    require_local_or_trusted(&app, &w, &crate::i18n::t("perm.devtools"))?;
     // release 构建的 WKWebView 未开 inspector，open_devtools 会静默无效果——
     // 显式报错让前端能给反馈（否则用户「点了没反应」）。
     if !cfg!(debug_assertions) {
-        return Err("开发者工具仅调试版可用（release 构建未启用 WebKit 检查器）".to_string());
+        return Err(crate::i18n::t("err.devtools_debug_only"));
     }
     let webview = tabs::active_webview(&app)?;
     webview.open_devtools();
@@ -652,7 +661,7 @@ fn open_devtools(app: tauri::AppHandle, w: tauri::Webview) -> Result<(), String>
 // 工具栏高度上报（M7）：工具栏 webview 加载完成后 emit 实际高度，Rust 缓存并重新布局。
 #[tauri::command]
 fn set_toolbar_height(app: tauri::AppHandle, w: tauri::Webview, height: f64) -> Result<(), String> {
-    require_local_or_trusted(&app, &w, "工具栏高度上报")?;
+    require_local_or_trusted(&app, &w, &crate::i18n::t("perm.toolbar_height"))?;
     if height > 0.0 && height < 500.0 {
         TOOLBAR_HEIGHT_BITS.store(height.to_bits(), std::sync::atomic::Ordering::Relaxed);
         apply_layout(&app)?;
@@ -663,7 +672,7 @@ fn set_toolbar_height(app: tauri::AppHandle, w: tauri::Webview, height: f64) -> 
 // 页面内查找（M7）：在当前活动标签页执行查找，并统计总匹配数 emit 给工具栏（P1-a#5）。
 #[tauri::command]
 fn find_in_page(app: tauri::AppHandle, w: tauri::Webview, text: String, forward: bool) -> Result<(), String> {
-    require_local_or_trusted(&app, &w, "页内查找")?;
+    require_local_or_trusted(&app, &w, &crate::i18n::t("perm.find_in_page"))?;
     let webview = tabs::active_webview(&app)?;
     // window.find(text, caseSensitive, backwards, wrapAround, wholeWord, searchInFrames, showDialog)
     // 注意方向是第 3 位 backwards（要取反），且 showDialog 必须为 false ——
@@ -698,7 +707,7 @@ fn find_in_page(app: tauri::AppHandle, w: tauri::Webview, text: String, forward:
 // 缩放控制（M7）：记入全局并设置当前活动标签页的页面缩放（P1-a#6）。
 #[tauri::command]
 fn set_zoom(app: tauri::AppHandle, w: tauri::Webview, factor: f64) -> Result<(), String> {
-    require_local_or_trusted(&app, &w, "缩放")?;
+    require_local_or_trusted(&app, &w, &crate::i18n::t("perm.zoom"))?;
     let factor = factor.clamp(0.25, 5.0);
     PAGE_ZOOM_BITS.store(factor.to_bits(), std::sync::atomic::Ordering::Relaxed);
     let webview = tabs::active_webview(&app)?;
@@ -708,8 +717,8 @@ fn set_zoom(app: tauri::AppHandle, w: tauri::Webview, factor: f64) -> Result<(),
 // P1-b#9 + P2-S3：本地同步服务状态 + 库降级标记 + 损坏标注包扫描。
 #[tauri::command]
 fn diag_status(app: tauri::AppHandle, w: tauri::Webview) -> serde_json::Value {
-    if require_local_or_trusted(&app, &w, "诊断信息").is_err() {
-        return json!({ "error": "诊断信息需要本地页面或信任站点" });
+    if require_local_or_trusted(&app, &w, &crate::i18n::t("perm.diag")).is_err() {
+        return json!({ "error": crate::i18n::t("err.diag_needs_local") });
     }
     let store = sync_server::resolve_store_path(&app);
     json!({
@@ -723,7 +732,7 @@ fn diag_status(app: tauri::AppHandle, w: tauri::Webview) -> serde_json::Value {
 // P1-b#9：重试启动本地同步服务（用户在工具栏点「重试」时调用）。
 #[tauri::command]
 fn restart_server(app: tauri::AppHandle, w: tauri::Webview) -> Result<serde_json::Value, String> {
-    require_local_or_trusted(&app, &w, "重启本地服务")?;
+    require_local_or_trusted(&app, &w, &crate::i18n::t("perm.restart_server"))?;
     if sync_server::server_running() {
         return Ok(json!({ "running": true }));
     }
@@ -743,7 +752,7 @@ fn restart_server(app: tauri::AppHandle, w: tauri::Webview) -> Result<serde_json
 // ---------- 标签页命令（M3） ----------
 /// 内部开 tab（不校验调用方）：工具栏命令与页面 _blank/window.open 新窗口共用。
 pub(crate) fn open_tab(app: tauri::AppHandle, url: Option<String>) -> Result<String, String> {
-    let window = app.get_window("main").ok_or_else(|| "主窗口不存在".to_string())?;
+    let window = app.get_window("main").ok_or_else(|| crate::i18n::t("err.main_window_missing"))?;
     let size = window.inner_size().map_err(|e| e.to_string())?;
     let sf = window.scale_factor().map_err(|e| e.to_string())?;
     let top_inset = titlebar_inset(&window, sf);
@@ -766,13 +775,13 @@ pub(crate) fn open_tab(app: tauri::AppHandle, url: Option<String>) -> Result<Str
 
 #[tauri::command]
 fn tab_new(app: tauri::AppHandle, w: tauri::Webview, url: Option<String>) -> Result<String, String> {
-    require_local_or_trusted(&app, &w, "新建标签")?;
+    require_local_or_trusted(&app, &w, &crate::i18n::t("perm.tab_new"))?;
     open_tab(app, url)
 }
 
 #[tauri::command]
 fn tab_activate(app: tauri::AppHandle, w: tauri::Webview, id: String) -> Result<(), String> {
-    require_local_or_trusted(&app, &w, "切换标签")?;
+    require_local_or_trusted(&app, &w, &crate::i18n::t("perm.tab_activate"))?;
     tabs::activate_tab(&app, &id)?;
     // P1-a#6：切 tab 后把全局缩放重放到新激活的 webview（标签数字与实际一致）
     if let Ok(wv) = tabs::active_webview(&app) {
@@ -784,7 +793,7 @@ fn tab_activate(app: tauri::AppHandle, w: tauri::Webview, id: String) -> Result<
 
 #[tauri::command]
 fn tab_close(app: tauri::AppHandle, w: tauri::Webview, id: String) -> Result<(), String> {
-    require_local_or_trusted(&app, &w, "关闭标签")?;
+    require_local_or_trusted(&app, &w, &crate::i18n::t("perm.tab_close"))?;
     tabs::close_tab(&app, &id)?;
     let _ = apply_layout(&app);
     Ok(())
@@ -793,7 +802,7 @@ fn tab_close(app: tauri::AppHandle, w: tauri::Webview, id: String) -> Result<(),
 // M6a：清除会话文件，下次启动不再恢复上次标签页。
 #[tauri::command]
 fn tab_session_clear(app: tauri::AppHandle, w: tauri::Webview) -> Result<(), String> {
-    require_local_or_trusted(&app, &w, "清除会话")?;
+    require_local_or_trusted(&app, &w, &crate::i18n::t("perm.clear_session"))?;
     tabs::clear_session(&app);
     Ok(())
 }
@@ -806,7 +815,7 @@ async fn va_fetch(
 ) -> Result<serde_json::Value, String> {
     let parsed = url::Url::parse(&url).map_err(|e| e.to_string())?;
     if parsed.scheme() != "http" && parsed.scheme() != "https" {
-        return Err("va_fetch 仅支持 http(s)".to_string());
+        return Err(crate::i18n::t("err.va_fetch_http_only"));
     }
     let host = parsed.host_str().unwrap_or("");
     let port_ok = parsed.port_or_known_default().unwrap_or(0) == SYNC_PORT as u16;
@@ -832,7 +841,7 @@ async fn va_fetch(
 
 // ---------- 布局：工具栏置顶，浏览器占剩余区域 ----------
 fn apply_layout(app: &AppHandle) -> Result<(), String> {
-    let window = app.get_window("main").ok_or_else(|| "主窗口不存在".to_string())?;
+    let window = app.get_window("main").ok_or_else(|| crate::i18n::t("err.main_window_missing"))?;
     let size = window.inner_size().map_err(|e| e.to_string())?;
     let sf = window.scale_factor().map_err(|e| e.to_string())?;
     let top_inset = titlebar_inset(&window, sf);
@@ -1010,15 +1019,15 @@ pub fn run_tool(name: &str, params: &Value) -> Result<String, String> {
             Ok(json!({ "format": "png", "width": w, "height": h, "bytes": buf.len(), "base64": b64 }).to_string())
         }
         "copy_to_clipboard" => {
-            let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
+            let app = APP_HANDLE.get().ok_or(crate::i18n::t("err.app_handle_not_init"))?;
             let image = params.get("image").and_then(|v| v.as_str()).map(String::from);
             let text = params.get("text").and_then(|v| v.as_str()).map(String::from);
             let html = params.get("html").and_then(|v| v.as_str()).map(String::from);
             Ok(do_write_clipboard(app, image, text, html)?.to_string())
         }
         "navigate" => {
-            let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
-            let raw = params.get("url").and_then(|v| v.as_str()).ok_or("缺少 url 参数")?;
+            let app = APP_HANDLE.get().ok_or(crate::i18n::t("err.app_handle_not_init"))?;
+            let raw = params.get("url").and_then(|v| v.as_str()).ok_or(crate::i18n::t("err.missing_url_param"))?;
             let target = resolve_nav_url(raw)?;
             let parsed = url::Url::parse(&target).map_err(|e| e.to_string())?;
             let webview = tabs::active_webview(app)?;
@@ -1026,32 +1035,32 @@ pub fn run_tool(name: &str, params: &Value) -> Result<String, String> {
             Ok(format!("navigating to {target}"))
         }
         "open_annotations" => {
-            let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
+            let app = APP_HANDLE.get().ok_or(crate::i18n::t("err.app_handle_not_init"))?;
             let webview = tabs::active_webview(app)?;
             webview.eval(r#"(function(){const h=document.querySelector('#annota-shadow-host');const b=h&&h.shadowRoot&&h.shadowRoot.querySelector('button[aria-label="列表"]');if(b)b.click()})()"#)
                 .map_err(|e| e.to_string())?;
-            Ok("标注侧栏已打开".to_string())
+            Ok(crate::i18n::t("err.sidebar_opened"))
         }
         "start_annotation" => {
-            let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
+            let app = APP_HANDLE.get().ok_or(crate::i18n::t("err.app_handle_not_init"))?;
             let webview = tabs::active_webview(app)?;
             webview.eval(r#"(function(){const h=document.querySelector('#annota-shadow-host');const b=h&&h.shadowRoot&&h.shadowRoot.querySelector('button[aria-label="标注"]');if(b)b.click()})()"#)
                 .map_err(|e| e.to_string())?;
-            Ok("已请求进入标注模式".to_string())
+            Ok(crate::i18n::t("err.annotate_mode_requested"))
         }
         "propose_annotation" => {
-            let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
+            let app = APP_HANDLE.get().ok_or(crate::i18n::t("err.app_handle_not_init"))?;
             let webview = tabs::active_webview(app)?;
             let payload = serde_json::to_string(params).map_err(|e| e.to_string())?;
             let script = format!(
                 "(function(p){{const ui=window.__ANNOTA_UI__;const ok=!!(ui&&ui.proposeAnnotation(p));window.__TAURI_INTERNALS__.invoke('bridge_probe_reply',{{keys:['proposal',String(ok)]}})}})({payload})"
             );
             webview.eval(&script).map_err(|e| e.to_string())?;
-            Ok("候选标注已送入确认卡；需要用户确认后才会保存".to_string())
+            Ok(crate::i18n::t("err.proposal_sent"))
         }
         "words_at" => {
-            let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
-            let t = params.get("t").and_then(|v| v.as_f64()).ok_or("缺少 t 参数")?;
+            let app = APP_HANDLE.get().ok_or(crate::i18n::t("err.app_handle_not_init"))?;
+            let t = params.get("t").and_then(|v| v.as_f64()).ok_or(crate::i18n::t("err.missing_t_param"))?;
             let radius = params.get("radius").and_then(|v| v.as_f64()).unwrap_or(0.5);
             let explicit = params.get("media_id").and_then(|v| v.as_str()).map(String::from);
             let page_url = {
@@ -1115,14 +1124,14 @@ pub fn run_tool(name: &str, params: &Value) -> Result<String, String> {
             .to_string())
         }
         "probe_bridge" => {
-            let app = APP_HANDLE.get().ok_or("AppHandle 尚未初始化")?;
+            let app = APP_HANDLE.get().ok_or(crate::i18n::t("err.app_handle_not_init"))?;
             let webview = tabs::active_webview(app)?;
             webview
                 .eval(r#"(function(){ const send=function(keys){try{window.__TAURI_INTERNALS__.invoke('bridge_probe_reply',{keys:keys})}catch(e){}};send(['bridge',typeof window.__ANNOTA__,typeof window.vaFetch]);if(typeof window.vaFetch==='function'){window.vaFetch('GET','http://127.0.0.1:8793/api/health').then(function(r){send(['va_fetch_ok',String(r.status),String(!!(r.json&&r.json.ok))])}).catch(function(e){send(['va_fetch_error',String(e&&e.message||e).slice(0,180)])})}})()"#)
                 .map_err(|e| e.to_string())?;
             Ok("probe sent".to_string())
         }
-        other => Err(format!("未知工具：{other}")),
+        other => Err(crate::i18n::tf("err.unknown_tool", &[("name", other)])),
     }
 }
 
@@ -1228,13 +1237,13 @@ fn make_mcp_tools() -> tauri_plugin_mcp_server::McpBuilder {
 // 用户确认后：下载并安装更新，然后重启应用（由工具栏「更多」菜单触发）。
 #[tauri::command]
 async fn install_update(app: AppHandle, w: tauri::Webview) -> Result<String, String> {
-    require_local_or_trusted(&app, &w, "安装更新")?;
+    require_local_or_trusted(&app, &w, &crate::i18n::t("perm.install_update"))?;
     let updater = app.updater().map_err(|e| e.to_string())?;
     let update = updater
         .check()
         .await
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| "已是最新版本".to_string())?;
+        .ok_or_else(|| crate::i18n::t("err.already_latest"))?;
     update
         .download_and_install(|_chunk, _total| {}, || {})
         .await

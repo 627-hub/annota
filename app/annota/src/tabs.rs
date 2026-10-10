@@ -60,11 +60,11 @@ pub fn active_webview(app: &AppHandle) -> Result<Webview, String> {
     let state = app.state::<TabState>();
     let id = state
         .lock()
-        .map_err(|_| "标签状态锁中毒".to_string())?
+        .map_err(|_| crate::i18n::t("err.tab_lock_poisoned"))?
         .active_id()
-        .ok_or_else(|| "没有活动标签页".to_string())?;
+        .ok_or_else(|| crate::i18n::t("err.no_active_tab"))?;
     app.get_webview(&id)
-        .ok_or_else(|| format!("活动标签 webview 不存在（{id}）"))
+        .ok_or_else(|| crate::i18n::tf("err.tab_webview_missing", &[("id", id.as_str())]))
 }
 
 /// 新建一个 tab webview，加入状态并激活它。`init_script` 为注入脚本（桥 + 标注层）。
@@ -91,7 +91,9 @@ pub fn create_tab(
     // （并发首个 tab 的 id 冲突窗口仅存在于启动瞬间——彼时无页面可触发并发创建，可接受。）
     let id = {
         let state = app.state::<TabState>();
-        let mut mgr = state.lock().map_err(|_| "标签状态锁中毒".to_string())?;
+        let mut mgr = state
+            .lock()
+            .map_err(|_| crate::i18n::t("err.tab_lock_poisoned"))?;
         if mgr.tabs.is_empty() {
             FIRST_TAB_ID.to_string()
         } else {
@@ -258,7 +260,9 @@ pub fn create_tab(
     // webview 构建成功后才提交状态（失败路径不留幽灵条目）
     {
         let state = app.state::<TabState>();
-        let mut mgr = state.lock().map_err(|_| "标签状态锁中毒".to_string())?;
+        let mut mgr = state
+            .lock()
+            .map_err(|_| crate::i18n::t("err.tab_lock_poisoned"))?;
         mgr.tabs.push(Tab { id: id.clone(), title: String::new(), url: url.clone() });
         mgr.active = mgr.tabs.len() - 1;
     }
@@ -266,7 +270,9 @@ pub fn create_tab(
     // 与 activate_tab 行为一致：新 tab 置前并获焦点，其余隐藏（否则旧 tab 仍可见/持焦点）。
     let ids: Vec<String> = {
         let state = app.state::<TabState>();
-        let mgr = state.lock().map_err(|_| "标签状态锁中毒".to_string())?;
+        let mgr = state
+            .lock()
+            .map_err(|_| crate::i18n::t("err.tab_lock_poisoned"))?;
         mgr.tabs.iter().map(|t| t.id.clone()).collect()
     };
     for tid in &ids {
@@ -288,8 +294,12 @@ pub fn create_tab(
 pub fn activate_tab(app: &AppHandle, id: &str) -> Result<(), String> {
     let ids: Vec<String> = {
         let state = app.state::<TabState>();
-        let mut mgr = state.lock().map_err(|_| "标签状态锁中毒".to_string())?;
-        let idx = mgr.index_of(id).ok_or_else(|| format!("标签不存在：{id}"))?;
+        let mut mgr = state
+            .lock()
+            .map_err(|_| crate::i18n::t("err.tab_lock_poisoned"))?;
+        let idx = mgr
+            .index_of(id)
+            .ok_or_else(|| crate::i18n::tf("err.tab_not_found", &[("id", id)]))?;
         mgr.active = idx;
         mgr.tabs.iter().map(|t| t.id.clone()).collect()
     };
@@ -311,11 +321,15 @@ pub fn activate_tab(app: &AppHandle, id: &str) -> Result<(), String> {
 pub fn close_tab(app: &AppHandle, id: &str) -> Result<(), String> {
     let (next_active, remaining) = {
         let state = app.state::<TabState>();
-        let mut mgr = state.lock().map_err(|_| "标签状态锁中毒".to_string())?;
+        let mut mgr = state
+            .lock()
+            .map_err(|_| crate::i18n::t("err.tab_lock_poisoned"))?;
         if mgr.tabs.len() <= 1 {
-            return Err("至少保留一个标签页".to_string());
+            return Err(crate::i18n::t("err.keep_at_least_one_tab"));
         }
-        let idx = mgr.index_of(id).ok_or_else(|| format!("标签不存在：{id}"))?;
+        let idx = mgr
+            .index_of(id)
+            .ok_or_else(|| crate::i18n::tf("err.tab_not_found", &[("id", id)]))?;
         mgr.tabs.remove(idx);
         if mgr.active >= mgr.tabs.len() {
             mgr.active = mgr.tabs.len() - 1;
@@ -626,7 +640,9 @@ pub fn restore_tabs(
     if let Some(idx) = active {
         let target = {
             let state = app.state::<TabState>();
-            let mgr = state.lock().map_err(|_| "标签状态锁中毒".to_string())?;
+            let mgr = state
+                .lock()
+                .map_err(|_| crate::i18n::t("err.tab_lock_poisoned"))?;
             mgr.tabs.get(idx.min(mgr.tabs.len().saturating_sub(1))).map(|t| t.id.clone())
         };
         if let Some(id) = target {

@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>Annota Overlay</title>
   <link rel="stylesheet" href="tokens.css" />
+  <script src="i18n.js"></script>
   <style>
     * { box-sizing: border-box; }
     html, body { width:100%; height:100%; margin:0; background:transparent; overflow:hidden; }
@@ -133,12 +134,50 @@
   <div class="chrome-panel" id="chrome-panel" data-open="0"></div>
 
   <script>
+    // i18n.js 未能加载时的兜底：init 立即回调、t 返回 key（页面可工作，仅文案退回 key）
+    if (typeof __i18n === 'undefined') { window.__i18n = { locale: 'zh-CN', strings: {}, init: function (cb) { cb(); }, t: function (k) { return k; } }; }
+    __i18n.init(function () {
+    // 菜单文案 / HTML 属性本地化：locale 就绪后第一时间同步到 DOM
+    function applyI18n() {
+      const t = (k) => __i18n.t(k);
+      // 分组标题：纯文本 div
+      const hints = document.querySelectorAll('#menu .menu-hint');
+      if (hints[0]) hints[0].textContent = t('tools');
+      if (hints[1]) hints[1].textContent = t('zoom');
+      // 按钮文本：删掉所有纯文本子节点（保留 SVG），再插入翻译后的文本节点
+      function setBtnText(sel, key) {
+        const el = document.querySelector(sel);
+        if (!el) return;
+        Array.prototype.slice.call(el.childNodes).forEach((n) => { if (n.nodeType === 3) n.parentNode.removeChild(n); });
+        el.appendChild(document.createTextNode(t(key)));
+      }
+      setBtnText('[data-cmd="history"]', 'history');
+      setBtnText('[data-cmd="downloads"]', 'downloads');
+      setBtnText('[data-cmd="no-restore"]', 'no_restore');
+      setBtnText('[data-cmd="workspace"]', 'open_workspace');
+      setBtnText('[data-action="trust-site"]', 'trust_site');
+      setBtnText('[data-cmd="devtools"]', 'devtools');
+      setBtnText('[data-cmd="diag"]', 'diag_info');
+
+      const trust = document.querySelector('[data-action="trust-site"]');
+      if (trust) trust.title = t('trust_site_title');
+
+      const zOut = document.querySelector('[data-zoom="out"]');
+      if (zOut) { zOut.setAttribute('aria-label', t('zoom_out_shortcut')); zOut.title = t('zoom_out_shortcut'); }
+      const zReset = document.querySelector('[data-zoom="reset"]');
+      if (zReset) zReset.title = t('zoom_reset');
+      const zIn = document.querySelector('[data-zoom="in"]');
+      if (zIn) { zIn.setAttribute('aria-label', t('zoom_in_shortcut')); zIn.title = t('zoom_in_shortcut'); }
+    }
+    applyI18n();
+    document.documentElement.lang = __i18n.locale;
+
     const API = 'http://127.0.0.1:8793';
     const WORKSPACE = 'http://127.0.0.1:8793/';
     function tauri() { return window.__TAURI_INTERNALS__ || window.__TAURI__; }
     function invoke(cmd, args) {
       const t = tauri();
-      if (!t || !t.invoke) throw new Error('Annota bridge 不可用');
+      if (!t || !t.invoke) throw new Error(__i18n.t('bridge_unavailable'));
       return t.invoke(cmd, args);
     }
     const menu = document.getElementById('menu');
@@ -154,10 +193,10 @@
     function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
     function fmtAgo(ms) {
       const d = Date.now() - ms;
-      if (d < 60000) return '刚刚';
-      const m = d / 60000; if (m < 60) return Math.floor(m) + ' 分钟前';
-      const h = m / 60; if (h < 24) return Math.floor(h) + ' 小时前';
-      const dd = h / 24; if (dd < 30) return Math.floor(dd) + ' 天前';
+      if (d < 60000) return __i18n.t('just_now');
+      const m = d / 60000; if (m < 60) return Math.floor(m) + __i18n.t('minutes_ago');
+      const h = m / 60; if (h < 24) return Math.floor(h) + __i18n.t('hours_ago');
+      const dd = h / 24; if (dd < 30) return Math.floor(dd) + __i18n.t('days_ago');
       try { return new Date(ms).toLocaleDateString(); } catch (e) { return ''; }
     }
     function fmtBytes(n) {
@@ -212,8 +251,8 @@
       const cmd = btn && btn.dataset ? btn.dataset.cmd : '';
       if (!cmd) return;
       if (cmd === 'history' || cmd === 'downloads') { showPanel(cmd); return; }
-      const errText = (err) => String((err && err.message) || err || '未知错误');
-      const fail = (err) => { toast('操作失败：' + errText(err), 'error'); };
+      const errText = (err) => String((err && err.message) || err || __i18n.t('unknown_error'));
+      const fail = (err) => { toast(__i18n.t('action_failed') + errText(err), 'error'); };
       if (cmd === 'workspace') {
         Promise.resolve(invoke('navigate_browser', { url: WORKSPACE })).then(closeMe).catch(fail);
       } else if (cmd === 'no-restore') {
@@ -230,13 +269,13 @@
           const tabs = (snap && snap.tabs) || [];
           const active = tabs.find((t) => t.active);
           const parts = [
-            '标签 ' + tabs.length + (active ? '（活动 ' + (active.id || '?') + '）' : ''),
-            d ? (d.running ? '服务 OK' : '服务未运行') : null,
+            __i18n.t('tabs_count') + tabs.length + (active ? __i18n.t('active_tag') + (active.id || '?') + __i18n.t('close_paren') : ''),
+            d ? (d.running ? __i18n.t('service_ok') : __i18n.t('service_not_running')) : null,
             d && d.error ? String(d.error).slice(0, 40) : null,
-            d && d.db_memory ? '库=内存降级' : null,
-            d && d.corrupt_packs && d.corrupt_packs.length ? '损坏 ' + d.corrupt_packs.length + ' 个包' : null,
+            d && d.db_memory ? __i18n.t('db_memory') : null,
+            d && d.corrupt_packs && d.corrupt_packs.length ? __i18n.t('corrupt_prefix') + d.corrupt_packs.length + __i18n.t('corrupt_suffix') : null,
           ].filter(Boolean);
-          toast('诊断：' + parts.join(' · '), 'ok');
+          toast(__i18n.t('diag_prefix') + parts.join(' · '), 'ok');
         }).catch(fail);
       }
     });
@@ -251,8 +290,8 @@
       try { pending = Promise.resolve(invoke('trust_current_site')); }
       catch (err) { pending = Promise.reject(err); }
       pending.then(
-        (origin) => toast('已信任 ' + (typeof origin === 'string' && origin ? origin : '当前站点'), 'ok'),
-        (err) => { console.warn('[annota] 信任当前站点失败', err); toast('信任失败：' + reasonText(err)); }
+        (origin) => toast(__i18n.t('trusted') + (typeof origin === 'string' && origin ? origin : __i18n.t('current_site')), 'ok'),
+        (err) => { console.warn('[annota] 信任当前站点失败', err); toast(__i18n.t('trust_failed') + reasonText(err)); }
       ).finally(() => { btn.disabled = false; });
     });
 
@@ -262,7 +301,7 @@
       return '<div class="chrome-panel-head"><span class="chrome-panel-title">' + esc(title) + '</span>' +
         '<span class="chrome-panel-count" id="panel-count"></span><span class="chrome-panel-spacer"></span>' +
         '<button class="chrome-panel-btn danger" id="panel-clear">' + esc(clearLabel) + '</button>' +
-        '<button class="chrome-panel-btn" id="panel-close">关闭</button></div>' +
+        '<button class="chrome-panel-btn" id="panel-close">' + esc(__i18n.t('close')) + '</button></div>' +
         '<div class="chrome-panel-list" id="panel-list"></div>';
     }
     function wirePanel(clearFn) {
@@ -278,14 +317,14 @@
       if (kind === 'history') renderHistory(); else renderDownloads();
     }
     async function renderHistory() {
-      chromePanel.innerHTML = panelHead('历史记录', '清空历史');
+      chromePanel.innerHTML = panelHead(__i18n.t('history'), __i18n.t('clear_history'));
       wirePanel(clearHistory);
       let rows = [];
       try { const r = await window.vaFetch('GET', API + '/api/history?limit=200'); rows = (r && r.ok && r.json && r.json.history) || []; } catch (e) {}
       if (panelKind !== 'history') return;
       const list = document.getElementById('panel-list'); if (!list) return;
-      const cnt = document.getElementById('panel-count'); if (cnt) cnt.textContent = rows.length + ' 条';
-      if (!rows.length) { list.innerHTML = '<div class="chrome-empty">暂无历史记录</div>'; return; }
+      const cnt = document.getElementById('panel-count'); if (cnt) cnt.textContent = rows.length + __i18n.t('items');
+      if (!rows.length) { list.innerHTML = '<div class="chrome-empty">' + __i18n.t('no_history') + '</div>'; return; }
       list.innerHTML = rows.map((it) =>
         '<div class="chrome-item" data-url="' + esc(it.url) + '" title="' + esc(it.url) + '">' + siteTileHtml(it.url) +
         '<div class="chrome-item-main">' +
@@ -296,20 +335,20 @@
         // 成功才收起浮层；失败留在面板上，让 toast 可见
         invoke('navigate_browser', { url: el.dataset.url }).then(
           () => closeMe(),
-          (e) => { console.warn('[annota] 打开历史记录失败', e); toast('打开失败：' + reasonText(e)); }
+          (e) => { console.warn('[annota] 打开历史记录失败', e); toast(__i18n.t('open_failed') + reasonText(e)); }
         );
       }));
     }
     async function renderDownloads() {
-      chromePanel.innerHTML = panelHead('下载', '清空记录');
+      chromePanel.innerHTML = panelHead(__i18n.t('downloads'), __i18n.t('clear_downloads'));
       wirePanel(clearDownloads);
       let rows = [];
       try { const r = await window.vaFetch('GET', API + '/api/downloads'); rows = (r && r.ok && r.json && r.json.downloads) || []; } catch (e) {}
       if (panelKind !== 'downloads') return;
       const list = document.getElementById('panel-list'); if (!list) return;
-      const cnt = document.getElementById('panel-count'); if (cnt) cnt.textContent = rows.length + ' 条';
-      if (!rows.length) { list.innerHTML = '<div class="chrome-empty">暂无下载记录</div>'; return; }
-      const label = { done: '已完成', downloading: '下载中', failed: '失败' };
+      const cnt = document.getElementById('panel-count'); if (cnt) cnt.textContent = rows.length + __i18n.t('items');
+      if (!rows.length) { list.innerHTML = '<div class="chrome-empty">' + __i18n.t('no_downloads') + '</div>'; return; }
+      const label = { done: __i18n.t('done'), downloading: __i18n.t('downloading_status'), failed: __i18n.t('failed') };
       list.innerHTML = rows.map((it) =>
         '<div class="chrome-item" data-path="' + esc(it.path || '') + '" title="' + esc(it.path || it.url) + '">' + DL_ICON_HTML +
         '<div class="chrome-item-main">' +
@@ -324,7 +363,7 @@
     }
     // P1-b#12：清空失败不再静默，给出 toast（浮层内右下角，2-3 秒消失）
     function reasonText(e) {
-      if (e == null) return '未知错误';
+      if (e == null) return __i18n.t('unknown_error');
       if (typeof e === 'string') return e;
       if (e instanceof Error) return e.message || String(e);
       if (typeof e === 'object') {
@@ -345,13 +384,13 @@
       setTimeout(() => { el.dataset.leaving = '1'; setTimeout(() => el.remove(), 220); }, 3000);
     }
     async function clearHistory() {
-      try { const r = await window.vaFetch('DELETE', API + '/api/history'); if (r && r.ok === false) toast('清空历史失败：HTTP ' + (r.status || '?')); }
-      catch (e) { console.warn('[annota] 清空历史失败', e); toast('清空历史失败：' + reasonText(e)); }
+      try { const r = await window.vaFetch('DELETE', API + '/api/history'); if (r && r.ok === false) toast(__i18n.t('clear_history_failed') + 'HTTP ' + (r.status || '?')); }
+      catch (e) { console.warn('[annota] 清空历史失败', e); toast(__i18n.t('clear_history_failed') + reasonText(e)); }
       renderHistory();
     }
     async function clearDownloads() {
-      try { const r = await window.vaFetch('DELETE', API + '/api/downloads'); if (r && r.ok === false) toast('清空下载记录失败：HTTP ' + (r.status || '?')); }
-      catch (e) { console.warn('[annota] 清空下载记录失败', e); toast('清空下载记录失败：' + reasonText(e)); }
+      try { const r = await window.vaFetch('DELETE', API + '/api/downloads'); if (r && r.ok === false) toast(__i18n.t('clear_downloads_failed') + 'HTTP ' + (r.status || '?')); }
+      catch (e) { console.warn('[annota] 清空下载记录失败', e); toast(__i18n.t('clear_downloads_failed') + reasonText(e)); }
       renderDownloads();
     }
 
@@ -365,6 +404,7 @@
       menu.dataset.open = '1';
     };
     window.__vaOverlayShow(window.__VA_OVERLAY_KIND__ || 'menu');
+    });
   </script>
 </body>
 </html>

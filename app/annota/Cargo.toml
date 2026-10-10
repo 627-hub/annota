@@ -34,9 +34,12 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
 keyring = "3"
+sys-locale = "0.3"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tower = "0.5"
+http-body-util = "0.1"
 
 [features]
 # 保持静默窗口（release 模式）

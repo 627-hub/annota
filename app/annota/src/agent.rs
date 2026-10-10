@@ -197,7 +197,7 @@ fn invoke_tool(handle: &tauri::AppHandle, id: &str, name: &str, args: Value, cal
             name,
             &args,
             "pending",
-            &json!({"confirm_id": confirm_id, "message": "需要用户确认", "arguments": args}),
+            &json!({"confirm_id": confirm_id, "message": crate::i18n::t("err.need_user_confirm"), "arguments": args}),
         );
         return json!({"needs_confirmation": true, "confirm_id": confirm_id});
     }
@@ -289,7 +289,7 @@ async fn call_llm(client: &reqwest::Client, cfg: &LlmConfig, messages: &Value) -
         "tool_choice": "auto",
         "stream": false
     });
-    let mut last_err = String::from("请求失败");
+    let mut last_err = crate::i18n::t("err.llm_request_failed");
     for url in chat_urls(&cfg.base) {
         let resp = client
             .post(&url)
@@ -308,8 +308,15 @@ async fn call_llm(client: &reqwest::Client, cfg: &LlmConfig, messages: &Value) -
                 }
                 match serde_json::from_str::<Value>(&text) {
                     Ok(v) if v.get("choices").is_some() => return Ok(v),
-                    Ok(_) => last_err = format!("{url} 响应不含 choices"),
-                    Err(e) => last_err = format!("{url} 响应解析失败：{e}"),
+                    Ok(_) => {
+                        last_err = crate::i18n::tf("err.llm_no_choices", &[("url", url.as_str())])
+                    }
+                    Err(e) => {
+                        last_err = crate::i18n::tf(
+                            "err.llm_parse_failed",
+                            &[("url", url.as_str()), ("e", &e.to_string())],
+                        )
+                    }
                 }
             }
         }
@@ -343,13 +350,13 @@ pub async fn agent_run(
     w: tauri::Webview,
     messages: Vec<Value>,
 ) -> Result<Value, String> {
-    crate::require_local_or_trusted(&app, &w, "AI 助手")?;
+    crate::require_local_or_trusted(&app, &w, &crate::i18n::t("perm.ai_agent"))?;
     // OCR-fix：config() 内含同步 fs 读取 + keyring 调用——下放到 blocking 线程，别卡 async 运行时
     let app_cfg = app.clone();
     let cfg = tauri::async_runtime::spawn_blocking(move || config(&app_cfg))
         .await
         .map_err(|e| e.to_string())?
-        .ok_or("未配置模型密钥：请在设置中录入 API key（或设置 LLM_API_KEY）")?;
+        .ok_or(crate::i18n::t("err.llm_key_missing"))?;
     // OCR-fix：写确认绑定发起会话的 webview label，跨会话不可消费（防猜 confirm_id）
     let caller = w.label().to_string();
     let client = reqwest::Client::builder()
@@ -414,9 +421,12 @@ pub async fn agent_run(
     if final_message.get("tool_calls").and_then(Value::as_array).map(|a| !a.is_empty()).unwrap_or(false) {
         let content = final_message.get("content").and_then(Value::as_str).unwrap_or("");
         final_message["content"] = json!(if content.is_empty() {
-            "助手在完成工具调用前已达到单次对话的工具轮次上限，请把问题拆小后重试。".to_string()
+            crate::i18n::t("err.tool_round_limit")
         } else {
-            format!("{content}\n（工具调用未完成：已达单次对话的轮次上限）")
+            format!(
+                "{content}\n{}",
+                crate::i18n::t("err.tool_round_limit_suffix")
+            )
         });
     }
 
@@ -430,20 +440,20 @@ pub async fn agent_run(
 /// 直接执行一次已确认的工具
 #[tauri::command]
 pub fn agent_chat(app: tauri::AppHandle, w: tauri::Webview, confirm_id: String) -> Result<Value, String> {
-    crate::require_local_or_trusted(&app, &w, "AI 助手")?;
+    crate::require_local_or_trusted(&app, &w, &crate::i18n::t("perm.ai_agent"))?;
     let entry = pending()
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .remove(&confirm_id)
-        .ok_or("确认已过期")?;
+        .ok_or(crate::i18n::t("err.confirm_expired"))?;
     let age = now_ms().saturating_sub(entry.get("at").and_then(Value::as_u64).unwrap_or(0));
     if age >= PENDING_TTL_MS {
-        return Err("确认已过期（超过 30 分钟），请重新发起".to_string());
+        return Err(crate::i18n::t("err.confirm_expired_detailed"));
     }
     // OCR-fix：确认必须来自发起该写操作的同一 webview（防其他会话猜 confirm_id 消费）
     let entry_caller = entry.get("caller").and_then(Value::as_str).unwrap_or("");
     if !entry_caller.is_empty() && entry_caller != w.label() {
-        return Err("该确认属于其他窗口的会话，已拒绝".to_string());
+        return Err(crate::i18n::t("err.confirm_cross_session"));
     }
     let name = entry.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let args = entry.get("arguments").cloned().unwrap_or_else(|| json!({}));
@@ -453,7 +463,7 @@ pub fn agent_chat(app: tauri::AppHandle, w: tauri::Webview, confirm_id: String) 
 /// 取消尚未确认的写操作
 #[tauri::command]
 pub fn agent_cancel(app: tauri::AppHandle, w: tauri::Webview, confirm_id: String) -> bool {
-    if crate::require_local_or_trusted(&app, &w, "AI 助手").is_err() {
+    if crate::require_local_or_trusted(&app, &w, &crate::i18n::t("perm.ai_agent")).is_err() {
         return false;
     }
     pending().lock().unwrap_or_else(|e| e.into_inner()).remove(&confirm_id).is_some()
@@ -488,7 +498,10 @@ mod tests {
 
     #[test]
     fn llm_key_resolution_prefers_env() {
-        // 环境变量优先级：本测试进程未设 LLM_API_KEY（CI 情况未知，仅验证不 panic 且类型正确）
+        if std::env::var("CI").is_ok() {
+            eprintln!("skip: keyring 不可用于 CI runner（无 GUI 登录会话）");
+            return;
+        }
         let _ = resolve_llm_key();
     }
 }

@@ -85,7 +85,10 @@ impl Db {
     }
 
     fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> Result<T, String>) -> Result<T, String> {
-        let conn = self.conn.lock().map_err(|_| "数据库锁中毒".to_string())?;
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| crate::i18n::t("err.db_lock_poisoned"))?;
         f(&conn)
     }
 
@@ -97,7 +100,10 @@ impl Db {
                 .map_err(|e| e.to_string())
         })?;
         if version > 1 {
-            return Err(format!("数据库版本 {version} 高于本应用支持的 1，请升级 Annota"));
+            return Err(crate::i18n::tf(
+                "err.db_version_too_new",
+                &[("version", &version.to_string())],
+            ));
         }
         if version < 1 {
             self.migrate_v1()?;

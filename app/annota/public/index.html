@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="dark" />
   <title>Annota Browser</title>
   <link rel="stylesheet" href="tokens.css" />
+  <script src="i18n.js"></script>
   <style>
     * { box-sizing: border-box; }
     html, body { width:100%; height:100%; margin:0; overflow:hidden; }
@@ -360,686 +361,741 @@
 
 
   <script>
-    const input = document.getElementById('url');
-    const form = document.getElementById('nav-form');
-    const engine = document.getElementById('engine-state');
-    const engineLabel = document.getElementById('engine-label');
-    const WORKSPACE = 'http://127.0.0.1:8793/';
-    function tauri() { return window.__TAURI_INTERNALS__ || window.__TAURI__; }
-    function invoke(cmd, args) {
-      const t = tauri();
-      if (!t || !t.invoke) throw new Error('Annota bridge 不可用');
-      return t.invoke(cmd, args);
-    }
-
-    /* ---- 通用：错误归一 / toast / 带提示的 invoke（P1：替代 .catch(() => {}) 吞错） ---- */
-    function reasonText(e) {
-      if (e == null) return '未知错误';
-      if (typeof e === 'string') return e;
-      if (e instanceof Error) return e.message || String(e);
-      if (typeof e === 'object') {
-        if (typeof e.message === 'string' && e.message) return e.message;
-        if (typeof e.error === 'string' && e.error) return e.error;
-        if (e.error && typeof e.error === 'object') return reasonText(e.error);
-        try { return JSON.stringify(e); } catch (x) { return String(e); }
+    // i18n.js 未能加载时的兜底：init 立即回调、t 返回 key（页面可工作，仅文案退回 key）
+    if (typeof __i18n === 'undefined') { window.__i18n = { locale: 'zh-CN', strings: {}, init: function (cb) { cb(); }, t: function (k) { return k; } }; }
+    __i18n.init(function () {
+      function applyI18n() {
+        const $ = (id) => document.getElementById(id);
+        document.documentElement.lang = __i18n.locale;
+        $('tabstrip').setAttribute('aria-label', __i18n.t('tabs'));
+        $('tab-new').setAttribute('aria-label', __i18n.t('new_tab'));
+        $('tab-new').title = __i18n.t('new_tab_shortcut');
+        document.querySelector('.toolbar').setAttribute('aria-label', __i18n.t('browser_nav'));
+        $('home-button').setAttribute('aria-label', __i18n.t('home'));
+        $('home-button').title = __i18n.t('open_home');
+        document.querySelector('.nav').setAttribute('aria-label', __i18n.t('page_nav'));
+        $('btn-back').setAttribute('aria-label', __i18n.t('back'));
+        $('btn-back').title = __i18n.t('back');
+        $('btn-forward').setAttribute('aria-label', __i18n.t('forward'));
+        $('btn-forward').title = __i18n.t('forward');
+        $('btn-reload').setAttribute('aria-label', __i18n.t('reload'));
+        $('btn-reload').title = __i18n.t('reload');
+        $('url').placeholder = __i18n.t('search_or_url');
+        $('url').setAttribute('aria-label', __i18n.t('search_or_url'));
+        document.querySelector('.go-button').setAttribute('aria-label', __i18n.t('open_url'));
+        document.querySelector('.go-button').title = __i18n.t('open');
+        $('btn-bookmark').setAttribute('aria-label', __i18n.t('bookmark'));
+        $('btn-bookmark').title = __i18n.t('bookmark_page');
+        $('btn-bookmark-bar').setAttribute('aria-label', __i18n.t('bookmark_bar'));
+        $('btn-bookmark-bar').title = __i18n.t('toggle_bookmark_bar');
+        $('btn-find').setAttribute('aria-label', __i18n.t('find'));
+        $('btn-find').title = __i18n.t('find_in_page');
+        $('btn-edit').setAttribute('aria-label', __i18n.t('edit'));
+        $('btn-edit').title = __i18n.t('enter_edit');
+        $('update-pill').setAttribute('aria-label', __i18n.t('install_update'));
+        $('update-label').textContent = __i18n.t('new_version');
+        $('btn-menu').setAttribute('aria-label', __i18n.t('more'));
+        $('btn-menu').title = __i18n.t('more');
+        $('svc-retry').textContent = __i18n.t('retry');
+        $('mem-banner').querySelector('.sb-text').textContent = __i18n.t('memory_db_banner');
+        $('mem-close').setAttribute('aria-label', __i18n.t('close_hint'));
+        $('mem-close').title = __i18n.t('close');
+        $('find-input').placeholder = __i18n.t('find_placeholder');
+        $('find-input').setAttribute('aria-label', __i18n.t('find'));
+        $('find-prev').setAttribute('aria-label', __i18n.t('previous'));
+        $('find-prev').title = __i18n.t('previous');
+        $('find-next').setAttribute('aria-label', __i18n.t('next'));
+        $('find-next').title = __i18n.t('next');
+        $('find-close').setAttribute('aria-label', __i18n.t('close'));
+        $('find-close').title = __i18n.t('close') + ' (Esc)';
       }
-      return String(e);
-    }
-    const toastStack = document.getElementById('toast-stack');
-    function toast(msg, kind) {
-      const el = document.createElement('div');
-      el.className = 'toast';
-      el.dataset.kind = kind || 'info';
-      el.setAttribute('role', kind === 'error' ? 'alert' : 'status');
-      el.textContent = msg;
-      toastStack.appendChild(el);
-      while (toastStack.children.length > 3) toastStack.firstElementChild.remove();
-      const ttl = kind === 'error' ? 3200 : 2400;
-      setTimeout(() => {
-        el.dataset.leaving = '1';
-        setTimeout(() => el.remove(), 220);
-      }, ttl);
-    }
-    // 主路径调用：失败时 toast + console.warn；返回 Promise（永不 reject）。
-    // invoke 在桥不可用时会同步抛错，这里一并兜住。
-    function invokeOr(label, cmd, args) {
-      let p;
-      try { p = Promise.resolve(invoke(cmd, args)); } catch (e) { p = Promise.reject(e); }
-      return p.then((r) => r, (e) => {
-        console.warn('[annota] ' + label + ' 失败', e);
-        toast(label + '失败：' + reasonText(e), 'error');
-        return undefined;
-      });
-    }
+      applyI18n();
 
-    // 同上，但返回布尔：true=成功 / false=失败（调用方可据此回滚乐观更新）。
-    function invokeTry(label, cmd, args) {
-      let p;
-      try { p = Promise.resolve(invoke(cmd, args)); } catch (e) { p = Promise.reject(e); }
-      return p.then(() => true, (e) => {
-        console.warn('[annota] ' + label + ' 失败', e);
-        toast(label + '失败：' + reasonText(e), 'error');
-        return false;
-      });
-    }
-
-    /* ---- 导航 ---- */
-    async function navigate(raw) {
-      const value = (raw != null ? raw : input.value).trim();
-      if (!value) return;
-      engine.dataset.state = 'busy'; engineLabel.textContent = 'OPENING';
-      try {
-        await invoke('navigate_browser', { url: value });
-        engine.dataset.state = 'ready'; engineLabel.textContent = 'LOCAL';
-      } catch (e) {
-        engine.dataset.state = 'error'; engineLabel.textContent = 'ERROR';
-        console.warn('[annota] 打开失败', e);
-        toast('打开失败：' + reasonText(e), 'error');
+      const input = document.getElementById('url');
+      const form = document.getElementById('nav-form');
+      const engine = document.getElementById('engine-state');
+      const engineLabel = document.getElementById('engine-label');
+      const WORKSPACE = 'http://127.0.0.1:8793/';
+      function tauri() { return window.__TAURI_INTERNALS__ || window.__TAURI__; }
+      function invoke(cmd, args) {
+        const t = tauri();
+        if (!t || !t.invoke) throw new Error(__i18n.t('bridge_unavailable'));
+        return t.invoke(cmd, args);
       }
-    }
-    form.addEventListener('submit', (e) => { e.preventDefault(); navigate(); });
-    input.addEventListener('focus', () => input.select());
-    // P1-a#3：前进/后退已启用（不再写死 disabled）
-    document.getElementById('btn-back').addEventListener('click', () => invokeOr('后退', 'browser_action', { action: 'back' }));
-    document.getElementById('btn-forward').addEventListener('click', () => invokeOr('前进', 'browser_action', { action: 'forward' }));
-    document.getElementById('btn-reload').addEventListener('click', () => invokeOr('刷新', 'browser_action', { action: 'reload' }));
-    function openHome() { navigate(WORKSPACE); }
-    document.getElementById('home-button').addEventListener('click', openHome);
-    document.getElementById('home-button').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openHome(); } });
 
-    /* ---- 编辑态切换（观看 ↔ 编辑）---- */
-    let shellMode = 'view';
-    const btnEdit = document.getElementById('btn-edit');
-    function applyEditUI() {
-      const on = shellMode === 'edit';
-      btnEdit.classList.toggle('is-active', on);
-      btnEdit.setAttribute('title', on ? '退出编辑' : '进入编辑（侧栏）');
-      try { localStorage.setItem('va.browser.shellMode', shellMode); } catch (e) {}
-    }
-    try { shellMode = localStorage.getItem('va.browser.shellMode') === 'edit' ? 'edit' : 'view'; } catch (e) {}
-    btnEdit.addEventListener('click', () => {
-      const prev = shellMode;
-      shellMode = shellMode === 'edit' ? 'view' : 'edit';
-      applyEditUI();
-      // 乐观更新：IPC 失败时回滚本地态（否则 UI 与 Rust 后端永久分叉，且失败完全静默）
-      invokeTry('切换编辑模式', 'set_shell_mode', { mode: shellMode }).then((ok) => {
-        if (!ok) { shellMode = prev; applyEditUI(); }
-      });
-    });
-    applyEditUI();
-    // 进入编辑后，新激活/新开的 tab 也要同步态
-    function pushModeToTab() {
-      try {
-        Promise.resolve(invoke('set_shell_mode', { mode: shellMode }))
-          .catch((e) => console.warn('[annota] 同步编辑模式失败', e));
-      } catch (e) { console.warn('[annota] 同步编辑模式失败', e); }
-    }
-
-    /* ---- 下拉浮层（M7 重做）：菜单 / 历史 / 下载都在独立 overlay webview 里，
-       工具栏只负责调 overlay_open。这样打开浮层不会增高工具栏、页面也不会下移。 ---- */
-    const btnMenu = document.getElementById('btn-menu');
-    const dlDot = document.getElementById('dl-dot');
-    const API = 'http://127.0.0.1:8793';
-    function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
-    function fmtAgo(ms) {
-      const d = Date.now() - ms;
-      if (d < 60000) return '刚刚';
-      const m = d / 60000; if (m < 60) return Math.floor(m) + ' 分钟前';
-      const h = m / 60; if (h < 24) return Math.floor(h) + ' 小时前';
-      const dd = h / 24; if (dd < 30) return Math.floor(dd) + ' 天前';
-      try { return new Date(ms).toLocaleDateString(); } catch (e) { return ''; }
-    }
-
-    btnMenu.addEventListener('click', () => invokeOr('打开菜单', 'overlay_open', { kind: 'menu' }));
-
-    /* ---- 收藏星标（M6 接后端） ---- */
-    const btnBookmark = document.getElementById('btn-bookmark');
-    let bookmarkUrls = new Set();
-    function activeTab() { return tabsState.find((t) => t.active); }
-    function activeUrl() { const a = activeTab(); if (!a) return ''; return tabUrlCache[a.id] || a.url || ''; }
-    function applyBookmarkUI() {
-      const url = activeUrl();
-      const on = !!url && bookmarkUrls.has(url);
-      btnBookmark.classList.toggle('is-active', on);
-      btnBookmark.setAttribute('title', on ? '已收藏' : '收藏此页');
-    }
-    async function refreshBookmarks() {
-      try {
-        const r = await window.vaFetch('GET', API + '/api/bookmarks');
-        if (!(r && r.ok)) return; // 请求失败不清空本地状态（避免星标全灭）
-        const arr = (r.json && r.json.bookmarks) || [];
-        bookmarkUrls = new Set(arr.map((b) => b.url));
-        applyBookmarkUI();
-      } catch (e) {}
-    }
-    btnBookmark.addEventListener('click', async () => {
-      const a = activeTab(); const url = activeUrl();
-      if (!a || !url) return;
-      const removing = bookmarkUrls.has(url);
-      try {
-        if (removing) {
-          const r = await window.vaFetch('DELETE', API + '/api/bookmarks?url=' + encodeURIComponent(url));
-          if (r && r.ok) bookmarkUrls.delete(url);
-          else toast('取消收藏失败：HTTP ' + ((r && r.status) || '?'), 'error');
-        } else {
-          const r = await window.vaFetch('POST', API + '/api/bookmarks', { url: url, title: a.title || hostOf(url) });
-          if (r && r.ok) bookmarkUrls.add(url);
-          else toast('收藏失败：HTTP ' + ((r && r.status) || '?'), 'error');
+      /* ---- 通用：错误归一 / toast / 带提示的 invoke（P1：替代 .catch(() => {}) 吞错） ---- */
+      function reasonText(e) {
+        if (e == null) return __i18n.t('unknown_error');
+        if (typeof e === 'string') return e;
+        if (e instanceof Error) return e.message || String(e);
+        if (typeof e === 'object') {
+          if (typeof e.message === 'string' && e.message) return e.message;
+          if (typeof e.error === 'string' && e.error) return e.error;
+          if (e.error && typeof e.error === 'object') return reasonText(e.error);
+          try { return JSON.stringify(e); } catch (x) { return String(e); }
         }
-      } catch (e) {
-        console.warn('[annota] 收藏操作失败', e);
-        toast((removing ? '取消收藏' : '收藏') + '失败：' + reasonText(e), 'error');
+        return String(e);
       }
-      applyBookmarkUI();
-    });
-    refreshBookmarks();
-    setTimeout(refreshBookmarks, 900);
-
-    /* ---- 自动更新 ---- */
-    const updatePill = document.getElementById('update-pill');
-    const updateLabel = document.getElementById('update-label');
-    function onUpdateAvailable(payload) {
-      const v = (payload && payload.version) || '';
-      updateLabel.textContent = v ? ('更新到 ' + v) : '有新版本';
-      updatePill.setAttribute('title', '点击下载并安装 Annota ' + v + '（安装后自动重启）');
-      updatePill.dataset.on = '1';
-      // 诊断探针：角标实际渲染时上报 computed 样式与几何（bridge_probe_reply → Rust 日志）
-      try {
-        const cs = getComputedStyle(updatePill);
-        const r = updatePill.getBoundingClientRect();
-        tauri().invoke('bridge_probe_reply', { keys: ['update-pill-shown', String(v), `display=${cs.display} vis=${cs.visibility} rect=${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.width)}x${Math.round(r.height)} on=${updatePill.dataset.on}`] });
-      } catch (e) {}
-    }
-    updatePill.addEventListener('click', async () => {
-      updatePill.dataset.state = 'busy'; updateLabel.textContent = '正在下载…';
-      try { await invoke('install_update'); }
-      catch (e) { updatePill.dataset.state = ''; updateLabel.textContent = '更新失败，重试'; updatePill.setAttribute('title', String((e && e.message) || e)); }
-    });
-    // 角标兜底：Rust 启动 5s 后发 update-available 事件，可能先于本页订阅发出而被错过；
-    // 加载后主动查两次（update_status），保证角标可见。
-    async function pollUpdateStatus() {
-      if (updatePill.dataset.on === '1') return;
-      try {
-        const u = await invoke('update_status');
-        if (u && u.version) onUpdateAvailable(u);
-      } catch (e) { /* 桥未就绪则静默，稍后再试 */ }
-    }
-    // 慢网络下 updater 检查可能耗时数十秒（实测 GitHub 端点 76s）：早查两次 + 每 30s 补查（上限 3 分钟）
-    setTimeout(pollUpdateStatus, 6500);
-    setTimeout(pollUpdateStatus, 15000);
-    const pollDeadline = Date.now() + 180000;
-    const pollTimer = setInterval(() => {
-      if (updatePill.dataset.on === '1' || Date.now() > pollDeadline) { clearInterval(pollTimer); return; }
-      pollUpdateStatus();
-    }, 30000);
-
-    /* ---- 事件订阅 ---- */
-    (function subscribe() {
-      const t = tauri();
-      // 关键：__TAURI_INTERNALS__ 只有 invoke，完整 event API 在 withGlobalTauri 注入的
-      // __TAURI__ 上。取错对象会让 listen 恒为 null → 所有事件（tabs-changed/update/查找计数）
-      // 静默失效，tab 变更退化为 1.5s 轮询（「标签不跟手」的根因）。
-      const evApi = (window.__TAURI__ && window.__TAURI__.event) || (t && t.event);
-      const listen = (evApi && typeof evApi.listen === 'function')
-        ? evApi.listen.bind(evApi)
-        : null;
-      window.__TOOLBAR_EVENTS__ = [];
-      if (listen) {
-        console.log('[annota-toolbar] event bridge ok');
-      } else {
-        // 没有事件桥时仍要能渲染 tab：退回 Rust 主动推送（annota://tabs-changed 的 HTTP 兜底）。
-        console.warn('[annota-toolbar] 事件桥不可用，tab 列表改用轮询兜底');
+      const toastStack = document.getElementById('toast-stack');
+      function toast(msg, kind) {
+        const el = document.createElement('div');
+        el.className = 'toast';
+        el.dataset.kind = kind || 'info';
+        el.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+        el.textContent = msg;
+        toastStack.appendChild(el);
+        while (toastStack.children.length > 3) toastStack.firstElementChild.remove();
+        const ttl = kind === 'error' ? 3200 : 2400;
+        setTimeout(() => {
+          el.dataset.leaving = '1';
+          setTimeout(() => el.remove(), 220);
+        }, ttl);
       }
-      const on = (name, fn) => {
-        if (listen) { try { listen('annota://' + name, fn); } catch (e) { console.warn('listen failed ' + name, e); } }
-        else { window.__TOOLBAR_EVENTS__.push('poll:' + name); }
-      };
-      window.__TOOLBAR_EVENTS__ = [];
+      // 通用失败提示：label + 「操作失败：」+ 原因（非中文 locale 在 label 后补空格）
+      function failToast(label, e) {
+        toast(label + (__i18n.locale === 'zh-CN' ? '' : ' ') + __i18n.t('action_failed') + reasonText(e), 'error');
+      }
+      // 主路径调用：失败时 toast + console.warn；返回 Promise（永不 reject）。
+      // invoke 在桥不可用时会同步抛错，这里一并兜住。
+      function invokeOr(label, cmd, args) {
+        let p;
+        try { p = Promise.resolve(invoke(cmd, args)); } catch (e) { p = Promise.reject(e); }
+        return p.then((r) => r, (e) => {
+          console.warn('[annota] ' + label + ' 失败', e);
+          failToast(label, e);
+          return undefined;
+        });
+      }
 
-      on('update-available', (ev) => onUpdateAvailable(ev.payload));
-      on('tabs-changed', (ev) => renderTabs((ev.payload && ev.payload.tabs) || []));
-      on('tab-updated', (ev) => {
-        const p = ev.payload || {};
-        if (!p.id) return;
-        if (p.url) tabUrlCache[p.id] = p.url;
-        if (p.active) setOmnibox(tabUrlCache[p.id]);
-        document.getElementById('btn-reload').classList.toggle('is-active', !!p.loading);
+      // 同上，但返回布尔：true=成功 / false=失败（调用方可据此回滚乐观更新）。
+      function invokeTry(label, cmd, args) {
+        let p;
+        try { p = Promise.resolve(invoke(cmd, args)); } catch (e) { p = Promise.reject(e); }
+        return p.then(() => true, (e) => {
+          console.warn('[annota] ' + label + ' 失败', e);
+          failToast(label, e);
+          return false;
+        });
+      }
+
+      /* ---- 导航 ---- */
+      async function navigate(raw) {
+        const value = (raw != null ? raw : input.value).trim();
+        if (!value) return;
+        engine.dataset.state = 'busy'; engineLabel.textContent = 'OPENING';
+        try {
+          await invoke('navigate_browser', { url: value });
+          engine.dataset.state = 'ready'; engineLabel.textContent = 'LOCAL';
+        } catch (e) {
+          engine.dataset.state = 'error'; engineLabel.textContent = 'ERROR';
+          console.warn('[annota] 打开失败', e);
+          toast(__i18n.t('open_failed') + reasonText(e), 'error');
+        }
+      }
+      form.addEventListener('submit', (e) => { e.preventDefault(); navigate(); });
+      input.addEventListener('focus', () => input.select());
+      // P1-a#3：前进/后退已启用（不再写死 disabled）
+      document.getElementById('btn-back').addEventListener('click', () => invokeOr(__i18n.t('back'), 'browser_action', { action: 'back' }));
+      document.getElementById('btn-forward').addEventListener('click', () => invokeOr(__i18n.t('forward'), 'browser_action', { action: 'forward' }));
+      document.getElementById('btn-reload').addEventListener('click', () => invokeOr(__i18n.t('reload'), 'browser_action', { action: 'reload' }));
+      function openHome() { navigate(WORKSPACE); }
+      document.getElementById('home-button').addEventListener('click', openHome);
+      document.getElementById('home-button').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openHome(); } });
+
+      /* ---- 编辑态切换（观看 ↔ 编辑）---- */
+      let shellMode = 'view';
+      const btnEdit = document.getElementById('btn-edit');
+      function applyEditUI() {
+        const on = shellMode === 'edit';
+        btnEdit.classList.toggle('is-active', on);
+        btnEdit.setAttribute('title', on ? __i18n.t('exit_edit') : __i18n.t('enter_edit'));
+        try { localStorage.setItem('va.browser.shellMode', shellMode); } catch (e) {}
+      }
+      try { shellMode = localStorage.getItem('va.browser.shellMode') === 'edit' ? 'edit' : 'view'; } catch (e) {}
+      btnEdit.addEventListener('click', () => {
+        const prev = shellMode;
+        shellMode = shellMode === 'edit' ? 'view' : 'edit';
+        applyEditUI();
+        // 乐观更新：IPC 失败时回滚本地态（否则 UI 与 Rust 后端永久分叉，且失败完全静默）
+        invokeTry(__i18n.t('toggle_edit_mode'), 'set_shell_mode', { mode: shellMode }).then((ok) => {
+          if (!ok) { shellMode = prev; applyEditUI(); }
+        });
+      });
+      applyEditUI();
+      // 进入编辑后，新激活/新开的 tab 也要同步态
+      function pushModeToTab() {
+        try {
+          Promise.resolve(invoke('set_shell_mode', { mode: shellMode }))
+            .catch((e) => console.warn('[annota] 同步编辑模式失败', e));
+        } catch (e) { console.warn('[annota] 同步编辑模式失败', e); }
+      }
+
+      /* ---- 下拉浮层（M7 重做）：菜单 / 历史 / 下载都在独立 overlay webview 里，
+         工具栏只负责调 overlay_open。这样打开浮层不会增高工具栏、页面也不会下移。 ---- */
+      const btnMenu = document.getElementById('btn-menu');
+      const dlDot = document.getElementById('dl-dot');
+      const API = 'http://127.0.0.1:8793';
+      function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+      function fmtAgo(ms) {
+        const d = Date.now() - ms;
+        if (d < 60000) return __i18n.t('just_now');
+        const m = d / 60000; if (m < 60) return Math.floor(m) + __i18n.t('minutes_ago');
+        const h = m / 60; if (h < 24) return Math.floor(h) + __i18n.t('hours_ago');
+        const dd = h / 24; if (dd < 30) return Math.floor(dd) + __i18n.t('days_ago');
+        try { return new Date(ms).toLocaleDateString(); } catch (e) { return ''; }
+      }
+
+      btnMenu.addEventListener('click', () => invokeOr(__i18n.t('open_menu'), 'overlay_open', { kind: 'menu' }));
+
+      /* ---- 收藏星标（M6 接后端） ---- */
+      const btnBookmark = document.getElementById('btn-bookmark');
+      let bookmarkUrls = new Set();
+      function activeTab() { return tabsState.find((t) => t.active); }
+      function activeUrl() { const a = activeTab(); if (!a) return ''; return tabUrlCache[a.id] || a.url || ''; }
+      function applyBookmarkUI() {
+        const url = activeUrl();
+        const on = !!url && bookmarkUrls.has(url);
+        btnBookmark.classList.toggle('is-active', on);
+        btnBookmark.setAttribute('title', on ? __i18n.t('bookmarked') : __i18n.t('bookmark_page'));
+      }
+      async function refreshBookmarks() {
+        try {
+          const r = await window.vaFetch('GET', API + '/api/bookmarks');
+          if (!(r && r.ok)) return; // 请求失败不清空本地状态（避免星标全灭）
+          const arr = (r.json && r.json.bookmarks) || [];
+          bookmarkUrls = new Set(arr.map((b) => b.url));
+          applyBookmarkUI();
+        } catch (e) {}
+      }
+      btnBookmark.addEventListener('click', async () => {
+        const a = activeTab(); const url = activeUrl();
+        if (!a || !url) return;
+        const removing = bookmarkUrls.has(url);
+        try {
+          if (removing) {
+            const r = await window.vaFetch('DELETE', API + '/api/bookmarks?url=' + encodeURIComponent(url));
+            if (r && r.ok) bookmarkUrls.delete(url);
+            else toast(__i18n.t('unbookmark_failed') + 'HTTP ' + ((r && r.status) || '?'), 'error');
+          } else {
+            const r = await window.vaFetch('POST', API + '/api/bookmarks', { url: url, title: a.title || hostOf(url) });
+            if (r && r.ok) bookmarkUrls.add(url);
+            else toast(__i18n.t('bookmark_failed') + 'HTTP ' + ((r && r.status) || '?'), 'error');
+          }
+        } catch (e) {
+          console.warn('[annota] 收藏操作失败', e);
+          failToast(removing ? __i18n.t('unbookmark') : __i18n.t('bookmark'), e);
+        }
         applyBookmarkUI();
       });
-      // 下载角标按 URL 计数：开始加、结束减，全部结束才熄。避免单一 bool 在
-      // 多并发下载时被 finished 提前熄掉，也避免漏掉 finished 后永久点亮。
-      const dlActive = new Set();
-      const syncDlDot = () => { dlDot.style.display = dlActive.size ? 'block' : 'none'; };
-      on('download-started', (ev) => {
-        const u = (ev.payload && ev.payload.url) || ('#' + Date.now());
-        dlActive.add(u); syncDlDot();
-      });
-      on('download-finished', (ev) => {
-        const u = ev.payload && ev.payload.url;
-        if (u) dlActive.delete(u); else dlActive.clear();
-        syncDlDot();
-      });
-      // 内容 webview 内切换编辑态（如 Cmd/Ctrl+E）→ 同步工具栏按钮
-      on('shell-mode-changed', (ev) => {
-        const m = ev.payload && ev.payload.mode === 'edit' ? 'edit' : 'view';
-        if (m !== shellMode) { shellMode = m; applyEditUI(); }
-      });
-      // P1-a#5：活动页查找匹配总数（payload {count, text}）
-      on('find-count', (ev) => onFindCount(ev.payload));
+      refreshBookmarks();
+      setTimeout(refreshBookmarks, 900);
 
-      // 初始渲染：会话恢复等 tabs-changed 可能早于本页订阅而错过（表现=启动标签条空白）。
-      // 无条件主动拉一次快照兜底（含事件桥可用时）。
-      if (listen) {
-        setTimeout(() => {
-          Promise.resolve(invoke('tabs_snapshot'))
-            .then((r) => { if (r && r.tabs && r.tabs.length) renderTabs(r.tabs); })
-            .catch(() => {});
-        }, 150);
+      /* ---- 自动更新 ---- */
+      const updatePill = document.getElementById('update-pill');
+      const updateLabel = document.getElementById('update-label');
+      function onUpdateAvailable(payload) {
+        const v = (payload && payload.version) || '';
+        updateLabel.textContent = v ? (__i18n.t('update_to') + v) : __i18n.t('new_version');
+        updatePill.setAttribute('title', __i18n.t('update_title', { v: v }));
+        updatePill.dataset.on = '1';
+        // 诊断探针：角标实际渲染时上报 computed 样式与几何（bridge_probe_reply → Rust 日志）
+        try {
+          const cs = getComputedStyle(updatePill);
+          const r = updatePill.getBoundingClientRect();
+          tauri().invoke('bridge_probe_reply', { keys: ['update-pill-shown', String(v), `display=${cs.display} vis=${cs.visibility} rect=${Math.round(r.x)},${Math.round(r.y)},${Math.round(r.width)}x${Math.round(r.height)} on=${updatePill.dataset.on}`] });
+        } catch (e) {}
       }
+      updatePill.addEventListener('click', async () => {
+        updatePill.dataset.state = 'busy'; updateLabel.textContent = __i18n.t('downloading');
+        try { await invoke('install_update'); }
+        catch (e) { updatePill.dataset.state = ''; updateLabel.textContent = __i18n.t('update_failed'); updatePill.setAttribute('title', String((e && e.message) || e)); }
+      });
+      // 角标兜底：Rust 启动 5s 后发 update-available 事件，可能先于本页订阅发出而被错过；
+      // 加载后主动查两次（update_status），保证角标可见。
+      async function pollUpdateStatus() {
+        if (updatePill.dataset.on === '1') return;
+        try {
+          const u = await invoke('update_status');
+          if (u && u.version) onUpdateAvailable(u);
+        } catch (e) { /* 桥未就绪则静默，稍后再试 */ }
+      }
+      // 慢网络下 updater 检查可能耗时数十秒（实测 GitHub 端点 76s）：早查两次 + 每 30s 补查（上限 3 分钟）
+      setTimeout(pollUpdateStatus, 6500);
+      setTimeout(pollUpdateStatus, 15000);
+      const pollDeadline = Date.now() + 180000;
+      const pollTimer = setInterval(() => {
+        if (updatePill.dataset.on === '1' || Date.now() > pollDeadline) { clearInterval(pollTimer); return; }
+        pollUpdateStatus();
+      }, 30000);
 
-      // 无事件桥时的兜底：轮询 Rust 拿 tab 快照（tabs_snapshot 走 invoke，不依赖事件）
-      if (!listen) {
-        const poll = async () => {
-          try {
-            const r = await invoke('tabs_snapshot');
-            if (r && r.tabs) renderTabs(r.tabs);
-          } catch (e) {}
+      /* ---- 事件订阅 ---- */
+      (function subscribe() {
+        const t = tauri();
+        // 关键：__TAURI_INTERNALS__ 只有 invoke，完整 event API 在 withGlobalTauri 注入的
+        // __TAURI__ 上。取错对象会让 listen 恒为 null → 所有事件（tabs-changed/update/查找计数）
+        // 静默失效，tab 变更退化为 1.5s 轮询（「标签不跟手」的根因）。
+        const evApi = (window.__TAURI__ && window.__TAURI__.event) || (t && t.event);
+        const listen = (evApi && typeof evApi.listen === 'function')
+          ? evApi.listen.bind(evApi)
+          : null;
+        window.__TOOLBAR_EVENTS__ = [];
+        if (listen) {
+          console.log('[annota-toolbar] event bridge ok');
+        } else {
+          // 没有事件桥时仍要能渲染 tab：退回 Rust 主动推送（annota://tabs-changed 的 HTTP 兜底）。
+          console.warn('[annota-toolbar] 事件桥不可用，tab 列表改用轮询兜底');
+        }
+        const on = (name, fn) => {
+          if (listen) { try { listen('annota://' + name, fn); } catch (e) { console.warn('listen failed ' + name, e); } }
+          else { window.__TOOLBAR_EVENTS__.push('poll:' + name); }
         };
-        setTimeout(poll, 500);
-        setInterval(poll, 1500);
-      }
-    })();
+        window.__TOOLBAR_EVENTS__ = [];
 
-    /* ---- 标签页 ---- */
-    const tabsScroll = document.getElementById('tabs-scroll');
-    const tabNew = document.getElementById('tab-new');
-    const tabUrlCache = {};
-    let tabsState = [];
-    function hostOf(u) { try { return new URL(u).host.replace(/^www\./, '') || u; } catch (e) { return u || ''; } }
-    function setOmnibox(u) { if (u && document.activeElement !== input) input.value = u; }
-
-    /* 站点色块：无 favicon 时的 fallback。取域名 hash → 稳定色相，辨识度比统一图标高。
-       不拉跨域图片，避免加载失败与性能开销。 */
-    // 色相表不含紫/靛/品红区段（设计规范禁忌色）；饱和度由 CSS 统一压低，见 .bm-fav。
-    const SITE_HUES = [8, 26, 42, 96, 138, 162, 186, 204, 222, 350];
-    function siteTile(url) {
-      const host = hostOf(url) || '';
-      const key = host.split('.')[0] || '?';
-      let h = 0;
-      for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
-      const el = document.createElement('span');
-      el.className = 'bm-fav';
-      el.setAttribute('aria-hidden', 'true');
-      el.style.setProperty('--h', String(SITE_HUES[h % SITE_HUES.length]));
-      el.textContent = key.slice(0, 1) || '·';
-      return el;
-    }
-
-    function renderTabs(tabs) {
-      tabsState = tabs || [];
-      Array.from(tabsScroll.querySelectorAll('.tab')).forEach((n) => n.remove());
-      let activeUrl = '';
-      tabsState.forEach((t) => {
-        if (t.url) tabUrlCache[t.id] = t.url;
-        const label = t.title || hostOf(t.url) || '新标签页';
-        const el = document.createElement('div');
-        el.className = 'tab';
-        el.dataset.active = t.active ? '1' : '0';
-        el.setAttribute('role', 'tab');
-        el.setAttribute('aria-selected', t.active ? 'true' : 'false');
-        el.title = t.url && t.url !== label ? label + '\n' + t.url : label;   // 标题截断后悬停可看全文 + 地址
-        const fav = siteTile(t.url || '');
-        fav.className = 'tab-fav';
-        const title = document.createElement('span');
-        title.className = 'tab-title';
-        title.textContent = label;
-        const close = document.createElement('button');
-        close.className = 'tab-close';
-        close.setAttribute('aria-label', '关闭标签页');
-        close.textContent = '×';
-        close.addEventListener('click', (e) => { e.stopPropagation(); invokeOr('关闭标签页', 'tab_close', { id: t.id }); });
-        el.append(fav, title, close);
-        el.addEventListener('click', () => invokeOr('切换标签页', 'tab_activate', { id: t.id }));
-        tabsScroll.appendChild(el);
-        if (t.active) activeUrl = t.url || '';
-      });
-      if (activeUrl) setOmnibox(activeUrl);
-      tabNew.style.display = tabsState.length >= 12 ? 'none' : '';
-      // 新激活/新开的 tab 同步编辑态
-      pushModeToTab();
-      applyBookmarkUI();
-    }
-    tabNew.addEventListener('click', () => invokeOr('新建标签页', 'tab_new', {}));
-
-    /* ---- 书签栏（M7） ---- */
-    const bookmarkBar = document.getElementById('bookmark-bar');
-    const btnBookmarkBar = document.getElementById('btn-bookmark-bar');
-    function applyBookmarkBarUI() {
-      const on = bookmarkBar.dataset.open === '1';
-      btnBookmarkBar.classList.toggle('is-active', on);
-    }
-    async function renderBookmarkBar() {
-      let rows = [];
-      try {
-        const r = await window.vaFetch('GET', API + '/api/bookmarks');
-        if (r && r.ok && r.json) rows = r.json.bookmarks || [];
-      } catch (e) {}
-      if (!bookmarkBar.dataset.open) return;
-      if (!rows.length) {
-        bookmarkBar.innerHTML = '<span class="bookmark-empty">' +
-          '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7">' +
-          '<path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>暂无收藏 · 按 ⌘⇧B 隐藏</span>';
-        return;
-      }
-      bookmarkBar.innerHTML = '';
-      rows.forEach((b) => {
-        const label = b.title || hostOf(b.url);
-        const el = document.createElement('div');
-        el.className = 'bookmark-item';
-        el.dataset.url = b.url;
-        el.title = label + '\n' + b.url;   // 省略号之外保留完整信息
-        el.appendChild(siteTile(b.url || ''));
-        const text = document.createElement('span');
-        text.className = 'bm-text';
-        text.textContent = label;
-        el.appendChild(text);
-        el.addEventListener('click', () => navigate(el.dataset.url));
-        bookmarkBar.appendChild(el);
-      });
-    }
-    btnBookmarkBar.addEventListener('click', () => {
-      bookmarkBar.dataset.open = bookmarkBar.dataset.open === '1' ? '0' : '1';
-      applyBookmarkBarUI();
-      if (bookmarkBar.dataset.open === '1') renderBookmarkBar();
-      reportToolbarHeight();
-    });
-    try { bookmarkBar.dataset.open = localStorage.getItem('va.browser.bookmarkBar') === '1' ? '1' : '0'; } catch (e) {}
-    btnBookmarkBar.addEventListener('click', () => {
-      try { localStorage.setItem('va.browser.bookmarkBar', bookmarkBar.dataset.open); } catch (e) {}
-    });
-    applyBookmarkBarUI();
-    // 启动即恢复「书签栏展开」时要立即渲染内容，否则只有一条空色带
-    if (bookmarkBar.dataset.open === '1') renderBookmarkBar();
-
-    /* ---- 查找条（M7） ---- */
-    const findBar = document.getElementById('find-bar');
-    const findInput = document.getElementById('find-input');
-    const findCount = document.getElementById('find-count');
-    // 游标：findTotal 来自 annota://find-count（活动页匹配数）；findCursor 为当前第几个（1..total）。
-    // findTotal = -1 表示「等待本次查询结果」。
-    let findTotal = 0, findCursor = 0, findTimer = null;
-    function renderFindCount() {
-      if (!findInput.value) { findCount.textContent = ''; findCount.removeAttribute('data-state'); return; }
-      if (findTotal < 0) { findCount.textContent = '…'; findCount.removeAttribute('data-state'); return; }
-      if (findTotal === 0) { findCount.textContent = '0/0'; findCount.dataset.state = 'none'; return; }
-      findCount.textContent = findCursor + '/' + findTotal;
-      findCount.removeAttribute('data-state');
-    }
-    function onFindCount(p) {
-      if (!p || typeof p.count !== 'number') return;
-      // 过期结果（用户已继续输入）忽略；关闭查找条时 text 为空也不处理
-      if (String(p.text || '') !== findInput.value) return;
-      findTotal = Math.max(0, p.count | 0);
-      if (findTotal === 0) findCursor = 0;
-      else if (findCursor < 1 || findCursor > findTotal) findCursor = 1;
-      renderFindCount();
-    }
-    function runFind(forward, text) {
-      const q = text != null ? text : findInput.value;
-      try {
-        Promise.resolve(invoke('find_in_page', { text: q, forward: forward })).catch((e) => {
-          console.warn('[annota] 查找失败', e);
+        on('update-available', (ev) => onUpdateAvailable(ev.payload));
+        on('tabs-changed', (ev) => renderTabs((ev.payload && ev.payload.tabs) || []));
+        on('tab-updated', (ev) => {
+          const p = ev.payload || {};
+          if (!p.id) return;
+          if (p.url) tabUrlCache[p.id] = p.url;
+          if (p.active) setOmnibox(tabUrlCache[p.id]);
+          document.getElementById('btn-reload').classList.toggle('is-active', !!p.loading);
+          applyBookmarkUI();
         });
-      } catch (e) { console.warn('[annota] 查找失败', e); }
-    }
-    function findStep(forward) {
-      if (!findInput.value) return;
-      if (findTotal > 0) {
-        // 到头后循环（与 window.find 的 wrapAround 行为一致，计数才能和页面里的高亮对上）
-        findCursor = forward ? (findCursor % findTotal) + 1 : (findCursor <= 1 ? findTotal : findCursor - 1);
-        renderFindCount();
-      }
-      runFind(forward);
-    }
-    function openFindBar() {
-      findBar.dataset.open = '1';
-      findInput.focus();
-      findInput.select();
-      if (findInput.value) { findTotal = -1; findCursor = 1; renderFindCount(); runFind(true); }   // 保留上次查询，重新统计
-    }
-    function closeFindBar() {
-      findBar.dataset.open = '0';
-      clearTimeout(findTimer);
-      findTotal = 0; findCursor = 0;
-      renderFindCount();
-      runFind(true, '');   // 空文本：清除页面高亮（其回传计数 text 为空，与输入框不等，被 onFindCount 忽略）
-    }
-    document.getElementById('btn-find').addEventListener('click', () => {
-      if (findBar.dataset.open === '1') closeFindBar(); else openFindBar();
-    });
-    document.getElementById('find-close').addEventListener('click', closeFindBar);
-    document.getElementById('find-next').addEventListener('click', () => findStep(true));
-    document.getElementById('find-prev').addEventListener('click', () => findStep(false));
-    // 输入变化：游标重置为 1，并防抖重新查找以刷新总数
-    findInput.addEventListener('input', () => {
-      clearTimeout(findTimer);
-      findCursor = 1;
-      findTotal = findInput.value ? -1 : 0;
-      renderFindCount();
-      findTimer = setTimeout(() => runFind(true), 160);
-    });
-    findInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        clearTimeout(findTimer);
-        if (findTotal < 0) { runFind(!e.shiftKey); return; }   // 结果未到时直接查找
-        findStep(!e.shiftKey);
-      } else if (e.key === 'Escape') {
-        closeFindBar();
-      }
-    });
+        // 下载角标按 URL 计数：开始加、结束减，全部结束才熄。避免单一 bool 在
+        // 多并发下载时被 finished 提前熄掉，也避免漏掉 finished 后永久点亮。
+        const dlActive = new Set();
+        const syncDlDot = () => { dlDot.style.display = dlActive.size ? 'block' : 'none'; };
+        on('download-started', (ev) => {
+          const u = (ev.payload && ev.payload.url) || ('#' + Date.now());
+          dlActive.add(u); syncDlDot();
+        });
+        on('download-finished', (ev) => {
+          const u = ev.payload && ev.payload.url;
+          if (u) dlActive.delete(u); else dlActive.clear();
+          syncDlDot();
+        });
+        // 内容 webview 内切换编辑态（如 Cmd/Ctrl+E）→ 同步工具栏按钮
+        on('shell-mode-changed', (ev) => {
+          const m = ev.payload && ev.payload.mode === 'edit' ? 'edit' : 'view';
+          if (m !== shellMode) { shellMode = m; applyEditUI(); }
+        });
+        // P1-a#5：活动页查找匹配总数（payload {count, text}）
+        on('find-count', (ev) => onFindCount(ev.payload));
 
-    /* 缩放已随菜单搬进 overlay.html；工具栏只保留 ⌘+ / ⌘− / ⌘0 快捷键。 */
-    let zoomFactor = 1.0;
-    try { zoomFactor = parseFloat(localStorage.getItem('va.browser.zoom')) || 1.0; } catch (e) {}
-    function zoomBy(delta) {
-      zoomFactor = Math.min(5.0, Math.max(0.25, +(zoomFactor + delta).toFixed(2)));
-      invoke('set_zoom', { factor: zoomFactor }).catch(() => {});
-      try { localStorage.setItem('va.browser.zoom', String(zoomFactor)); } catch (e) {}
-    }
-    // 启动时把记住的缩放同步给 Rust 全局（Rust 默认 1.0；set_zoom 先记全局再找活动页，无活动页也会生效）。
-    // 只调 set_zoom，不在本地应用 body.zoom，避免与 Rust 重放冲突。
-    if (zoomFactor !== 1.0) { try { invoke('set_zoom', { factor: zoomFactor }).catch(() => {}); } catch (e) {} }
+        // 初始渲染：会话恢复等 tabs-changed 可能早于本页订阅而错过（表现=启动标签条空白）。
+        // 无条件主动拉一次快照兜底（含事件桥可用时）。
+        if (listen) {
+          setTimeout(() => {
+            Promise.resolve(invoke('tabs_snapshot'))
+              .then((r) => { if (r && r.tabs && r.tabs.length) renderTabs(r.tabs); })
+              .catch(() => {});
+          }, 150);
+        }
 
-    /* ---- omnibox 智能搜索（M6c） ---- */
-    const suggestions = document.getElementById('omnibox-suggestions');
-    let suggActive = -1;
-    let suggItems = [];
-    async function fetchSuggestions(q) {
-      try {
-        const r = await window.vaFetch('GET', API + '/api/omnibox?q=' + encodeURIComponent(q));
-        if (r && r.ok && r.json) return r.json.result || {};
-      } catch (e) {}
-      return {};
-    }
-    function renderSuggestions(result, q) {
-      const history = result.history || [];
-      const bookmarks = result.bookmarks || [];
-      suggItems = [];
-      suggActive = -1;
-      if (!history.length && !bookmarks.length && !q) {
-        suggestions.dataset.open = '0';
-        return;
+        // 无事件桥时的兜底：轮询 Rust 拿 tab 快照（tabs_snapshot 走 invoke，不依赖事件）
+        if (!listen) {
+          const poll = async () => {
+            try {
+              const r = await invoke('tabs_snapshot');
+              if (r && r.tabs) renderTabs(r.tabs);
+            } catch (e) {}
+          };
+          setTimeout(poll, 500);
+          setInterval(poll, 1500);
+        }
+      })();
+
+      /* ---- 标签页 ---- */
+      const tabsScroll = document.getElementById('tabs-scroll');
+      const tabNew = document.getElementById('tab-new');
+      const tabUrlCache = {};
+      let tabsState = [];
+      function hostOf(u) { try { return new URL(u).host.replace(/^www\./, '') || u; } catch (e) { return u || ''; } }
+      function setOmnibox(u) { if (u && document.activeElement !== input) input.value = u; }
+
+      /* 站点色块：无 favicon 时的 fallback。取域名 hash → 稳定色相，辨识度比统一图标高。
+         不拉跨域图片，避免加载失败与性能开销。 */
+      // 色相表不含紫/靛/品红区段（设计规范禁忌色）；饱和度由 CSS 统一压低，见 .bm-fav。
+      const SITE_HUES = [8, 26, 42, 96, 138, 162, 186, 204, 222, 350];
+      function siteTile(url) {
+        const host = hostOf(url) || '';
+        const key = host.split('.')[0] || '?';
+        let h = 0;
+        for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+        const el = document.createElement('span');
+        el.className = 'bm-fav';
+        el.setAttribute('aria-hidden', 'true');
+        el.style.setProperty('--h', String(SITE_HUES[h % SITE_HUES.length]));
+        el.textContent = key.slice(0, 1) || '·';
+        return el;
       }
-      let html = '';
-      if (bookmarks.length) {
-        html += '<div class="os-sep"></div>';
-        bookmarks.forEach((b) => {
-          html += '<div class="os-item" data-url="' + esc(b.url) + '">' +
-            '<svg class="os-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>' +
-            '<span class="os-title">' + esc(b.title || hostOf(b.url)) + '</span>' +
-            '<span class="os-url">' + esc(b.url) + '</span></div>';
-          suggItems.push({ url: b.url });
+
+      function renderTabs(tabs) {
+        tabsState = tabs || [];
+        Array.from(tabsScroll.querySelectorAll('.tab')).forEach((n) => n.remove());
+        let activeUrl = '';
+        tabsState.forEach((t) => {
+          if (t.url) tabUrlCache[t.id] = t.url;
+          const label = t.title || hostOf(t.url) || __i18n.t('new_tab_page');
+          const el = document.createElement('div');
+          el.className = 'tab';
+          el.dataset.active = t.active ? '1' : '0';
+          el.setAttribute('role', 'tab');
+          el.setAttribute('aria-selected', t.active ? 'true' : 'false');
+          el.title = t.url && t.url !== label ? label + '\n' + t.url : label;   // 标题截断后悬停可看全文 + 地址
+          const fav = siteTile(t.url || '');
+          fav.className = 'tab-fav';
+          const title = document.createElement('span');
+          title.className = 'tab-title';
+          title.textContent = label;
+          const close = document.createElement('button');
+          close.className = 'tab-close';
+          close.setAttribute('aria-label', __i18n.t('close_tab'));
+          close.textContent = '×';
+          close.addEventListener('click', (e) => { e.stopPropagation(); invokeOr(__i18n.t('close_tab'), 'tab_close', { id: t.id }); });
+          el.append(fav, title, close);
+          el.addEventListener('click', () => invokeOr(__i18n.t('switch_tab'), 'tab_activate', { id: t.id }));
+          tabsScroll.appendChild(el);
+          if (t.active) activeUrl = t.url || '';
+        });
+        if (activeUrl) setOmnibox(activeUrl);
+        tabNew.style.display = tabsState.length >= 12 ? 'none' : '';
+        // 新激活/新开的 tab 同步编辑态
+        pushModeToTab();
+        applyBookmarkUI();
+      }
+      tabNew.addEventListener('click', () => invokeOr(__i18n.t('new_tab'), 'tab_new', {}));
+
+      /* ---- 书签栏（M7） ---- */
+      const bookmarkBar = document.getElementById('bookmark-bar');
+      const btnBookmarkBar = document.getElementById('btn-bookmark-bar');
+      function applyBookmarkBarUI() {
+        const on = bookmarkBar.dataset.open === '1';
+        btnBookmarkBar.classList.toggle('is-active', on);
+      }
+      async function renderBookmarkBar() {
+        let rows = [];
+        try {
+          const r = await window.vaFetch('GET', API + '/api/bookmarks');
+          if (r && r.ok && r.json) rows = r.json.bookmarks || [];
+        } catch (e) {}
+        if (!bookmarkBar.dataset.open) return;
+        if (!rows.length) {
+          bookmarkBar.innerHTML = '<span class="bookmark-empty">' +
+            '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7">' +
+            '<path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>' + __i18n.t('no_bookmarks') + '</span>';
+          return;
+        }
+        bookmarkBar.innerHTML = '';
+        rows.forEach((b) => {
+          const label = b.title || hostOf(b.url);
+          const el = document.createElement('div');
+          el.className = 'bookmark-item';
+          el.dataset.url = b.url;
+          el.title = label + '\n' + b.url;   // 省略号之外保留完整信息
+          el.appendChild(siteTile(b.url || ''));
+          const text = document.createElement('span');
+          text.className = 'bm-text';
+          text.textContent = label;
+          el.appendChild(text);
+          el.addEventListener('click', () => navigate(el.dataset.url));
+          bookmarkBar.appendChild(el);
         });
       }
-      if (history.length) {
-        html += '<div class="os-sep"></div>';
-        history.forEach((h) => {
-          html += '<div class="os-item" data-url="' + esc(h.url) + '">' +
-            '<svg class="os-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>' +
-            '<span class="os-title">' + esc(h.title || hostOf(h.url)) + '</span>' +
-            '<span class="os-url">' + esc(h.url) + '</span></div>';
-          suggItems.push({ url: h.url });
-        });
-      }
-      if (q) {
-        html += '<div class="os-sep"></div>';
-        html += '<div class="os-search" data-search="' + esc(q) + '">搜索「' + esc(q) + '」</div>';
-        suggItems.push({ search: q });
-      }
-      suggestions.innerHTML = html;
-      suggestions.dataset.open = '1';
-      // 以 DOM 实际顺序重建 suggItems，保证键盘高亮索引与条目一一对应
-      // （原来按构建顺序 push，只因「书签→历史→搜索」恰好与 DOM 顺序一致才没出错）
-      suggItems = Array.from(suggestions.querySelectorAll('.os-item,.os-search')).map((el) =>
-        el.classList.contains('os-search') ? { search: el.dataset.search } : { url: el.dataset.url });
-      suggestions.querySelectorAll('.os-item').forEach((el) => {
-        el.addEventListener('click', () => { navigate(el.dataset.url); suggestions.dataset.open = '0'; });
-      });
-      suggestions.querySelectorAll('.os-search').forEach((el) => {
-        el.addEventListener('click', () => { navigate(el.dataset.search); suggestions.dataset.open = '0'; });
-      });
-    }
-    let suggTimer = null;
-    input.addEventListener('input', () => {
-      clearTimeout(suggTimer);
-      const q = input.value.trim();
-      if (!q) { suggestions.dataset.open = '0'; return; }
-      suggTimer = setTimeout(async () => {
-        const result = await fetchSuggestions(q);
-        renderSuggestions(result, q);
-      }, 150);
-    });
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowDown' && suggestions.dataset.open === '1') {
-        e.preventDefault();
-        suggActive = Math.min(suggItems.length - 1, suggActive + 1);
-        suggestions.querySelectorAll('.os-item,.os-search').forEach((el, i) => el.dataset.active = i === suggActive ? '1' : '0');
-      } else if (e.key === 'ArrowUp' && suggestions.dataset.open === '1') {
-        e.preventDefault();
-        suggActive = Math.max(0, suggActive - 1);
-        suggestions.querySelectorAll('.os-item,.os-search').forEach((el, i) => el.dataset.active = i === suggActive ? '1' : '0');
-      } else if (e.key === 'Enter' && suggestions.dataset.open === '1' && suggActive >= 0 && suggItems[suggActive]) {
-        // 高亮了候选却回车：走选中项，而不是落到 form submit 去导航原始输入
-        e.preventDefault();
-        const it = suggItems[suggActive];
-        suggestions.dataset.open = '0';
-        navigate(it.url || it.search);
-      } else if (e.key === 'Escape') {
-        suggestions.dataset.open = '0';
-      }
-    });
-    document.addEventListener('click', (e) => {
-      if (!suggestions.contains(e.target) && e.target !== input) suggestions.dataset.open = '0';
-    });
-
-    /* ---- 工具栏高度上报（M7） ---- */
-    function reportToolbarHeight() {
-      // 状态横幅（离线重试 / 内存降级）可见时计入高度，否则会被裁掉
-      const banners = Array.from(document.querySelectorAll('.status-banner')).filter((b) => !b.hidden);
-      const h = document.querySelector('.tabstrip').offsetHeight +
-        (bookmarkBar.dataset.open === '1' ? bookmarkBar.offsetHeight : 0) +
-        document.querySelector('.toolbar').offsetHeight +
-        banners.reduce((s, b) => s + b.offsetHeight, 0);
-      invoke('set_toolbar_height', { height: h }).catch(() => {});
-    }
-    // resize 每个 pointer-move tick 都会来一次：4 次强制布局读 + 一次 IPC。
-    // 用 rAF 合帧，每帧最多量一次（拖拽结束前最后一次变化会被下一帧补上）。
-    let toolbarHeightRaf = 0;
-    function reportToolbarHeightSoon() {
-      if (toolbarHeightRaf) return;
-      toolbarHeightRaf = requestAnimationFrame(() => {
-        toolbarHeightRaf = 0;
+      btnBookmarkBar.addEventListener('click', () => {
+        bookmarkBar.dataset.open = bookmarkBar.dataset.open === '1' ? '0' : '1';
+        applyBookmarkBarUI();
+        if (bookmarkBar.dataset.open === '1') renderBookmarkBar();
         reportToolbarHeight();
       });
-    }
-    window.addEventListener('resize', reportToolbarHeightSoon);
-    setTimeout(reportToolbarHeight, 100);
-    setTimeout(reportToolbarHeight, 500);
+      try { bookmarkBar.dataset.open = localStorage.getItem('va.browser.bookmarkBar') === '1' ? '1' : '0'; } catch (e) {}
+      btnBookmarkBar.addEventListener('click', () => {
+        try { localStorage.setItem('va.browser.bookmarkBar', bookmarkBar.dataset.open); } catch (e) {}
+      });
+      applyBookmarkBarUI();
+      // 启动即恢复「书签栏展开」时要立即渲染内容，否则只有一条空色带
+      if (bookmarkBar.dataset.open === '1') renderBookmarkBar();
 
-    /* ---- 快捷键 ---- */
-    document.addEventListener('keydown', (event) => {
-      if (!(event.metaKey || event.ctrlKey)) return;
-      const k = event.key.toLowerCase();
-      if (k === 't') { event.preventDefault(); invokeOr('新建标签页', 'tab_new', {}); }
-      else if (k === 'w') { event.preventDefault(); const a = tabsState.find((t) => t.active); if (a) invokeOr('关闭标签页', 'tab_close', { id: a.id }); }
-      else if (k === 'l') { event.preventDefault(); input.focus(); input.select(); }
-      else if (k === 'e') { event.preventDefault(); btnEdit.click(); }
-      else if (k === 'f') { event.preventDefault(); if (findBar.dataset.open === '1') closeFindBar(); else openFindBar(); }
-      else if (k === 'b' && event.shiftKey) { event.preventDefault(); btnBookmarkBar.click(); }
-      else if (k === '0') { event.preventDefault(); zoomFactor = 1.0; invoke('set_zoom', { factor: 1.0 }).catch(() => {}); try { localStorage.setItem('va.browser.zoom', '1'); } catch (e) {} }
-      else if (k === '+' || k === '=') { event.preventDefault(); zoomBy(0.1); }
-      else if (k === '-') { event.preventDefault(); zoomBy(-0.1); }
-    });
-
-    /* ---- 本地服务状态横幅（P1-b#9）+ 内存库降级横幅（P1-b#11） ---- */
-    const svcBanner = document.getElementById('svc-banner');
-    const svcText = document.getElementById('svc-text');
-    const svcRetry = document.getElementById('svc-retry');
-    const memBanner = document.getElementById('mem-banner');
-    let memDismissed = false;   // 本会话内关闭后不再出现
-    function setBannerVisible(el, on) {
-      if (el.hidden === !on) return;
-      el.hidden = !on;
-      reportToolbarHeight();
-    }
-    function showServiceError(reason) {
-      svcText.textContent = '本地同步服务未能启动：' + reason;
-      svcText.title = reason;
-      setBannerVisible(svcBanner, true);
-    }
-    function hideServiceError() { setBannerVisible(svcBanner, false); }
-    async function fetchDiag() {
-      try { return await invoke('diag_status'); } catch (e) { return null; }
-    }
-    // 健康检查：OFFLINE 时向 Rust 要失败原因，有原因则展示横幅 + 重试
-    async function checkHealth() {
-      let ok = false;
-      try {
-        const health = await window.vaFetch('GET', API + '/api/health');
-        ok = !!(health && health.ok);
-      } catch (e) { ok = false; }
-      if (ok) {
-        engine.dataset.state = 'ready'; engineLabel.textContent = 'LOCAL';
-        engine.removeAttribute('title');
-        hideServiceError();
-        return true;
+      /* ---- 查找条（M7） ---- */
+      const findBar = document.getElementById('find-bar');
+      const findInput = document.getElementById('find-input');
+      const findCount = document.getElementById('find-count');
+      // 游标：findTotal 来自 annota://find-count（活动页匹配数）；findCursor 为当前第几个（1..total）。
+      // findTotal = -1 表示「等待本次查询结果」。
+      let findTotal = 0, findCursor = 0, findTimer = null;
+      function renderFindCount() {
+        if (!findInput.value) { findCount.textContent = ''; findCount.removeAttribute('data-state'); return; }
+        if (findTotal < 0) { findCount.textContent = '…'; findCount.removeAttribute('data-state'); return; }
+        if (findTotal === 0) { findCount.textContent = '0/0'; findCount.dataset.state = 'none'; return; }
+        findCount.textContent = findCursor + '/' + findTotal;
+        findCount.removeAttribute('data-state');
       }
-      engine.dataset.state = 'error'; engineLabel.textContent = 'OFFLINE';
-      const d = await fetchDiag();
-      const reason = d && d.error ? reasonText(d.error) : '';
-      if (reason) showServiceError(reason); else hideServiceError();
-      engine.setAttribute('title', reason || '本地服务未就绪');
-      return false;
-    }
-    svcRetry.addEventListener('click', async () => {
-      svcRetry.disabled = true; svcRetry.textContent = '重试中…';
-      engine.dataset.state = 'busy'; engineLabel.textContent = 'STARTING';
-      try { await invoke('restart_server'); }
-      catch (e) { console.warn('[annota] 重试启动失败', e); toast('重试失败：' + reasonText(e), 'error'); }
-      await new Promise((r) => setTimeout(r, 1500));   // 给服务一点起床时间再复查
-      await checkHealth();
-      svcRetry.disabled = false; svcRetry.textContent = '重试';
-    });
-    document.getElementById('mem-close').addEventListener('click', () => {
-      memDismissed = true;
-      setBannerVisible(memBanner, false);
-    });
+      function onFindCount(p) {
+        if (!p || typeof p.count !== 'number') return;
+        // 过期结果（用户已继续输入）忽略；关闭查找条时 text 为空也不处理
+        if (String(p.text || '') !== findInput.value) return;
+        findTotal = Math.max(0, p.count | 0);
+        if (findTotal === 0) findCursor = 0;
+        else if (findCursor < 1 || findCursor > findTotal) findCursor = 1;
+        renderFindCount();
+      }
+      function runFind(forward, text) {
+        const q = text != null ? text : findInput.value;
+        try {
+          Promise.resolve(invoke('find_in_page', { text: q, forward: forward })).catch((e) => {
+            console.warn('[annota] 查找失败', e);
+          });
+        } catch (e) { console.warn('[annota] 查找失败', e); }
+      }
+      function findStep(forward) {
+        if (!findInput.value) return;
+        if (findTotal > 0) {
+          // 到头后循环（与 window.find 的 wrapAround 行为一致，计数才能和页面里的高亮对上）
+          findCursor = forward ? (findCursor % findTotal) + 1 : (findCursor <= 1 ? findTotal : findCursor - 1);
+          renderFindCount();
+        }
+        runFind(forward);
+      }
+      function openFindBar() {
+        findBar.dataset.open = '1';
+        findInput.focus();
+        findInput.select();
+        if (findInput.value) { findTotal = -1; findCursor = 1; renderFindCount(); runFind(true); }   // 保留上次查询，重新统计
+      }
+      function closeFindBar() {
+        findBar.dataset.open = '0';
+        clearTimeout(findTimer);
+        findTotal = 0; findCursor = 0;
+        renderFindCount();
+        runFind(true, '');   // 空文本：清除页面高亮（其回传计数 text 为空，与输入框不等，被 onFindCount 忽略）
+      }
+      document.getElementById('btn-find').addEventListener('click', () => {
+        if (findBar.dataset.open === '1') closeFindBar(); else openFindBar();
+      });
+      document.getElementById('find-close').addEventListener('click', closeFindBar);
+      document.getElementById('find-next').addEventListener('click', () => findStep(true));
+      document.getElementById('find-prev').addEventListener('click', () => findStep(false));
+      // 输入变化：游标重置为 1，并防抖重新查找以刷新总数
+      findInput.addEventListener('input', () => {
+        clearTimeout(findTimer);
+        findCursor = 1;
+        findTotal = findInput.value ? -1 : 0;
+        renderFindCount();
+        findTimer = setTimeout(() => runFind(true), 160);
+      });
+      findInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          clearTimeout(findTimer);
+          if (findTotal < 0) { runFind(!e.shiftKey); return; }   // 结果未到时直接查找
+          findStep(!e.shiftKey);
+        } else if (e.key === 'Escape') {
+          closeFindBar();
+        }
+      });
 
-    setTimeout(async () => {
-      const d0 = await fetchDiag();
-      if (d0 && d0.db_memory && !memDismissed) setBannerVisible(memBanner, true);
-      await checkHealth();
-    }, 450);
+      /* 缩放已随菜单搬进 overlay.html；工具栏只保留 ⌘+ / ⌘− / ⌘0 快捷键。 */
+      let zoomFactor = 1.0;
+      try { zoomFactor = parseFloat(localStorage.getItem('va.browser.zoom')) || 1.0; } catch (e) {}
+      function zoomBy(delta) {
+        zoomFactor = Math.min(5.0, Math.max(0.25, +(zoomFactor + delta).toFixed(2)));
+        invoke('set_zoom', { factor: zoomFactor }).catch(() => {});
+        try { localStorage.setItem('va.browser.zoom', String(zoomFactor)); } catch (e) {}
+      }
+      // 启动时把记住的缩放同步给 Rust 全局（Rust 默认 1.0；set_zoom 先记全局再找活动页，无活动页也会生效）。
+      // 只调 set_zoom，不在本地应用 body.zoom，避免与 Rust 重放冲突。
+      if (zoomFactor !== 1.0) { try { invoke('set_zoom', { factor: zoomFactor }).catch(() => {}); } catch (e) {} }
+
+      /* ---- omnibox 智能搜索（M6c） ---- */
+      const suggestions = document.getElementById('omnibox-suggestions');
+      let suggActive = -1;
+      let suggItems = [];
+      async function fetchSuggestions(q) {
+        try {
+          const r = await window.vaFetch('GET', API + '/api/omnibox?q=' + encodeURIComponent(q));
+          if (r && r.ok && r.json) return r.json.result || {};
+        } catch (e) {}
+        return {};
+      }
+      function renderSuggestions(result, q) {
+        const history = result.history || [];
+        const bookmarks = result.bookmarks || [];
+        suggItems = [];
+        suggActive = -1;
+        if (!history.length && !bookmarks.length && !q) {
+          suggestions.dataset.open = '0';
+          return;
+        }
+        let html = '';
+        if (bookmarks.length) {
+          html += '<div class="os-sep"></div>';
+          bookmarks.forEach((b) => {
+            html += '<div class="os-item" data-url="' + esc(b.url) + '">' +
+              '<svg class="os-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 21l-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>' +
+              '<span class="os-title">' + esc(b.title || hostOf(b.url)) + '</span>' +
+              '<span class="os-url">' + esc(b.url) + '</span></div>';
+            suggItems.push({ url: b.url });
+          });
+        }
+        if (history.length) {
+          html += '<div class="os-sep"></div>';
+          history.forEach((h) => {
+            html += '<div class="os-item" data-url="' + esc(h.url) + '">' +
+              '<svg class="os-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>' +
+              '<span class="os-title">' + esc(h.title || hostOf(h.url)) + '</span>' +
+              '<span class="os-url">' + esc(h.url) + '</span></div>';
+            suggItems.push({ url: h.url });
+          });
+        }
+        if (q) {
+          html += '<div class="os-sep"></div>';
+          html += '<div class="os-search" data-search="' + esc(q) + '">' + __i18n.t('search_query', { q: esc(q) }) + '</div>';
+          suggItems.push({ search: q });
+        }
+        suggestions.innerHTML = html;
+        suggestions.dataset.open = '1';
+        // 以 DOM 实际顺序重建 suggItems，保证键盘高亮索引与条目一一对应
+        // （原来按构建顺序 push，只因「书签→历史→搜索」恰好与 DOM 顺序一致才没出错）
+        suggItems = Array.from(suggestions.querySelectorAll('.os-item,.os-search')).map((el) =>
+          el.classList.contains('os-search') ? { search: el.dataset.search } : { url: el.dataset.url });
+        suggestions.querySelectorAll('.os-item').forEach((el) => {
+          el.addEventListener('click', () => { navigate(el.dataset.url); suggestions.dataset.open = '0'; });
+        });
+        suggestions.querySelectorAll('.os-search').forEach((el) => {
+          el.addEventListener('click', () => { navigate(el.dataset.search); suggestions.dataset.open = '0'; });
+        });
+      }
+      let suggTimer = null;
+      input.addEventListener('input', () => {
+        clearTimeout(suggTimer);
+        const q = input.value.trim();
+        if (!q) { suggestions.dataset.open = '0'; return; }
+        suggTimer = setTimeout(async () => {
+          const result = await fetchSuggestions(q);
+          renderSuggestions(result, q);
+        }, 150);
+      });
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowDown' && suggestions.dataset.open === '1') {
+          e.preventDefault();
+          suggActive = Math.min(suggItems.length - 1, suggActive + 1);
+          suggestions.querySelectorAll('.os-item,.os-search').forEach((el, i) => el.dataset.active = i === suggActive ? '1' : '0');
+        } else if (e.key === 'ArrowUp' && suggestions.dataset.open === '1') {
+          e.preventDefault();
+          suggActive = Math.max(0, suggActive - 1);
+          suggestions.querySelectorAll('.os-item,.os-search').forEach((el, i) => el.dataset.active = i === suggActive ? '1' : '0');
+        } else if (e.key === 'Enter' && suggestions.dataset.open === '1' && suggActive >= 0 && suggItems[suggActive]) {
+          // 高亮了候选却回车：走选中项，而不是落到 form submit 去导航原始输入
+          e.preventDefault();
+          const it = suggItems[suggActive];
+          suggestions.dataset.open = '0';
+          navigate(it.url || it.search);
+        } else if (e.key === 'Escape') {
+          suggestions.dataset.open = '0';
+        }
+      });
+      document.addEventListener('click', (e) => {
+        if (!suggestions.contains(e.target) && e.target !== input) suggestions.dataset.open = '0';
+      });
+
+      /* ---- 工具栏高度上报（M7） ---- */
+      function reportToolbarHeight() {
+        // 状态横幅（离线重试 / 内存降级）可见时计入高度，否则会被裁掉
+        const banners = Array.from(document.querySelectorAll('.status-banner')).filter((b) => !b.hidden);
+        const h = document.querySelector('.tabstrip').offsetHeight +
+          (bookmarkBar.dataset.open === '1' ? bookmarkBar.offsetHeight : 0) +
+          document.querySelector('.toolbar').offsetHeight +
+          banners.reduce((s, b) => s + b.offsetHeight, 0);
+        invoke('set_toolbar_height', { height: h }).catch(() => {});
+      }
+      // resize 每个 pointer-move tick 都会来一次：4 次强制布局读 + 一次 IPC。
+      // 用 rAF 合帧，每帧最多量一次（拖拽结束前最后一次变化会被下一帧补上）。
+      let toolbarHeightRaf = 0;
+      function reportToolbarHeightSoon() {
+        if (toolbarHeightRaf) return;
+        toolbarHeightRaf = requestAnimationFrame(() => {
+          toolbarHeightRaf = 0;
+          reportToolbarHeight();
+        });
+      }
+      window.addEventListener('resize', reportToolbarHeightSoon);
+      setTimeout(reportToolbarHeight, 100);
+      setTimeout(reportToolbarHeight, 500);
+
+      /* ---- 快捷键 ---- */
+      document.addEventListener('keydown', (event) => {
+        if (!(event.metaKey || event.ctrlKey)) return;
+        const k = event.key.toLowerCase();
+        if (k === 't') { event.preventDefault(); invokeOr(__i18n.t('new_tab'), 'tab_new', {}); }
+        else if (k === 'w') { event.preventDefault(); const a = tabsState.find((t) => t.active); if (a) invokeOr(__i18n.t('close_tab'), 'tab_close', { id: a.id }); }
+        else if (k === 'l') { event.preventDefault(); input.focus(); input.select(); }
+        else if (k === 'e') { event.preventDefault(); btnEdit.click(); }
+        else if (k === 'f') { event.preventDefault(); if (findBar.dataset.open === '1') closeFindBar(); else openFindBar(); }
+        else if (k === 'b' && event.shiftKey) { event.preventDefault(); btnBookmarkBar.click(); }
+        else if (k === '0') { event.preventDefault(); zoomFactor = 1.0; invoke('set_zoom', { factor: 1.0 }).catch(() => {}); try { localStorage.setItem('va.browser.zoom', '1'); } catch (e) {} }
+        else if (k === '+' || k === '=') { event.preventDefault(); zoomBy(0.1); }
+        else if (k === '-') { event.preventDefault(); zoomBy(-0.1); }
+      });
+
+      /* ---- 本地服务状态横幅（P1-b#9）+ 内存库降级横幅（P1-b#11） ---- */
+      const svcBanner = document.getElementById('svc-banner');
+      const svcText = document.getElementById('svc-text');
+      const svcRetry = document.getElementById('svc-retry');
+      const memBanner = document.getElementById('mem-banner');
+      let memDismissed = false;   // 本会话内关闭后不再出现
+      function setBannerVisible(el, on) {
+        if (el.hidden === !on) return;
+        el.hidden = !on;
+        reportToolbarHeight();
+      }
+      function showServiceError(reason) {
+        svcText.textContent = __i18n.t('svc_not_started') + reason;
+        svcText.title = reason;
+        setBannerVisible(svcBanner, true);
+      }
+      function hideServiceError() { setBannerVisible(svcBanner, false); }
+      async function fetchDiag() {
+        try { return await invoke('diag_status'); } catch (e) { return null; }
+      }
+      // 健康检查：OFFLINE 时向 Rust 要失败原因，有原因则展示横幅 + 重试
+      async function checkHealth() {
+        let ok = false;
+        try {
+          const health = await window.vaFetch('GET', API + '/api/health');
+          ok = !!(health && health.ok);
+        } catch (e) { ok = false; }
+        if (ok) {
+          engine.dataset.state = 'ready'; engineLabel.textContent = 'LOCAL';
+          engine.removeAttribute('title');
+          hideServiceError();
+          return true;
+        }
+        engine.dataset.state = 'error'; engineLabel.textContent = 'OFFLINE';
+        const d = await fetchDiag();
+        const reason = d && d.error ? reasonText(d.error) : '';
+        if (reason) showServiceError(reason); else hideServiceError();
+        engine.setAttribute('title', reason || __i18n.t('svc_not_ready'));
+        return false;
+      }
+      svcRetry.addEventListener('click', async () => {
+        svcRetry.disabled = true; svcRetry.textContent = __i18n.t('retrying');
+        engine.dataset.state = 'busy'; engineLabel.textContent = 'STARTING';
+        try { await invoke('restart_server'); }
+        catch (e) { console.warn('[annota] 重试启动失败', e); toast(__i18n.t('retry_failed') + reasonText(e), 'error'); }
+        await new Promise((r) => setTimeout(r, 1500));   // 给服务一点起床时间再复查
+        await checkHealth();
+        svcRetry.disabled = false; svcRetry.textContent = __i18n.t('retry');
+      });
+      document.getElementById('mem-close').addEventListener('click', () => {
+        memDismissed = true;
+        setBannerVisible(memBanner, false);
+      });
+
+      setTimeout(async () => {
+        const d0 = await fetchDiag();
+        if (d0 && d0.db_memory && !memDismissed) setBannerVisible(memBanner, true);
+        await checkHealth();
+      }, 450);
+    });
   </script>
 </body>
 </html>

@@ -13,7 +13,7 @@ use dashmap::DashMap;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tauri::{AppHandle, Manager};
 use tokio::fs;
 use tokio::sync::Mutex;
@@ -41,7 +41,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    fn new(
+    pub fn new(
         store: PathBuf,
         root: PathBuf,
         notes_dir: PathBuf,
@@ -133,30 +133,13 @@ pub fn resolve_settings_path(app: &AppHandle) -> PathBuf {
         .join("settings.json")
 }
 
-pub async fn run_server(
-    store: PathBuf,
-    root: PathBuf,
-    notes_dir: PathBuf,
-    settings: PathBuf,
-    db: Db,
-) {
-    let exports = store
-        .parent()
-        .map(|p| p.join("exports"))
-        .unwrap_or_else(|| store.join("exports"));
-    // P2-D2：备份线程所需的克隆（state 会消费 store/db）
-    let backup_store_dir = store.clone();
-    let backup_db = db.clone();
-    let state = AppState::new(store, root, notes_dir, settings, exports, db);
-
+pub fn build_app(state: AppState) -> Router {
     let mut app = Router::new()
         .route("/", get(root_handler))
         .route("/app/annota/public/tokens.css", get(tokens_css))
         .route("/console", get(console_page))
-        // 工作区页面态依赖的模块脚本（release 无 ServeDir，必须内嵌路由）
         .route("/src/identity.js", get(identity_js))
         .route("/src/group.js", get(group_js))
-        // 组页与 CloudBase 依赖（工作区 index.html 与 group.html 引用；release 无 ServeDir）
         .route("/group.html", get(group_html))
         .route("/cb-config.js", get(cb_config_js))
         .route("/vendor/cloudbase.full.js", get(cloudbase_sdk_js))
@@ -176,24 +159,42 @@ pub async fn run_server(
             "/api/anno/:media_id",
             get(get_anno).put(put_anno).post(put_anno),
         )
-        // P2-S3：从 .bak 恢复被损坏的标注包
         .route("/api/anno/:media_id/restore", post(restore_anno))
-        // P2-D1：整包导入（换机恢复 / 合并外部导出）
         .route("/api/import/packs", post(import_packs))
-        // P2-S3：损坏包清单（数据工作台/console 展示用）
         .route("/api/diag", get(diag_http))
-        // P2-S2：Host/Origin 守卫（防 DNS rebinding 与跨站写入）
-        .layer(middleware::from_fn(guard_host_origin));
+        .layer(middleware::from_fn(guard_host_origin))
+        .layer(middleware::from_fn(csp_header_middleware))
+        .layer(middleware::from_fn(rate_limit_middleware));
     if cfg!(debug_assertions) {
         app = app.fallback_service(ServeDir::new(state.root.clone()));
     }
-    let app = app.with_state(state);
+    app.with_state(state)
+}
+
+pub async fn run_server(
+    store: PathBuf,
+    root: PathBuf,
+    notes_dir: PathBuf,
+    settings: PathBuf,
+    db: Db,
+) {
+    let exports = store
+        .parent()
+        .map(|p| p.join("exports"))
+        .unwrap_or_else(|| store.join("exports"));
+    let backup_store_dir = store.clone();
+    let backup_db = db.clone();
+    let state = AppState::new(store, root, notes_dir, settings, exports, db);
+    let app = build_app(state);
 
     let addr = format!("{}:{}", HOST, PORT);
     let listener = match tokio::net::TcpListener::bind(&addr).await {
         Ok(l) => l,
         Err(e) => {
-            let msg = format!("本地服务端口 {addr} 绑定失败：{e}（可能已被占用）");
+            let msg = crate::i18n::tf(
+                "err.port_bind_failed",
+                &[("addr", &addr), ("e", &e.to_string())],
+            );
             crate::alog!("ERROR", "{msg}");
             set_server_error(&msg);
             return;
@@ -209,7 +210,7 @@ pub async fn run_server(
         tauri::async_runtime::spawn(async move { backup_daily(&store, &db).await; });
     }
     if let Err(e) = axum::serve(listener, app).await {
-        set_server_error(&format!("本地服务异常退出：{e}"));
+        set_server_error(&crate::i18n::tf("err.server_crashed", &[("e", &e.to_string())]));
         crate::alog!("ERROR", "sync server error: {e}");
     }
     set_server_running(false);
@@ -337,6 +338,69 @@ async fn guard_host_origin(req: Request, next: Next) -> Response {
     next.run(req).await
 }
 
+// ---------- P2-S4：本地 REST 速率限制 ----------
+// 固定窗口计数器：每 method 一个 DashMap 条目。
+// 写操作（POST/PUT/DELETE）限制更严——防恶意页面用 no-cors 风暴拖垮服务。
+fn rate_limits() -> &'static DashMap<String, (i64, u32)> {
+    static LIMITS: OnceLock<DashMap<String, (i64, u32)>> = OnceLock::new();
+    LIMITS.get_or_init(DashMap::new)
+}
+
+const RATE_WINDOW_SECS: i64 = 1;
+const RATE_LIMIT_READ: u32 = 60;   // GET：每秒 60 次
+const RATE_LIMIT_WRITE: u32 = 15;  // 写：每秒 15 次
+
+fn rate_limit_check(key: &str, limit: u32) -> bool {
+    let now = chrono::Utc::now().timestamp();
+    let mut entry = rate_limits()
+        .entry(key.to_string())
+        .or_insert((now, 0));
+    let (window_start, count) = entry.value_mut();
+    if now - *window_start >= RATE_WINDOW_SECS {
+        *window_start = now;
+        *count = 1;
+        true
+    } else {
+        *count += 1;
+        *count <= limit
+    }
+}
+
+async fn rate_limit_middleware(req: Request, next: Next) -> Response {
+    let method = req.method().clone();
+    let is_write = !matches!(method, axum::http::Method::GET | axum::http::Method::HEAD);
+    let limit = if is_write { RATE_LIMIT_WRITE } else { RATE_LIMIT_READ };
+    // 按 method 分桶（回环地址固定，无需按 IP）
+    let key = format!("rl:{method}");
+    if !rate_limit_check(&key, limit) {
+        return json_error(StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded");
+    }
+    next.run(req).await
+}
+
+// ---------- P2-S4：CSP 响应头 ----------
+// 本地服务页（工作区/console/group）有内联脚本，CSP 需允许 'unsafe-inline'。
+// 仅对 HTML 响应加 CSP；JSON API 不需要。
+const HTML_CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'";
+
+async fn csp_header_middleware(req: Request, next: Next) -> Response {
+    let mut resp = next.run(req).await;
+    let ct = resp
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    if ct.starts_with("text/html") {
+        if let Ok(v) = HTML_CSP.parse() {
+            resp.headers_mut().insert(
+                axum::http::header::CONTENT_SECURITY_POLICY,
+                v,
+            );
+        }
+    }
+    resp
+}
+
 fn json_ok(value: Value) -> Response {
     (StatusCode::OK, Json(value)).into_response()
 }
@@ -373,7 +437,7 @@ async fn get_bookmarks(State(state): State<AppState>) -> Response {
 async fn post_bookmark(State(state): State<AppState>, Json(input): Json<BookmarkInput>) -> Response {
     let url = input.url.trim().to_string();
     if url.is_empty() {
-        return json_error(StatusCode::BAD_REQUEST, "url 为空");
+        return json_error(StatusCode::BAD_REQUEST, &crate::i18n::t("err.bookmark_url_empty"));
     }
     let db = state.db.clone();
     let title = input.title;
@@ -390,7 +454,7 @@ async fn delete_bookmark(
 ) -> Response {
     let url = q.get("url").map(|s| s.trim().to_string()).unwrap_or_default();
     if url.is_empty() {
-        return json_error(StatusCode::BAD_REQUEST, "缺少 url");
+        return json_error(StatusCode::BAD_REQUEST, &crate::i18n::t("err.bookmark_missing_url"));
     }
     let db = state.db.clone();
     match blocking(move || db.remove_bookmark(&url)).await {
@@ -476,19 +540,22 @@ fn normalized_shortcut(value: Option<&Value>, default: &str) -> Result<String, S
         return Ok(String::new());
     }
     if raw.len() > 32 {
-        return Err("快捷键长度不能超过 32 个字符".to_string());
+        return Err(crate::i18n::t("err.shortcut_too_long"));
     }
     let parts: Vec<&str> = raw.split('+').collect();
     let key = parts.last().copied().unwrap_or("");
     let valid_key = key.len() == 1 && key.chars().all(|c| c.is_ascii_alphanumeric())
         || (key.starts_with('f') && key[1..].parse::<u8>().map(|n| (1..=12).contains(&n)).unwrap_or(false));
     if !valid_key {
-        return Err(format!("不支持的快捷键：{raw}"));
+        return Err(crate::i18n::tf("err.shortcut_unsupported", &[("raw", raw.as_str())]));
     }
     let mut seen = std::collections::HashSet::new();
     for modifier in parts.iter().take(parts.len().saturating_sub(1)) {
         if !matches!(*modifier, "alt" | "ctrl" | "meta" | "shift") || !seen.insert(*modifier) {
-            return Err(format!("快捷键修饰键无效：{raw}"));
+            return Err(crate::i18n::tf(
+                "err.shortcut_modifier_invalid",
+                &[("raw", raw.as_str())],
+            ));
         }
     }
     Ok(raw)
@@ -499,9 +566,10 @@ fn normalize_settings(input: &Value) -> Result<Value, String> {
     let sync = input.get("sync").unwrap_or(&defaults["sync"]);
     let address = sync.get("address").and_then(Value::as_str).unwrap_or("").trim();
     if !address.is_empty() {
-        let parsed = url::Url::parse(address).map_err(|_| "同步地址必须是 http(s) URL".to_string())?;
+        let parsed =
+            url::Url::parse(address).map_err(|_| crate::i18n::t("err.sync_addr_invalid"))?;
         if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
-            return Err("同步地址必须是 http(s) URL".to_string());
+            return Err(crate::i18n::t("err.sync_addr_invalid"));
         }
     }
     let shortcuts = input.get("shortcuts").unwrap_or(&defaults["shortcuts"]);
@@ -512,43 +580,46 @@ fn normalize_settings(input: &Value) -> Result<Value, String> {
         .trim();
     if !dict_template.is_empty() {
         if !dict_template.contains("{word}") {
-            return Err("词典链接模板必须包含 {word}".to_string());
+            return Err(crate::i18n::t("err.dict_template_missing_word"));
         }
         let sample = dict_template.replace("{word}", "annota");
-        let parsed = url::Url::parse(&sample).map_err(|_| "词典模板必须是有效的 http(s) URL".to_string())?;
+        let parsed = url::Url::parse(&sample)
+            .map_err(|_| crate::i18n::t("err.dict_template_invalid"))?;
         if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
-            return Err("词典模板必须是有效的 http(s) URL".to_string());
+            return Err(crate::i18n::t("err.dict_template_invalid"));
         }
     }
     let ai = input.get("ai").unwrap_or(&defaults["ai"]);
     let ai_base = ai.get("baseUrl").and_then(Value::as_str).unwrap_or("").trim();
     if !ai_base.is_empty() {
-        let parsed = url::Url::parse(ai_base).map_err(|_| "AI Base URL 必须是 http(s) URL".to_string())?;
+        let parsed = url::Url::parse(ai_base)
+            .map_err(|_| crate::i18n::t("err.ai_base_invalid"))?;
         if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
-            return Err("AI Base URL 必须是 http(s) URL".to_string());
+            return Err(crate::i18n::t("err.ai_base_invalid"));
         }
     }
     let ai_model = ai.get("model").and_then(Value::as_str).unwrap_or("").trim();
     if ai_model.len() > 160 {
-        return Err("AI 模型名过长".to_string());
+        return Err(crate::i18n::t("err.ai_model_too_long"));
     }
     // P2-S1：用户信任的站点 origin 列表（高危命令的放行名单）
     let mut trusted: Vec<String> = Vec::new();
     if let Some(arr) = input.get("trustedOrigins").and_then(Value::as_array) {
         if arr.len() > 50 {
-            return Err("信任列表最多 50 个站点".to_string());
+            return Err(crate::i18n::t("err.trust_list_full"));
         }
         for item in arr {
             let raw = item.as_str().unwrap_or("").trim();
             if raw.is_empty() {
                 continue;
             }
-            let parsed = url::Url::parse(raw).map_err(|_| format!("信任站点必须是合法 origin：{raw}"))?;
+            let parsed = url::Url::parse(raw)
+                .map_err(|_| crate::i18n::tf("err.trust_origin_invalid", &[("raw", raw)]))?;
             if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
-                return Err(format!("信任站点必须是 http(s) origin：{raw}"));
+                return Err(crate::i18n::tf("err.trust_origin_not_http", &[("raw", raw)]));
             }
             if !parsed.path().is_empty() && parsed.path() != "/" {
-                return Err(format!("信任站点不能带路径（只存 origin）：{raw}"));
+                return Err(crate::i18n::tf("err.trust_origin_has_path", &[("raw", raw)]));
             }
             let origin = parsed.origin().ascii_serialization();
             if !trusted.contains(&origin) {
@@ -619,7 +690,10 @@ async fn put_settings(State(state): State<AppState>, body: Bytes) -> Response {
             crate::agent::keychain_set_llm_key(&key)
         };
         if let Err(e) = r {
-            return json_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("钥匙串写入失败：{e}"));
+            return json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &crate::i18n::tf("err.keychain_write_failed", &[("e", &e)]),
+            );
         }
     }
     let _guard = state.settings_lock.lock().await;
@@ -862,7 +936,7 @@ async fn export_card(State(state): State<AppState>, body: Bytes) -> Response {
     let deck_id = payload.get("deck_id").and_then(|v| v.as_str()).unwrap_or("deck");
     let idx = match payload.get("idx").and_then(|v| v.as_i64()) {
         Some(i) => i,
-        None => return json_error(StatusCode::BAD_REQUEST, "idx 必填"),
+        None => return json_error(StatusCode::BAD_REQUEST, &crate::i18n::t("err.export_idx_required")),
     };
     let base = state.exports.join(".tmp").join(sanitize_key(deck_id));
     let cards_dir = base.join("cards");
@@ -938,7 +1012,9 @@ async fn export_finalize(State(state): State<AppState>, body: Bytes) -> Response
                 }
             }
         }
-        Err(_) => return json_error(StatusCode::BAD_REQUEST, "没有可导出的卡片（先调 /api/export/card）"),
+        Err(_) => {
+            return json_error(StatusCode::BAD_REQUEST, &crate::i18n::t("err.export_no_cards"))
+        }
     }
     recs.sort_by(|a, b| {
         let ai = a.get("idx").and_then(|v| v.as_i64()).unwrap_or(0);
@@ -1266,7 +1342,9 @@ async fn read_pack(store: &Path, key: &str) -> Result<Value, String> {
     if p.is_file() {
         let bytes = match fs::read(&p).await {
             Ok(b) => b,
-            Err(e) => return Err(format!("读取标注文件失败：{e}")),
+            Err(e) => {
+                return Err(crate::i18n::tf("err.pack_read_failed", &[("e", &e.to_string())]))
+            }
         };
         match serde_json::from_slice::<Value>(&bytes) {
             Ok(v) => return Ok(migrate_pack(v)),
@@ -1275,9 +1353,14 @@ async fn read_pack(store: &Path, key: &str) -> Result<Value, String> {
                 let ts = Local::now().format("%Y%m%d%H%M%S");
                 let bak = p.with_extension(format!("json.corrupt-{ts}"));
                 let _ = fs::write(&bak, &bytes).await;
-                return Err(format!(
-                    "标注文件损坏（原文件已只读留存：{}）：{e}",
-                    bak.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+                let bak_name = bak
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_string();
+                return Err(crate::i18n::tf(
+                    "err.pack_corrupt",
+                    &[("bak", &bak_name), ("e", &e.to_string())],
                 ));
             }
         }
@@ -1361,7 +1444,7 @@ async fn import_packs(State(state): State<AppState>, body: Bytes) -> Response {
         .cloned()
         .unwrap_or_default();
     if items.len() > 500 {
-        return json_error(StatusCode::BAD_REQUEST, "单次最多导入 500 个包");
+        return json_error(StatusCode::BAD_REQUEST, &crate::i18n::t("err.import_max_500"));
     }
     let mut imported = 0usize;
     let mut skipped: Vec<Value> = Vec::new();
@@ -1370,7 +1453,10 @@ async fn import_packs(State(state): State<AppState>, body: Bytes) -> Response {
         let pack = item.get("pack");
         let entries = pack.and_then(|p| p.get("entries")).and_then(Value::as_array);
         if media_id.is_empty() || entries.is_none() {
-            skipped.push(json!({ "mediaId": media_id, "reason": "缺少 mediaId 或 entries" }));
+            skipped.push(json!({
+                "mediaId": media_id,
+                "reason": crate::i18n::t("err.import_missing_fields")
+            }));
             continue;
         }
         let key = sanitize_key(media_id);
@@ -1413,7 +1499,7 @@ async fn restore_anno(State(state): State<AppState>, AxumPath(media_id): AxumPat
     let p = key_to_file(&state.store, &media_id);
     let bak = p.with_extension("json.bak");
     if !bak.is_file() {
-        return json_error(StatusCode::NOT_FOUND, "没有可用的 .bak 备份");
+        return json_error(StatusCode::NOT_FOUND, &crate::i18n::t("err.no_bak_backup"));
     }
     if let Ok(bytes) = fs::read(&p).await {
         if serde_json::from_slice::<Value>(&bytes).is_err() {
@@ -1423,7 +1509,10 @@ async fn restore_anno(State(state): State<AppState>, AxumPath(media_id): AxumPat
         }
     }
     if let Err(e) = fs::copy(&bak, &p).await {
-        return json_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("恢复失败：{e}"));
+        return json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &crate::i18n::tf("err.restore_failed", &[("e", &e.to_string())]),
+        );
     }
     json_ok(json!({ "ok": true }))
 }

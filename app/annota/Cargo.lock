@@ -55,12 +55,13 @@ dependencies = [
 
 [[package]]
 name = "annota"
-version = "0.2.2"
+version = "0.2.4"
 dependencies = [
  "axum 0.7.9",
  "base64 0.23.1",
  "chrono",
  "dashmap",
+ "http-body-util",
  "image",
  "keyring",
  "reqwest 0.12.28",
@@ -68,6 +69,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sys-locale",
  "tauri",
  "tauri-build",
  "tauri-plugin-clipboard-manager",
@@ -76,6 +78,7 @@ dependencies = [
  "tauri-plugin-screenshots",
  "tauri-plugin-updater",
  "tokio",
+ "tower",
  "tower-http",
  "url",
  "urlencoding",
@@ -4754,6 +4757,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.6",
+]
+
+[[package]]
+name = "sys-locale"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

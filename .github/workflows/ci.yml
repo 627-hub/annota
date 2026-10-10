@@ -1,6 +1,3 @@
-# P2-R3：push/PR 测试门禁。
-# 范围说明：cargo fmt --check 与 clippy -D warnings 待全库格式化清理后加入（现有基线未清）；
-# 当前先门禁「测试 + 构建可编译 + 权限/版本一致性 + 全量 JS/Python 回归」。
 name: ci
 
 on:
@@ -8,26 +5,29 @@ on:
     branches: [main]
   pull_request:
 
+env:
+  CI: "true"
+
 jobs:
-  test:
+  quick:
+    name: Quick check
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
 
-      # 先重建 dist：checkout 不保留 mtime，build.rs 的新鲜度守护（dist vs src mtime）会误判；
-      # build.py 幂等重跑让产物获得新 mtime。
       - name: 构建产物（build.py）
         run: python3 build.py
 
-      - name: Rust 单测
+      - name: Rust 单测 + 集成测试
         working-directory: app/annota
         run: cargo test
 
-      - name: Rust 编译检查（debug）
+      - name: Rust 编译检查
         working-directory: app/annota
-        run: cargo build
+        run: cargo check
 
       - name: 权限自检（Tauri 命令 ↔ permissions/*.toml）
         run: node dev/check-tauri-permissions.mjs
@@ -49,3 +49,28 @@ jobs:
       - name: smoke（HTML 内联脚本语法 + 基础行为）
         run: |
           for t in dev/smoke*.mjs; do echo "== $t"; node "$t"; done
+
+  full:
+    name: Full build + integration
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: 构建产物（build.py）
+        run: python3 build.py
+
+      - name: Rust 全量测试
+        working-directory: app/annota
+        run: cargo test
+
+      - name: Rust debug 构建
+        working-directory: app/annota
+        run: cargo build
+
+      - name: Rust release 构建
+        working-directory: app/annota
+        run: cargo build --release
