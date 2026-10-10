@@ -164,9 +164,10 @@ pub fn build_app(state: AppState) -> Router {
         .route("/api/anno/:media_id/restore", post(restore_anno))
         .route("/api/import/packs", post(import_packs))
         .route("/api/diag", get(diag_http))
-        .layer(middleware::from_fn(guard_host_origin))
+        // layer 顺序：外层先执行。guard 在最外（拒绝流量不消耗限流配额），限流次之，CSP 最内。
         .layer(middleware::from_fn(csp_header_middleware))
-        .layer(middleware::from_fn(rate_limit_middleware));
+        .layer(middleware::from_fn(rate_limit_middleware))
+        .layer(middleware::from_fn(guard_host_origin));
     if cfg!(debug_assertions) {
         app = app.fallback_service(ServeDir::new(state.root.clone()));
     }
@@ -351,8 +352,7 @@ async fn guard_host_origin(req: Request, next: Next) -> Response {
 }
 
 // ---------- P2-S4：本地 REST 速率限制 ----------
-// 固定窗口计数器：每 method 一个 DashMap 条目。
-// 写操作（POST/PUT/DELETE）限制更严——防恶意页面用 no-cors 风暴拖垮服务。
+// 固定窗口计数器：按 host+method 分桶，恶意 Origin 的突发不会挤占合法流量配额。
 fn rate_limits() -> &'static DashMap<String, (i64, u32)> {
     static LIMITS: OnceLock<DashMap<String, (i64, u32)>> = OnceLock::new();
     LIMITS.get_or_init(DashMap::new)
@@ -360,7 +360,7 @@ fn rate_limits() -> &'static DashMap<String, (i64, u32)> {
 
 const RATE_WINDOW_SECS: i64 = 1;
 const RATE_LIMIT_READ: u32 = 60;   // GET：每秒 60 次
-const RATE_LIMIT_WRITE: u32 = 15;  // 写：每秒 15 次
+const RATE_LIMIT_WRITE: u32 = 60;  // 写：每秒 60 次（防 import_packs/put_anno 突发误伤）
 
 fn rate_limit_check(key: &str, limit: u32) -> bool {
     let now = chrono::Utc::now().timestamp();
@@ -382,10 +382,23 @@ async fn rate_limit_middleware(req: Request, next: Next) -> Response {
     let method = req.method().clone();
     let is_write = !matches!(method, axum::http::Method::GET | axum::http::Method::HEAD);
     let limit = if is_write { RATE_LIMIT_WRITE } else { RATE_LIMIT_READ };
-    // 按 method 分桶（回环地址固定，无需按 IP）
-    let key = format!("rl:{method}");
+    // 按 host+method 分桶：恶意 Origin 的突发消耗自己的配额，不影响回环合法流量
+    let host = req
+        .headers()
+        .get("host")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let key = format!("rl:{host}:{method}");
     if !rate_limit_check(&key, limit) {
-        return json_error(StatusCode::TOO_MANY_REQUESTS, "rate limit exceeded");
+        let mut resp = json_error_app(
+            StatusCode::TOO_MANY_REQUESTS,
+            &crate::error::AppError::key("err.rate_limited"),
+        );
+        if let Ok(v) = "1".parse() {
+            resp.headers_mut().insert(axum::http::header::RETRY_AFTER, v);
+        }
+        return resp;
     }
     next.run(req).await
 }
@@ -393,7 +406,7 @@ async fn rate_limit_middleware(req: Request, next: Next) -> Response {
 // ---------- P2-S4：CSP 响应头 ----------
 // 本地服务页（工作区/console/group）有内联脚本，CSP 需允许 'unsafe-inline'。
 // 仅对 HTML 响应加 CSP；JSON API 不需要。
-const HTML_CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'";
+const HTML_CSP: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://gitee.com https://raw.githubusercontent.com https://api.github.com https://*.tcb.cloud.tencent.com https://*.tcloudbaseapp.com; font-src 'self'; frame-src 'none'; object-src 'none'; base-uri 'self'";
 
 async fn csp_header_middleware(req: Request, next: Next) -> Response {
     let mut resp = next.run(req).await;
@@ -1532,7 +1545,7 @@ async fn restore_anno(State(state): State<AppState>, AxumPath(media_id): AxumPat
 async fn save_note(notes_dir: &Path, rec: &Value) -> Result<PathBuf, crate::error::AppError> {
     fs::create_dir_all(notes_dir)
         .await
-        .map_err(|e| format!("create notes dir: {e}"))?;
+        .map_err(|e| crate::error::AppError::internal(format!("create notes dir: {e}")))?;
 
     let media = rec.get("media").cloned().unwrap_or(json!({}));
     let title = rec
@@ -1558,14 +1571,14 @@ async fn save_note(notes_dir: &Path, rec: &Value) -> Result<PathBuf, crate::erro
         let asset_dir = notes_dir.join(&sub);
         fs::create_dir_all(&asset_dir)
             .await
-            .map_err(|e| format!("create asset dir: {e}"))?;
+            .map_err(|e| crate::error::AppError::internal(format!("create asset dir: {e}")))?;
         if let Some(b64) = shot.split(',').nth(1) {
             let bytes = base64::engine::general_purpose::STANDARD
                 .decode(b64.trim())
-                .map_err(|e| format!("base64 decode: {e}"))?;
+                .map_err(|e| crate::error::AppError::internal(format!("base64 decode: {e}")))?;
             fs::write(asset_dir.join("shot.png"), bytes)
                 .await
-                .map_err(|e| format!("write shot: {e}"))?;
+                .map_err(|e| crate::error::AppError::internal(format!("write shot: {e}")))?;
             img_rel = format!("{}/shot.png", sub);
         }
     }
@@ -1580,7 +1593,7 @@ async fn save_note(notes_dir: &Path, rec: &Value) -> Result<PathBuf, crate::erro
     let npath = notes_dir.join(format!("{}.md", sub));
     fs::write(&npath, md)
         .await
-        .map_err(|e| format!("write note: {e}"))?;
+        .map_err(|e| crate::error::AppError::internal(format!("write note: {e}")))?;
 
     let line = json!({
         "created": created,
@@ -1594,11 +1607,11 @@ async fn save_note(notes_dir: &Path, rec: &Value) -> Result<PathBuf, crate::erro
         .append(true)
         .open(notes_dir.join("data.jsonl"))
         .await
-        .map_err(|e| format!("open data.jsonl: {e}"))?;
+        .map_err(|e| crate::error::AppError::internal(format!("open data.jsonl: {e}")))?;
     use tokio::io::AsyncWriteExt;
-    file.write_all(serde_json::to_string(&line).map_err(|e| e.to_string())?.as_bytes())
+    file.write_all(serde_json::to_string(&line).map_err(crate::error::AppError::internal)?.as_bytes())
         .await
-        .map_err(|e| format!("append data.jsonl: {e}"))?;
+        .map_err(|e| crate::error::AppError::internal(format!("append data.jsonl: {e}")))?;
     file.write_all(b"\n").await.map_err(crate::error::AppError::internal)?;
 
     Ok(npath)

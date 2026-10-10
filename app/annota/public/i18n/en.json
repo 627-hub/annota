@@ -182,5 +182,6 @@
   "err.trust_list_struct_broken": "trustedOrigins structure corrupted",
   "err.trust_list_full_50": "Trust list is full (50); remove unused sites in Settings first",
   "err.trust_serialize_failed": "Failed to serialize settings: {e}",
-  "err.trust_write_failed": "Failed to write settings: {e}"
+  "err.trust_write_failed": "Failed to write settings: {e}",
+  "err.rate_limited": "Too many requests; please retry shortly"
 }

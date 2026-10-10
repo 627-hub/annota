@@ -1,4 +1,5 @@
 (function () {
+  'use strict';
   var DEFAULT = 'zh-CN';
   var CACHE = {};
 
@@ -12,23 +13,26 @@
     setLocale: function (lang, cb) { if (cb) cb(); }
   };
 
-  function detectLocale() {
-    try {
-      var saved = localStorage.getItem('annota-locale');
-      if (saved) return saved;
-    } catch (e) {}
-    var nav = navigator.language || navigator.userLanguage || '';
-    if (nav.startsWith('zh')) return 'zh-CN';
-    if (nav.startsWith('en')) return 'en';
+  // 与 Rust i18n::normalize() 一致：zh*/en* 前缀归一，其余回退 zh-CN
+  function normalize(lang) {
+    var l = String(lang || '').trim().toLowerCase();
+    if (l.indexOf('zh') === 0) return 'zh-CN';
+    if (l.indexOf('en') === 0) return 'en';
     return DEFAULT;
   }
 
+  function detectLocale() {
+    try {
+      var saved = localStorage.getItem('annota-locale');
+      if (saved) return normalize(saved);
+    } catch (e) {}
+    var nav = navigator.language || navigator.userLanguage || '';
+    return normalize(nav);
+  }
+
   function localeUrl(lang) {
-    var base = document.baseURI || '';
-    if (base.indexOf('127.0.0.1:8793') !== -1 || base.indexOf('localhost:8793') !== -1) {
-      return 'http://127.0.0.1:8793/app/annota/public/i18n/' + lang + '.json';
-    }
-    return 'i18n/' + lang + '.json';
+    var base = (window.__ANNOTA_LOCALE_BASE__ || '').replace(/\/$/, '');
+    return (base ? base + '/' : '') + 'i18n/' + lang + '.json';
   }
 
   function loadLocale(lang, cb) {
@@ -40,8 +44,15 @@
     // 挂起保护：locale 加载卡住时 3s 内放行（否则 init 回调不触发、页面完全不初始化）
     xhr.timeout = 3000;
     xhr.onload = function () {
+      if (xhr.status < 200 || xhr.status >= 300) {
+        console.warn('[annota] locale load failed: ' + localeUrl(lang) + ' HTTP ' + xhr.status);
+        finish({});
+        return;
+      }
       var obj = {};
-      try { obj = JSON.parse(xhr.responseText); } catch (e) {}
+      try { obj = JSON.parse(xhr.responseText); } catch (e) {
+        console.warn('[annota] locale parse failed: ' + localeUrl(lang), e);
+      }
       finish(obj);
     };
     xhr.onerror = function () { finish({}); };
@@ -49,16 +60,21 @@
     xhr.send();
   }
 
+  // 只合并自有可枚举 key（防原型链污染）
+  function mergeFallback(strings, fallback) {
+    Object.keys(fallback).forEach(function (k) {
+      if (!Object.prototype.hasOwnProperty.call(strings, k)) strings[k] = fallback[k];
+    });
+  }
+
   window.__i18n = { locale: DEFAULT, strings: {} };
 
-  function init(cb) {
-    var lang = detectLocale();
-    window.__i18n.locale = lang;
+  function loadWithFallback(lang, cb) {
     loadLocale(lang, function (strings) {
       window.__i18n.strings = strings;
       if (lang !== DEFAULT) {
         loadLocale(DEFAULT, function (fallback) {
-          for (var k in fallback) { if (!(k in strings)) strings[k] = fallback[k]; }
+          mergeFallback(strings, fallback);
           cb();
         });
       } else {
@@ -67,21 +83,28 @@
     });
   }
 
+  function init(cb) {
+    var lang = detectLocale();
+    window.__i18n.locale = lang;
+    loadWithFallback(lang, cb);
+  }
+
   window.__i18n.init = init;
   window.__i18n.t = function (key, params) {
-    var s = window.__i18n.strings[key] || key;
+    var own = Object.prototype.hasOwnProperty.call(window.__i18n.strings, key);
+    var s = own ? window.__i18n.strings[key] : key;
     if (params) {
-      for (var k in params) { s = s.split('{' + k + '}').join(params[k]); }
+      Object.keys(params).forEach(function (k) {
+        s = s.split('{' + k + '}').join(params[k]);
+      });
     }
     return s;
   };
 
   window.__i18n.setLocale = function (lang, cb) {
+    lang = normalize(lang);
     try { localStorage.setItem('annota-locale', lang); } catch (e) {}
     window.__i18n.locale = lang;
-    loadLocale(lang, function (strings) {
-      window.__i18n.strings = strings;
-      if (cb) cb();
-    });
+    loadWithFallback(lang, function () { if (cb) cb(); });
   };
 })();
