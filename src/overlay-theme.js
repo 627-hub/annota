@@ -495,7 +495,7 @@ button { color: inherit; }
 }
 .va-popover[data-ai="1"] { border-style:dashed; border-color:rgba(245,166,35,.58); box-shadow:0 24px 70px rgba(0,0,0,.56), 0 0 0 3px rgba(245,166,35,.06); }
 @keyframes va-pop-in { from { opacity:0; transform:translateY(5px) scale(.985); } to { opacity:1; transform:translateY(0) scale(1); } }
-.va-pop-head { display:flex; align-items:flex-start; gap:12px; margin-bottom:15px; }
+.va-pop-head { display:flex; align-items:flex-start; gap:12px; margin-bottom:15px; cursor:move; user-select:none; -webkit-user-select:none; touch-action:none; }
 .va-pop-heading { min-width:0; flex:1; }
 .va-eyebrow { margin-bottom:5px; color:#9b8260; font-size:9px; font-weight:700; letter-spacing:.12em; text-transform:uppercase; }
 .va-pop-heading strong { display:block; font-size:15px; font-weight:650; letter-spacing:-.02em; }

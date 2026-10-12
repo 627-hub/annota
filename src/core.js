@@ -1836,13 +1836,21 @@
     },
   };
 
+  // 气泡定位：挂载后按实测宽高二次钳入视口（写死高度估算会让高气泡顶出屏幕底），
+  // 视口装不下时依靠 .va-popover 自身的 max-height + overflow 滚动。
+  function placePop(pop, x, y) {
+    uiRoot.appendChild(pop);
+    const w = pop.offsetWidth || 304;
+    const h = pop.offsetHeight || 430;
+    pop.style.left = Math.max(12, Math.min((Number(x) || 0) + 10, innerWidth - w - 12)) + 'px';
+    pop.style.top = Math.max(12, Math.min((Number(y) || 0) + 10, innerHeight - h - 12)) + 'px';
+  }
+
   function openEntryPop(e, x, y) {
     if (state.binding) state.binding.beginAnnotate();
     const timed = !state.binding || state.binding.timed;
     const pop = el('div'); pop.className = 'va-popover'; pop.dataset.vaPop = '1';
     pop.setAttribute('role', 'dialog'); pop.setAttribute('aria-label', '标注详情');
-    pop.style.left = Math.max(12, Math.min((Number(x) || 0) + 10, innerWidth - 372)) + 'px';
-    pop.style.top = Math.max(12, Math.min((Number(y) || 0) + 10, innerHeight - 430)) + 'px';
     const dur = e.dur || DEFAULT_DUR;
     const head = el('div'); head.className = 'va-pop-head';
     const heading = el('div'); heading.className = 'va-pop-heading';
@@ -1850,6 +1858,26 @@
     heading.append(eyebrow, el('strong', null, entryText(e)), el('span', null, (e.label || '未添加备注') + (entryTags(e).length ? ' · ' + entryTags(e).map((t) => '#' + t).join(' ') : '')));
     const close = mkIconButton('关闭词条详情', 'close', () => pop.remove()); close.classList.add('va-close');
     head.append(heading, close);
+    // 头部可拖拽移动气泡（按钮区除外）：长气泡被定位钳到边缘后仍可自己挪
+    head.addEventListener('pointerdown', (ev) => {
+      if (ev.target && ev.target.closest && ev.target.closest('button')) return;
+      ev.preventDefault();
+      const sx = ev.clientX - parseFloat(pop.style.left || 0);
+      const sy = ev.clientY - parseFloat(pop.style.top || 0);
+      try { head.setPointerCapture(ev.pointerId); } catch (err) {}
+      const move = (e2) => {
+        pop.style.left = Math.max(12, Math.min(e2.clientX - sx, innerWidth - pop.offsetWidth - 12)) + 'px';
+        pop.style.top = Math.max(12, Math.min(e2.clientY - sy, innerHeight - pop.offsetHeight - 12)) + 'px';
+      };
+      const up = () => {
+        head.removeEventListener('pointermove', move);
+        head.removeEventListener('pointerup', up);
+        head.removeEventListener('pointercancel', up);
+      };
+      head.addEventListener('pointermove', move);
+      head.addEventListener('pointerup', up);
+      head.addEventListener('pointercancel', up);
+    });
     const range = el('div'); range.className = 'va-range';
     pop.append(head, range);
 
@@ -1885,7 +1913,7 @@
       if (timed) pop.append(el('div', null, formatTime(e.t) + ' · 显示 ' + dur + ' 秒'), actions);
       else pop.append(actions);
       pluginHook('entryPop', { entry: e, pop });   // 插件接缝：词条详情挂载前（只读/组来源路径）
-      uiRoot.appendChild(pop);
+      placePop(pop, x, y);
       return;
     }
 
@@ -1925,7 +1953,7 @@
     pop.querySelectorAll('.va-popover > label').forEach((n) => { n.className = 'va-field-label'; });
     updRange();
     pluginHook('entryPop', { entry: e, pop });   // 插件接缝：词条详情挂载前（编辑路径）
-    uiRoot.appendChild(pop);
+    placePop(pop, x, y);
     wordInput.focus({ preventScroll: true });
   }
 
