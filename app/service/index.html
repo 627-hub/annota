@@ -485,7 +485,7 @@
               <p class="plugin-banner" id="plugin-banner" role="alert" hidden></p>
               <section class="setting-section" aria-labelledby="plugin-installed-heading">
                 <h3 id="plugin-installed-heading">已安装</h3>
-                <p>关闭开关即停用。已打开的页面需重载标签页后生效。</p>
+                <p>关闭开关即停用。新开标签页或刷新页面后生效/失效（已开页面要刷新后才会变）。</p>
                 <div id="plugin-installed" class="plugin-list" aria-live="polite"></div>
               </section>
               <section class="setting-section" aria-labelledby="plugin-builtin-heading">
@@ -1429,7 +1429,7 @@
       input.disabled = true;
       try {
         await pluginWrite('POST', '/api/plugins/' + encodeURIComponent(plugin.id) + '/toggle', { body: JSON.stringify({ enabled: next }), contentType: 'application/json' });
-        notify(next ? '已启用 ' + label + '。新打开的标签页生效' : '已停用 ' + label + '。已打开的页面仍在运行该插件，重载标签页后生效');
+        notify(next ? '已启用 ' + label + '。打开新标签页或刷新页面后生效' : '已停用 ' + label + '。刷新或新开标签页后停止（已开页面仍在运行）');
       } catch (error) {
         notify('操作失败：' + error.message);
       }
@@ -1440,7 +1440,7 @@
       if (!confirm('卸载插件「' + label + '」？')) return;
       try {
         await pluginWrite('DELETE', '/api/plugins/' + encodeURIComponent(plugin.id));
-        notify('已卸载 ' + label + '。已打开的页面仍在运行该插件，重载标签页后生效');
+        notify('已卸载 ' + label + '。刷新或新开标签页后停止（已开页面仍在运行）');
       } catch (error) {
         notify('卸载失败：' + error.message);
       }
@@ -1516,7 +1516,7 @@
           const data = await pluginWrite('POST', '/api/plugins/install?name=' + encodeURIComponent(file.name), { body: bytes, contentType: 'application/zip' });
           const label = preview.name || preview.id || data.id || file.name;
           setPluginFeedback('已安装 ' + label + '。', 'ready');
-          notify('已安装 ' + label + '。新打开的标签页生效');
+          notify('已安装 ' + label + '。打开新标签页或刷新页面后生效');
           await loadPlugins();
         } catch (error) {
           setPluginFeedback('安装失败：' + error.message, 'error');
