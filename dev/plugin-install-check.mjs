@@ -91,66 +91,79 @@ const base = `http://127.0.0.1:${server.address().port}`;
 
 // ---------- 管理页流程 ----------
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
-const pageErrors = [];
-page.on('pageerror', (e) => pageErrors.push(String(e)));
-page.on('dialog', (d) => d.accept());
+try {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 900 } });
+  const pageErrors = [];
+  page.on('pageerror', (e) => pageErrors.push('[管理页] ' + String(e)));
+  page.on('dialog', (d) => d.accept());
 
-await page.goto(`${base}/#plugins`, { waitUntil: 'domcontentloaded' });
-await page.waitForSelector('#screen-plugins', { timeout: 5000 });
+  await page.goto(`${base}/#plugins`, { waitUntil: 'domcontentloaded' });
+  // 等异步列表加载完成（screen 可见 ≠ 列表已渲染）
+  await page.waitForFunction(
+    () => (document.querySelector('#plugin-builtin')?.textContent || '').includes('Anki 导出'),
+    null, { timeout: 5000 },
+  );
 
-// 内置分组可见、离线横幅不出现
-const builtinText = await page.locator('#plugin-builtin').textContent().catch(() => '');
-ok(builtinText.includes('Anki 导出') && builtinText.includes('组同步'), '内置插件分组渲染');
-ok(await page.locator('#plugin-banner').isHidden().catch(() => true), '服务在线时无离线横幅');
-ok((await page.locator('#plugin-installed').textContent()).includes('损坏'), '损坏插件标记展示');
+  // 内置分组可见、离线横幅不出现
+  const builtinText = await page.locator('#plugin-builtin').textContent();
+  ok(builtinText.includes('Anki 导出') && builtinText.includes('组同步'), '内置插件分组渲染');
+  ok(await page.locator('#plugin-banner').isHidden(), '服务在线时无离线横幅');
+  ok((await page.locator('#plugin-installed').textContent()).includes('损坏'), '损坏插件标记展示');
 
-// 两阶段安装（真实 ielts zip）
-await page.setInputFiles('#screen-plugins input[type=file]', ieltsZip);
-await page.waitForSelector('#plugin-confirm[open]', { timeout: 5000 });
-const confirmText = await page.locator('#plugin-confirm').textContent();
-ok(confirmText.includes('ielts') && confirmText.includes('雅思词库'), '确认框展示 id/名称');
-ok(confirmText.includes('local-api'), '确认框展示权限');
-ok(confirmText.includes('ielts-0.1.0.zip'), '确认框展示来源文件名');
-await page.locator('#plugin-confirm button[value="ok"], #plugin-confirm .confirm, #plugin-confirm button').filter({ hasText: /安装|确认|确定/ }).first().click();
-await page.waitForFunction(() => (document.querySelector('#plugin-installed')?.textContent || '').includes('雅思词库'), null, { timeout: 5000 });
-ok(true, '安装后列表出现 ielts');
-ok(calls.some((c) => c.op === 'install' && c.dry) && calls.some((c) => c.op === 'install' && !c.dry), '先 dry_run 后正式安装');
+  // 两阶段安装（真实 ielts zip）
+  await page.setInputFiles('#screen-plugins input[type=file]', ieltsZip);
+  await page.waitForSelector('#plugin-confirm[open]', { timeout: 5000 });
+  const confirmText = await page.locator('#plugin-confirm').textContent();
+  ok(confirmText.includes('ielts') && confirmText.includes('雅思词库'), '确认框展示 id/名称');
+  ok(confirmText.includes('local-api'), '确认框展示权限');
+  ok(confirmText.includes('ielts-0.1.0.zip'), '确认框展示来源文件名');
+  await page.locator('#plugin-confirm-ok').click();
+  await page.waitForFunction(() => (document.querySelector('#plugin-installed')?.textContent || '').includes('雅思词库'), null, { timeout: 5000 });
+  const firstDry = calls.findIndex((c) => c.op === 'install' && c.dry);
+  const firstReal = calls.findIndex((c) => c.op === 'install' && !c.dry);
+  ok(firstDry >= 0 && firstReal > firstDry, '先 dry_run 预览后正式安装（顺序正确）');
 
-// 开关
-const row = page.locator('#plugin-installed [data-plugin-id="ielts"], #plugin-installed *').filter({ hasText: '雅思词库' }).first();
-const toggle = page.locator('#screen-plugins input[type=checkbox]').last();
-await toggle.click();
-ok(calls.some((c) => c.op === 'toggle' && c.id === 'ielts'), '切换启用状态发出 toggle 请求');
+  // 开关：等 toggle 请求落账再断言（点按事件先于网络往返）
+  const toggle = page.locator('#screen-plugins input[type=checkbox]').last();
+  await Promise.all([
+    page.waitForResponse((r) => /\/api\/plugins\/[^/]+\/toggle$/.test(new URL(r.url()).pathname)),
+    toggle.click(),
+  ]);
+  ok(calls.some((c) => c.op === 'toggle' && c.id === 'ielts'), '切换启用状态发出 toggle 请求');
 
-// 卸载（confirm 已被全局 accept）
-await page.locator('#screen-plugins button').filter({ hasText: /卸载/ }).last().click();
-await page.waitForFunction(() => !(document.querySelector('#plugin-installed')?.textContent || '').includes('雅思词库'), null, { timeout: 5000 });
-ok(calls.some((c) => c.op === 'uninstall' && c.id === 'ielts'), '卸载请求发出且列表移除');
+  // 卸载（confirm 已被全局 accept）
+  await page.locator('#screen-plugins button').filter({ hasText: /卸载/ }).last().click();
+  await page.waitForFunction(() => !(document.querySelector('#plugin-installed')?.textContent || '').includes('雅思词库'), null, { timeout: 5000 });
+  ok(calls.some((c) => c.op === 'uninstall' && c.id === 'ielts'), '卸载请求发出且列表移除');
 
-ok(pageErrors.length === 0, '无 pageerror', pageErrors.join(' | '));
+  // ---------- overlay 菜单高度 ----------
+  const panelH = (() => {
+    const src = readFileSync(resolve(root, 'app/annota/src/main.rs'), 'utf8');
+    const m = src.match(/PANEL_MENU_H[^=]*=\s*(\d+)/);
+    return m ? Number(m[1]) : 0;
+  })();
+  const overlay = await browser.newPage({ viewport: { width: 420, height: 900 } });
+  // file:// 下无 Tauri 桥：bridge_unavailable 是预期降级路径，不算本检查的回归
+  overlay.on('pageerror', (e) => {
+    if (!String(e).includes('bridge_unavailable')) pageErrors.push('[overlay] ' + String(e));
+  });
+  await overlay.route('**/i18n/*.json', (r) => r.fulfill({ contentType: 'application/json', body: '{}' }));
+  await overlay.goto(`file://${resolve(root, 'app/annota/public/overlay.html')}`, { waitUntil: 'domcontentloaded' });
+  await overlay.waitForTimeout(400);
+  const menuH = await overlay.evaluate(() => {
+    const menu = document.querySelector('.menu');
+    if (!menu) return 0;
+    menu.dataset.open = '1';   // 默认收起（display:none），强制展开测高度
+    return Math.ceil(menu.getBoundingClientRect().height);
+  });
+  ok(panelH > 0, `PANEL_MENU_H 常量可读（${panelH}）`);
+  if (menuH > 0) ok(menuH <= panelH, `菜单高度 ${menuH} ≤ PANEL_MENU_H ${panelH}`);
+  else console.log('# SKIP 菜单高度（overlay 结构未识别到菜单节点，需人工确认）');
 
-// ---------- overlay 菜单高度 ----------
-const panelH = (() => {
-  const src = readFileSync(resolve(root, 'app/annota/src/main.rs'), 'utf8');
-  const m = src.match(/PANEL_MENU_H[^=]*=\s*(\d+)/);
-  return m ? Number(m[1]) : 0;
-})();
-const overlay = await browser.newPage({ viewport: { width: 420, height: 900 } });
-await overlay.route('**/i18n/*.json', (r) => r.fulfill({ contentType: 'application/json', body: '{}' }));
-await overlay.goto(`file://${resolve(root, 'app/annota/public/overlay.html')}`, { waitUntil: 'domcontentloaded' }).catch(() => {});
-await overlay.waitForTimeout(400);
-const menuH = await overlay.evaluate(() => {
-  const menu = document.querySelector('.menu');
-  if (!menu) return 0;
-  menu.dataset.open = '1';   // 默认收起（display:none），强制展开测高度
-  return Math.ceil(menu.getBoundingClientRect().height);
-});
-ok(panelH > 0, `PANEL_MENU_H 常量可读（${panelH}）`);
-if (menuH > 0) ok(menuH <= panelH, `菜单高度 ${menuH} ≤ PANEL_MENU_H ${panelH}`);
-else console.log('# SKIP 菜单高度（overlay 结构未识别到菜单节点，需人工确认）');
-
-await browser.close();
-server.close();
+  ok(pageErrors.length === 0, '管理页与 overlay 均无 pageerror', pageErrors.join(' | '));
+} finally {
+  await browser.close();
+  server.close();
+}
 console.log(`plugin-install-check  ${pass} pass / ${fail} fail`);
 if (fail) process.exit(1);

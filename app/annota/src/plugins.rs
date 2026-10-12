@@ -35,6 +35,8 @@ pub struct PluginMeta {
     pub permissions: Vec<String>,
     pub engine: Option<String>,
     pub view_only: bool,
+    /// 包根下的入口文件名（已校验为单层文件名）
+    pub main: String,
 }
 
 pub struct PluginRecord {
@@ -139,6 +141,7 @@ fn parse_manifest(text: &str) -> Result<PluginMeta, String> {
         permissions,
         engine,
         view_only,
+        main: main.to_string(),
     })
 }
 
@@ -208,15 +211,11 @@ pub fn inspect_zip(bytes: &[u8]) -> Result<ParsedZip, String> {
     }
     let manifest_text = manifest_text.ok_or_else(|| "zip 缺少 manifest.json".to_string())?;
     let meta = parse_manifest(&manifest_text)?;
-    let main_name = serde_json::from_str::<Value>(&manifest_text)
-        .ok()
-        .and_then(|v| v.get("main").and_then(Value::as_str).map(String::from))
-        .unwrap_or_else(|| "main.js".to_string());
     let main_source = files
         .into_iter()
-        .find(|(name, _)| *name == main_name)
+        .find(|(name, _)| *name == meta.main)
         .map(|(_, bytes)| bytes)
-        .ok_or_else(|| format!("zip 缺少入口文件 {main_name}"))?;
+        .ok_or_else(|| format!("zip 缺少入口文件 {}", meta.main))?;
     let main_source = String::from_utf8(main_source).map_err(|_| "入口文件不是 UTF-8 文本".to_string())?;
     Ok(ParsedZip { meta, main_source })
 }
@@ -303,6 +302,7 @@ fn load_record(dir: &Path, id: &str, enabled: bool, from: String) -> PluginRecor
                 permissions: Vec::new(),
                 engine: None,
                 view_only: false,
+                main: "main.js".into(),
             },
             source: None,
             enabled: false, // 损坏永不启用/注入
@@ -322,12 +322,8 @@ fn load_record(dir: &Path, id: &str, enabled: bool, from: String) -> PluginRecor
     if meta.id != id {
         return broken_record(id, from, "目录名与 manifest.id 不一致");
     }
-    let main = serde_json::from_str::<Value>(&manifest_text)
-        .ok()
-        .and_then(|v| v.get("main").and_then(Value::as_str).map(String::from))
-        .unwrap_or_else(|| "main.js".into());
     // main 已过 parse_manifest 校验（单层文件名），此处 join 不会穿越
-    match std::fs::read_to_string(plugin_dir.join(&main)) {
+    match std::fs::read_to_string(plugin_dir.join(&meta.main)) {
         Ok(source) => PluginRecord {
             meta,
             source: Some(source),
@@ -348,8 +344,9 @@ impl PluginsState {
         if let Ok(read) = std::fs::read_dir(&dir) {
             for e in read.flatten() {
                 let name = e.file_name().to_string_lossy().to_string();
-                if !valid_id(&name) || e.path().is_file() {
-                    continue; // 跳过 plugins.json/.tmp 等
+                // 跳过 plugins.json/.tmp 等非插件条目；内置 id 目录一律不加载（防影子注入）
+                if !valid_id(&name) || RESERVED_IDS.contains(&name.as_str()) || e.path().is_file() {
+                    continue;
                 }
                 let (enabled, from) = state_entries
                     .iter()
@@ -377,16 +374,19 @@ impl PluginsState {
 
     /// 注入层消费：启用且未损坏的插件源码，按 id 排序。
     pub fn injection_scripts(&self) -> Vec<String> {
-        let inner = self.inner.lock().ok();
+        let inner = match self.inner.lock() {
+            Ok(g) => g,
+            Err(_) => {
+                crate::logf::log("ERROR", "插件状态锁中毒：本次注入为空");
+                return Vec::new();
+            }
+        };
         inner
-            .map(|g| {
-                g.records
-                    .iter()
-                    .filter(|r| r.enabled && !r.broken)
-                    .filter_map(|r| r.source.clone())
-                    .collect()
-            })
-            .unwrap_or_default()
+            .records
+            .iter()
+            .filter(|r| r.enabled && !r.broken)
+            .filter_map(|r| r.source.clone())
+            .collect()
     }
 
     /// 管理页列表：内置（只读展示）+ 已安装。
@@ -413,6 +413,8 @@ impl PluginsState {
                     "builtin": false,
                 }));
             }
+        } else {
+            crate::logf::log("ERROR", "插件状态锁中毒：列表缺少已安装项");
         }
         out
     }
@@ -441,6 +443,15 @@ impl PluginsState {
         if RESERVED_IDS.contains(&id.as_str()) {
             return Err(format!("{id} 是出厂内置插件 id，不能安装同名插件"));
         }
+        // 来源文件名净化：去控制字符、限长（唯一用户可控的入库展示串）
+        let from: String = from
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(120)
+            .collect::<String>()
+            .trim()
+            .to_string();
+        let from = if from.is_empty() { "plugin.zip".to_string() } else { from };
         // 落盘：.tmp 目录写入后 rename 原子提交（同 id = 覆盖升级，保留 enabled）
         let tmp = self.dir.join(".tmp").join(uuid::Uuid::new_v4().to_string());
         std::fs::create_dir_all(&tmp).map_err(|e| format!("创建临时目录失败：{e}"))?;
@@ -471,9 +482,17 @@ impl PluginsState {
             if target.exists() {
                 let old = self.dir.join(format!(".old-{}", uuid::Uuid::new_v4()));
                 std::fs::rename(&target, &old)?;
-                let r = std::fs::rename(&tmp, &target);
-                let _ = std::fs::remove_dir_all(&old);
-                r
+                match std::fs::rename(&tmp, &target) {
+                    Ok(()) => {
+                        let _ = std::fs::remove_dir_all(&old);
+                        Ok(())
+                    }
+                    Err(e) => {
+                        // 升级失败回滚旧版本：不能让唯一可用副本被删
+                        let _ = std::fs::rename(&old, &target);
+                        Err(e)
+                    }
+                }
             } else {
                 std::fs::rename(&tmp, &target)
             }
@@ -489,7 +508,7 @@ impl PluginsState {
             .find(|r| r.meta.id == id)
             .map(|r| r.enabled)
             .unwrap_or(true);
-        let record = load_record(&self.dir, &id, prev_enabled, from.to_string());
+        let record = load_record(&self.dir, &id, prev_enabled, from.clone());
         if record.broken {
             return Err("安装后自检失败（插件损坏）".into());
         }
@@ -516,7 +535,9 @@ impl PluginsState {
             return Err(StatusCode::CONFLICT);
         }
         rec.enabled = enabled;
-        let _ = write_state(&self.dir, &inner.records);
+        if let Err(e) = write_state(&self.dir, &inner.records) {
+            crate::logf::log("WARN", &format!("plugins.json 写入失败（toggle）：{e}"));
+        }
         Ok(())
     }
 
@@ -527,7 +548,9 @@ impl PluginsState {
         {
             let mut inner = self.inner.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             inner.records.retain(|r| r.meta.id != id);
-            let _ = write_state(&self.dir, &inner.records);
+            if let Err(e) = write_state(&self.dir, &inner.records) {
+                crate::logf::log("WARN", &format!("plugins.json 写入失败（uninstall）：{e}"));
+            }
         }
         let target = self.dir.join(id);
         if target.exists() {
@@ -660,6 +683,42 @@ mod tests {
         let list = state.list_json();
         let oops = list.iter().find(|v| v["id"] == "oops").expect("损坏插件应列出");
         assert_eq!(oops["broken"], true);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reserved_dirs_skipped_and_from_sanitized() {
+        let dir = std::env::temp_dir().join(format!("annota-plugins-{}", uuid::Uuid::new_v4()));
+        // 模拟手工塞入内置 id 目录：不得被加载/影子注入
+        std::fs::create_dir_all(dir.join("anki-export")).unwrap();
+        std::fs::write(
+            dir.join("anki-export/manifest.json"),
+            r#"{"id":"anki-export","name":"冒充","version":"1"}"#,
+        )
+        .unwrap();
+        std::fs::write(dir.join("anki-export/main.js"), "// shadow").unwrap();
+        let state = PluginsState::load(dir.clone());
+        assert!(state.injection_scripts().is_empty(), "保留 id 目录不应注入");
+        let anki_entries = state
+            .list_json()
+            .iter()
+            .filter(|v| v["id"] == "anki-export")
+            .count();
+        assert_eq!(anki_entries, 1, "列表里内置条目只应有一条（无影子副本）");
+
+        // from 净化：控制字符剔除、超长截断
+        let zip = build_zip(&[("manifest.json", GOOD_MANIFEST), ("main.js", "// demo")]);
+        let long = format!("bad\u{0}\u{7}{}", "x".repeat(200));
+        state.install(&zip, &long).unwrap();
+        let demo = state
+            .list_json()
+            .iter()
+            .find(|v| v["id"] == "demo")
+            .cloned()
+            .unwrap();
+        let from = demo["from"].as_str().unwrap();
+        assert!(!from.chars().any(|c| c.is_control()), "from 不应含控制字符");
+        assert!(from.chars().count() <= 120, "from 应限长");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

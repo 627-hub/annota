@@ -654,7 +654,7 @@ fn normalize_settings(input: &Value) -> Result<Value, crate::error::AppError> {
     // ielts 插件：词库目录（跨仓只读引用姐妹仓 ielts-7.5；空 = 走 env/内置默认）
     let ielts = input.get("ielts").unwrap_or(&defaults["ielts"]);
     let ielts_dir = ielts.get("dataDir").and_then(Value::as_str).unwrap_or("").trim();
-    if ielts_dir.len() > 400 {
+    if ielts_dir.chars().count() > 400 {
         return Err(crate::error::AppError::key("err.path_too_long"));
     }
     // P2-S1：用户信任的站点 origin 列表（高危命令的放行名单）
@@ -798,16 +798,30 @@ async fn plugins_install(
         .get("name")
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
-        .unwrap_or("plugin.zip");
-    if params.get("dry_run").map(String::as_str) == Some("1") {
-        return match crate::plugins::PluginsState::preview(&body) {
-            Ok(meta) => json_ok(json!({ "ok": true, "preview": meta })),
-            Err(e) => json_error(StatusCode::UNPROCESSABLE_ENTITY, &e),
-        };
-    }
-    match state.plugins().install(&body, name) {
-        Ok(v) => json_ok(v),
-        Err(e) => json_error(StatusCode::UNPROCESSABLE_ENTITY, &e),
+        .unwrap_or("plugin.zip")
+        .to_string();
+    let dry = params.get("dry_run").map(String::as_str) == Some("1");
+    let plugins = state.plugins().clone();
+    // zip 解析 + 落盘是阻塞 IO（≤4MB），挪出 tokio worker
+    match tokio::task::spawn_blocking(move || {
+        if dry {
+            crate::plugins::PluginsState::preview(&body)
+                .map(|meta| json!({ "ok": true, "preview": meta }))
+                .map_err(|e| e)
+        } else {
+            plugins
+                .install(&body, &name)
+                .map(|v| v)
+        }
+    })
+    .await
+    {
+        Ok(Ok(v)) => json_ok(v),
+        Ok(Err(e)) => json_error(StatusCode::UNPROCESSABLE_ENTITY, &e),
+        Err(e) => json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("plugin task join: {e}"),
+        ),
     }
 }
 
@@ -826,9 +840,15 @@ async fn plugins_toggle(
     let Some(enabled) = enabled else {
         return json_error(StatusCode::BAD_REQUEST, "enabled must be boolean");
     };
-    match state.plugins().toggle(&id, enabled) {
-        Ok(()) => json_ok(json!({ "ok": true, "id": id, "enabled": enabled })),
-        Err(code) => json_error(code, "toggle failed"),
+    let plugins = state.plugins().clone();
+    let id_resp = id.clone();
+    match tokio::task::spawn_blocking(move || plugins.toggle(&id, enabled)).await {
+        Ok(Ok(())) => json_ok(json!({ "ok": true, "id": id_resp, "enabled": enabled })),
+        Ok(Err(code)) => json_error(code, "toggle failed"),
+        Err(e) => json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("plugin task join: {e}"),
+        ),
     }
 }
 
@@ -840,9 +860,15 @@ async fn plugins_uninstall(
     if !crate::plugins::check_token(state.plugins().token(), &headers) {
         return plugins_token_rejected();
     }
-    match state.plugins().uninstall(&id) {
-        Ok(()) => json_ok(json!({ "ok": true, "id": id })),
-        Err(code) => json_error(code, "uninstall failed"),
+    let plugins = state.plugins().clone();
+    let id_resp = id.clone();
+    match tokio::task::spawn_blocking(move || plugins.uninstall(&id)).await {
+        Ok(Ok(())) => json_ok(json!({ "ok": true, "id": id_resp })),
+        Ok(Err(code)) => json_error(code, "uninstall failed"),
+        Err(e) => json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("plugin task join: {e}"),
+        ),
     }
 }
 

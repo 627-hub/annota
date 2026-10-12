@@ -77,7 +77,7 @@ pub fn create_tab(
     app: &AppHandle,
     window: &tauri::Window,
     url: String,
-    plugin_scripts: Vec<String>,
+    plugin_scripts: &[String],
     init_scripts: Vec<String>,
     bridge_js: &str,
     annotate_js: &str,
@@ -116,7 +116,7 @@ pub fn create_tab(
         .initialization_script(bridge_js);
     // 已安装插件：每插件一个独立 WKUserScript（parse 隔离——单插件语法错误只死它自己）。
     // 必须排在标注引擎之前：core 的安装循环读 window.__VA_PLUGIN_DEFS__，插件要先 push。
-    for s in &plugin_scripts {
+    for s in plugin_scripts {
         builder = builder.initialization_script(s);
     }
     builder = builder
@@ -639,7 +639,7 @@ pub fn restore_tabs(
     let mut restored = 0usize;
     for url in entries {
         // 单个 tab 恢复失败（如 URL 已失效）不阻断其余 tab。
-        match create_tab(app, window, url, plugin_scripts.clone(), Vec::new(), bridge_js, annotate_js, position, size) {
+        match create_tab(app, window, url, &plugin_scripts, Vec::new(), bridge_js, annotate_js, position, size) {
             Ok(_) => restored += 1,
             Err(e) => crate::alog!("ERROR", "[annota] 恢复 tab 失败（跳过）：{e}"),
         }

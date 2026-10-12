@@ -17,7 +17,7 @@ use axum::Json;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex};
 
 use crate::sync_server::AppState;
 
@@ -31,8 +31,9 @@ pub struct IeltsIndex {
     enrich: HashMap<String, String>,
 }
 
-/// 进程内只构建一次（词库目录在运行期不会变；换目录需重启 app）。
-static INDEX: OnceLock<Option<IeltsIndex>> = OnceLock::new();
+/// 进程内缓存已构建的索引；**未配置/构建失败不缓存**——settings 配好 dataDir 后
+/// 下一次请求即生效，无需重启（否则 None 被永久缓存，改配置永远不生效）。
+static INDEX: Mutex<Option<Arc<IeltsIndex>>> = Mutex::new(None);
 
 fn valid_word(word: &str) -> bool {
     let len = word.chars().count();
@@ -125,10 +126,18 @@ fn read_index(dir: &Path) -> Option<IeltsIndex> {
     Some(IeltsIndex { vocab, enrich })
 }
 
-fn index_for(settings: &Path) -> Option<&'static IeltsIndex> {
-    INDEX
-        .get_or_init(|| resolve_data_dir(settings).and_then(|dir| read_index(&dir)))
-        .as_ref()
+fn index_for(settings: &Path) -> Option<Arc<IeltsIndex>> {
+    if let Ok(g) = INDEX.lock() {
+        if let Some(idx) = g.as_ref() {
+            return Some(idx.clone());
+        }
+    }
+    let idx = read_index(&resolve_data_dir(settings)?)?;
+    let arc = Arc::new(idx);
+    if let Ok(mut g) = INDEX.lock() {
+        *g = Some(arc.clone());
+    }
+    Some(arc)
 }
 
 /// 粗粒度词形尝试（最多 6 个候选，精确匹配优先）：'s / -ing / -ed / -s。
@@ -172,14 +181,14 @@ fn slim_list(v: &Value, take: usize) -> Vec<Value> {
 
 fn lookup_in(index: &IeltsIndex, word: &str) -> Option<Value> {
     let key = word.trim().to_lowercase();
-    let mut line = None;
+    let mut matched: Option<(String, &str)> = None;
     for candidate in candidates(&key) {
         if let Some(found) = index.vocab.get(&candidate) {
-            line = Some(found.as_str());
+            matched = Some((candidate, found.as_str()));
             break;
         }
     }
-    let raw = line?;
+    let (matched_key, raw) = matched?;
     let parsed = serde_json::from_str::<Value>(raw).ok()?;
     let mut out = json!({
         "word": parsed.get("word").and_then(Value::as_str).unwrap_or(&key),
@@ -189,8 +198,8 @@ fn lookup_in(index: &IeltsIndex, word: &str) -> Option<Value> {
         "phrases": slim_list(parsed.get("phrases").unwrap_or(&Value::Null), MAX_LIST),
         "sentences": slim_list(parsed.get("sentences").unwrap_or(&Value::Null), MAX_LIST),
     });
-    // 富化数据（词源/同反义词）：有则合入，无则留空。
-    if let Some(eline) = index.enrich.get(&key) {
+    // 富化数据（词源/同反义词）：按**命中的词形**查（屈折变化如 abandoned 也能合入词干富化）
+    if let Some(eline) = index.enrich.get(&matched_key) {
         if let Ok(eval) = serde_json::from_str::<Value>(eline) {
             out["pos"] = eval.get("pos").cloned().unwrap_or(Value::Null);
             out["syn"] = json!(slim_list(eval.get("syn").unwrap_or(&Value::Null), MAX_ENRICH_LIST));
@@ -218,13 +227,26 @@ pub async fn lookup(State(state): State<AppState>, Query(params): Query<HashMap<
         )
             .into_response();
     }
-    match index_for(state.settings_path()) {
+    // 索引构建是阻塞 IO（首次 ~12k 行解析），挪出 tokio worker
+    let settings = state.settings_path().to_path_buf();
+    let index = match tokio::task::spawn_blocking(move || index_for(&settings)).await {
+        Ok(idx) => idx,
+        Err(e) => {
+            crate::logf::log("ERROR", &format!("ielts index task join: {e}"));
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "ok": false, "error": "internal" })),
+            )
+                .into_response();
+        }
+    };
+    match index {
         None => (
             StatusCode::NOT_IMPLEMENTED,
             Json(json!({ "ok": false, "error": "ielts-data-not-configured" })),
         )
             .into_response(),
-        Some(index) => match lookup_in(index, word) {
+        Some(index) => match lookup_in(&index, word) {
             Some(found) => {
                 let mut resp = json!({ "ok": true, "found": true });
                 if let Some(obj) = found.as_object() {
@@ -332,7 +354,7 @@ mod tests {
         let settings = appdir.join("settings.json");
         std::fs::write(
             &settings,
-            format!(r#"{{"ielts":{{"dataDir":"{}"}}}}"#, dir.display()),
+            json!({ "ielts": { "dataDir": dir.to_string_lossy() } }).to_string(),
         )
         .unwrap();
         let state = crate::sync_server::AppState::new(

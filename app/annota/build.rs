@@ -4,8 +4,14 @@ use std::path::Path;
 // include_str! 编译期内联。若忘了先跑 build.py（产物缺失/比 src 旧），这里直接失败并提示，
 // 避免打包进过期的标注引擎。
 fn ensure_dir_fresh(bundle: &Path, dir: &Path) {
+    // 目录不存在（如未配置插件）时静默跳过；其它 IO 错误必须暴露——否则新鲜度守卫被静默架空。
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+        Err(e) => panic!("无法读取 {}：{e}（新鲜度守卫无法执行）", dir.display()),
+    };
     let bundle_mtime = std::fs::metadata(bundle).and_then(|m| m.modified()).ok();
-    if let (Some(bm), Ok(entries)) = (bundle_mtime, std::fs::read_dir(dir)) {
+    if let Some(bm) = bundle_mtime {
         for e in entries.flatten() {
             if let Ok(m) = e.metadata().and_then(|md| md.modified()) {
                 if m > bm {

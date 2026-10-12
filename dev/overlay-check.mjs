@@ -6,6 +6,7 @@
 import { chromium } from 'playwright';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, '..');
@@ -58,6 +59,9 @@ async function loadKind(kind, viewport) {
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e.message)));
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  // file:// 下 XHR 被 CORS 拦（i18n loader），用真实 json 内容桩掉，避免假报错淹没断言
+  const i18nZh = readFileSync(resolve(root, 'app/annota/public/i18n/zh-CN.json'), 'utf8');
+  await page.route('**/i18n/*.json', (r) => r.fulfill({ contentType: 'application/json', body: i18nZh }));
   await page.addInitScript(mockBridge);
   await page.addInitScript(`window.__VA_OVERLAY_KIND__ = ${JSON.stringify(kind)};`);
   await page.goto('file://' + resolve(root, 'app/annota/public/overlay.html'), { waitUntil: 'domcontentloaded' });
@@ -69,8 +73,8 @@ async function loadKind(kind, viewport) {
 {
   const { browser, page, errors } = await loadKind('menu', { width: 240, height: 380 });
   ok((await page.getAttribute('#menu', 'data-open')) === '1', '菜单形态：data-open=1');
-const cmds = await page.locator('#menu [data-cmd]').count();
-ok(cmds === 6, '菜单形态：6 个命令项（历史/下载/不恢复会话/工作区/开发者工具/诊断）', `count=${cmds}`);
+  const cmds = await page.locator('#menu [data-cmd]').count();
+  ok(cmds === 7, '菜单形态：7 个命令项（历史/下载/不恢复会话/工作区/插件管理/开发者工具/诊断）', `count=${cmds}`);
   const zoomBtns = await page.locator('#menu [data-zoom]').count();
   ok(zoomBtns === 3, '菜单形态：3 个缩放按钮', `count=${zoomBtns}`);
   // 缩放生效 + 菜单不关

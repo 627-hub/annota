@@ -773,7 +773,7 @@ pub(crate) fn open_tab(app: tauri::AppHandle, url: Option<String>) -> Result<Str
         &app,
         &window,
         target,
-        plugin_scripts,
+        &plugin_scripts,
         Vec::new(),
         BRIDGE_JS,
         ANNOTATE_JS,
@@ -907,7 +907,7 @@ fn setup_webviews(window: &tauri::Window, app: &AppHandle) -> Result<(), AppErro
     let restored = tabs::restore_tabs(app, window, plugin_scripts.clone(), BRIDGE_JS, ANNOTATE_JS, pos, vp)?;
     if restored == 0 {
         let start_url = "http://127.0.0.1:8793/".to_string();
-        let id = tabs::create_tab(app, window, start_url, plugin_scripts, Vec::new(), BRIDGE_JS, ANNOTATE_JS, pos, vp)?;
+        let id = tabs::create_tab(app, window, start_url, &plugin_scripts, Vec::new(), BRIDGE_JS, ANNOTATE_JS, pos, vp)?;
         crate::alog!("INFO", "[annota] first tab created: {id}");
     }
 

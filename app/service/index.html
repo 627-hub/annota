@@ -236,6 +236,10 @@
     [data-theme="light"] .plugin-confirm { background:#fff; color:#24262a; border-color:#dfe1e6; }
     [data-theme="light"] .plugin-facts dd { color:#24262a; }
     [data-theme="light"] .plugin-tag { background:#eef0f3; color:#4b5563; }
+    /* 损坏态在浅色主题保持警示色（须排在通用浅色覆盖之后，同特异性靠源序取胜） */
+    [data-theme="light"] .plugin-row.is-broken { border-color:rgba(200,60,66,.45); background:rgba(241,117,123,.06); }
+    [data-theme="light"] .plugin-desc.is-broken { color:#b4232c; }
+    [data-theme="light"] .plugin-tag.is-broken { background:rgba(241,117,123,.16); color:#b4232c; }
     [data-theme="light"] .rail { background:#fff; }
     [data-theme="light"] .hero-copy h1,
     [data-theme="light"] .section-head h2,
@@ -1476,13 +1480,21 @@
       if (pluginBusy) return;
       if (!file) return;
       if (!/\.(zip|anpkg)$/i.test(file.name)) { setPluginFeedback('请选择 .zip 或 .anpkg 插件包。', 'error'); return; }
+      if (file.size > 4 * 1024 * 1024) { setPluginFeedback('插件包超过 4MB 上限（' + (file.size / 1024 / 1024).toFixed(1) + 'MB）。', 'error'); return; }
       pluginBusy = true;
       try {
         setPluginFeedback('正在检查插件包…', 'busy');
         if (!(await loadPlugins())) { setPluginFeedback(PLUGIN_OFFLINE_TEXT, 'error'); return; }
+        // 只读一次：确认框展示的字节 == 实际安装的字节
+        let bytes;
+        try {
+          bytes = await file.arrayBuffer();
+        } catch (error) {
+          setPluginFeedback('读取插件包失败：' + error.message, 'error');
+          return;
+        }
         let preview;
         try {
-          const bytes = await file.arrayBuffer();
           const data = await pluginWrite('POST', '/api/plugins/install?dry_run=1&name=' + encodeURIComponent(file.name), { body: bytes, contentType: 'application/zip' });
           preview = data.preview || {};
         } catch (error) {
@@ -1491,11 +1503,16 @@
           return;
         }
         setPluginFeedback('', '');
-        const confirmed = await askPluginInstall(preview, file);
+        let confirmed = false;
+        try {
+          confirmed = await askPluginInstall(preview, file);
+        } catch (error) {
+          setPluginFeedback('确认框异常：' + error.message, 'error');
+          return;
+        }
         if (!confirmed) return;   // 取消：直接丢弃
         setPluginFeedback('正在安装…', 'busy');
         try {
-          const bytes = await file.arrayBuffer();
           const data = await pluginWrite('POST', '/api/plugins/install?name=' + encodeURIComponent(file.name), { body: bytes, contentType: 'application/zip' });
           const label = preview.name || preview.id || data.id || file.name;
           setPluginFeedback('已安装 ' + label + '。', 'ready');
