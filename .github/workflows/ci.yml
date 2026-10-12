@@ -51,7 +51,10 @@ jobs:
 
       - name: Python 单测
         run: |
-          for t in dev/*.test.py; do echo "== $t"; python3 "$t"; done
+          shopt -s nullglob
+          tests=(dev/*.test.py)
+          if [ "${#tests[@]}" -eq 0 ]; then echo "no python tests, skip"; exit 0; fi
+          for t in "${tests[@]}"; do echo "== $t"; python3 "$t"; done
 
       - name: smoke（HTML 内联脚本语法 + 基础行为）
         run: |
