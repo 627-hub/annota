@@ -2,7 +2,11 @@
 
 Annota 的重要变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循[语义化版本](https://semver.org/lang/zh-CN/)。更早版本见 git tag（`v0.2.0`–`v0.2.4`）。
 
-## [Unreleased] — 自 v0.2.4 起
+## [Unreleased]
+
+## [0.2.5] - 2026-10-12
+
+自 v0.2.4 起的全部变更（插件生态 + 安全/国际化批次）。
 
 ### 新增
 
@@ -24,4 +28,5 @@ Annota 的重要变更。格式遵循 [Keep a Changelog](https://keepachangelog.
 - 依赖安全：tauri 2.12.1→2.12.3；rmcp（4 告警，2 高危）与 glib（1 中危）升级受阻于上游，已提 [annota#1](https://github.com/627-hub/annota/issues/1) / [tauri#16264](https://github.com/tauri-apps/tauri/issues/16264) 跟踪。
 - 删除死代码（旧 Python sync_server / anki_export / Electron 壳），清零 28 条 CodeQL 告警；CI Python 单测步骤 nullglob 兜底。
 
-[Unreleased]: https://github.com/627-hub/annota/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/627-hub/annota/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/627-hub/annota/compare/v0.2.4...v0.2.5
