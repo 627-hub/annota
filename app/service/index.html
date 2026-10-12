@@ -193,6 +193,49 @@
     .page-toast { position:fixed; right:25px; bottom:22px; z-index:5; max-width:380px; padding:10px 14px; border:1px solid rgba(255,255,255,.11); border-radius:11px; background:#1a1b1f; color:#e6e6e8; box-shadow:0 12px 36px rgba(0,0,0,.32); opacity:0; transform:translateY(6px); transition:all 150ms ease; pointer-events:none; font-size:11px; }
     .page-toast.is-visible { opacity:1; transform:translateY(0); }
     .mcp-address { align-self:center; color:#d1ad75; font:10px var(--va-font-mono); }
+    .plugins-layout { display:grid; gap:12px; margin-top:24px; }
+    .plugin-banner { margin:0 0 14px; padding:10px 12px; border:1px solid rgba(241,117,123,.3); border-radius:10px; background:rgba(241,117,123,.06); color:#f19a9d; font-size:11px; }
+    .plugin-banner[hidden] { display:none; }
+    .plugin-list { display:grid; gap:8px; }
+    .plugin-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:14px; align-items:start; padding:13px 15px; border:1px solid rgba(255,255,255,.07); border-radius:11px; background:#151619; }
+    .plugin-row.is-broken { border-color:rgba(241,117,123,.45); background:rgba(241,117,123,.05); }
+    .plugin-main { min-width:0; }
+    .plugin-title { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+    .plugin-title strong { color:#e1e2e3; font-size:12px; font-weight:620; overflow-wrap:anywhere; }
+    .plugin-version, .plugin-id, .plugin-from { color:#7e858e; font:10px var(--va-font-mono); }
+    .plugin-meta { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:5px; }
+    .plugin-id { overflow-wrap:anywhere; }
+    .plugin-desc { margin:7px 0 0; color:#9298a1; font-size:10px; line-height:1.55; }
+    .plugin-desc.is-broken { color:#f19a9d; }
+    .plugin-perms { display:flex; flex-wrap:wrap; gap:5px; margin-top:9px; }
+    .plugin-chip { padding:2px 8px; border:1px solid rgba(245,166,35,.2); border-radius:999px; background:rgba(245,166,35,.06); color:#d9b57a; font-size:9px; }
+    .plugin-tag { display:inline-flex; align-items:center; height:18px; padding:0 7px; border-radius:999px; background:rgba(255,255,255,.06); color:#a4a9b1; font-size:9px; }
+    .plugin-tag.is-broken { background:rgba(241,117,123,.14); color:#f19a9d; }
+    .plugin-actions { display:flex; align-items:center; gap:12px; }
+    .plugin-drop { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:14px; padding:20px 22px; border:1px dashed rgba(255,255,255,.16); border-radius:12px; background:rgba(255,255,255,.02); cursor:pointer; transition:border-color 130ms ease,background 130ms ease; }
+    .plugin-drop:hover { border-color:rgba(245,166,35,.32); }
+    .plugin-drop.is-over { border-color:var(--va-accent); background:rgba(245,166,35,.08); }
+    .plugin-drop-copy strong { display:block; color:#dfe0e2; font-size:12px; font-weight:610; }
+    .plugin-drop-copy span { display:block; margin-top:4px; color:#7b828c; font-size:10px; }
+    .plugin-confirm { width:min(470px,calc(100% - 32px)); padding:0; border:1px solid rgba(255,255,255,.12); border-radius:14px; background:#1a1b1f; color:#e4e5e7; box-shadow:0 24px 60px rgba(0,0,0,.5); }
+    .plugin-confirm::backdrop { background:rgba(0,0,0,.5); }
+    .plugin-confirm-form { display:grid; gap:13px; padding:20px; }
+    .plugin-confirm h3 { margin:0; color:#eceef0; font-size:14px; font-weight:630; }
+    .plugin-facts { display:grid; grid-template-columns:auto minmax(0,1fr); gap:7px 14px; margin:0; font-size:11px; }
+    .plugin-facts dt { color:#7e858e; }
+    .plugin-facts dd { margin:0; min-width:0; color:#d9dadc; overflow-wrap:anywhere; }
+    .plugin-confirm-perms { display:flex; flex-wrap:wrap; align-items:center; gap:5px; }
+    .plugin-perms-label { margin-right:4px; color:#7e858e; font-size:10px; }
+    .plugin-warning { margin:0; padding:10px 12px; border:1px solid rgba(245,166,35,.25); border-radius:10px; background:rgba(245,166,35,.06); color:#e6c48a; font-size:11px; line-height:1.55; }
+    .plugin-confirm-actions { justify-content:flex-end; }
+    [data-theme="light"] .plugin-row { border-color:#dfe1e6; background:#fff; }
+    [data-theme="light"] .plugin-row.is-broken { background:rgba(241,117,123,.05); }
+    [data-theme="light"] .plugin-title strong, [data-theme="light"] .plugin-drop-copy strong, [data-theme="light"] .plugin-confirm h3 { color:#17181c; }
+    [data-theme="light"] .plugin-desc, [data-theme="light"] .plugin-drop-copy span, [data-theme="light"] .plugin-version, [data-theme="light"] .plugin-id, [data-theme="light"] .plugin-from, [data-theme="light"] .plugin-facts dt, [data-theme="light"] .plugin-perms-label { color:#626b78; }
+    [data-theme="light"] .plugin-drop { border-color:#cfd3da; background:#fff; }
+    [data-theme="light"] .plugin-confirm { background:#fff; color:#24262a; border-color:#dfe1e6; }
+    [data-theme="light"] .plugin-facts dd { color:#24262a; }
+    [data-theme="light"] .plugin-tag { background:#eef0f3; color:#4b5563; }
     [data-theme="light"] .rail { background:#fff; }
     [data-theme="light"] .hero-copy h1,
     [data-theme="light"] .section-head h2,
@@ -252,6 +295,8 @@
       .onboarding-step + .onboarding-step { border-top:1px solid rgba(255,255,255,.065); }
       .settings-layout { grid-template-columns:1fr; }
       .settings-grid { grid-template-columns:1fr; }
+      .plugin-row { grid-template-columns:minmax(0,1fr); }
+      .plugin-actions { justify-content:flex-start; }
       .library-toolbar { align-items:flex-start; flex-wrap:wrap; }
       .library-filter { width:100%; margin-left:0; }
       .library-main { grid-template-columns:minmax(0,1fr) auto; gap:8px; }
@@ -270,6 +315,7 @@
         <a class="rail-link is-active" href="#home" data-route="home" aria-label="首页"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 10 8.5-7 8.5 7v9a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3.5 19v-9Z"/><path d="M9 20v-6h6v6"/></svg><span>首页</span></a>
         <a class="rail-link" href="#library" data-route="library" aria-label="我的库"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16M4 12h16M4 18.5h16"/><path d="M7 3v5M17 10v4M10 16v5"/></svg><span>我的库</span></a>
         <a class="rail-link" href="#groups" data-route="groups" aria-label="组"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.4"/><path d="M3.5 19c.5-3.1 2.3-4.7 5.5-4.7s5 1.6 5.5 4.7M14.5 14.8c3.4-.7 5.4.7 6 3.8"/></svg><span>组</span></a>
+        <a class="rail-link" href="#plugins" data-route="plugins" aria-label="插件"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0V8ZM12 16v5"/></svg><span>插件</span></a>
       </nav>
       <div class="rail-spacer"></div>
       <nav class="rail-nav">
@@ -428,6 +474,45 @@
               <section class="setting-section"><h3>Agent 接入</h3><p>本地 MCP 服务地址，供兼容的 agent 调用 Annota 工具。</p><div class="setting-actions"><code class="mcp-address">http://127.0.0.1:8794/mcp</code><button id="copy-mcp" class="secondary-button">复制地址</button></div></section>
             </div>
           </section>
+          <section class="screen" id="screen-plugins" aria-label="插件">
+            <div class="eyebrow">ANNOTA PLUGINS</div>
+            <div class="section-head" style="align-items:center;margin-top:10px"><div><h2 style="font-size:29px">插件</h2><p>安装、启用或卸载 Annota 插件。插件可读写标注数据，只安装可信来源的包。</p></div></div>
+            <div class="plugins-layout">
+              <p class="plugin-banner" id="plugin-banner" role="alert" hidden></p>
+              <section class="setting-section" aria-labelledby="plugin-installed-heading">
+                <h3 id="plugin-installed-heading">已安装</h3>
+                <p>关闭开关即停用。已打开的页面需重载标签页后生效。</p>
+                <div id="plugin-installed" class="plugin-list" aria-live="polite"></div>
+              </section>
+              <section class="setting-section" aria-labelledby="plugin-builtin-heading">
+                <h3 id="plugin-builtin-heading">内置</h3>
+                <p>随 Annota 提供，不可停用或卸载。</p>
+                <div id="plugin-builtin" class="plugin-list"></div>
+              </section>
+              <section class="setting-section" aria-labelledby="plugin-install-heading">
+                <h3 id="plugin-install-heading">安装插件</h3>
+                <p>选择或拖入 .zip / .anpkg 插件包。安装前会先校验，并显示插件信息与权限。</p>
+                <div class="plugin-drop" id="plugin-drop">
+                  <span class="plugin-drop-copy"><strong>拖入插件包到这里</strong><span>也可以点击右侧按钮选择文件</span></span>
+                  <button class="secondary-button" type="button" id="plugin-pick">选择插件包</button>
+                  <input id="plugin-file" type="file" accept=".zip,.anpkg" hidden>
+                </div>
+                <div id="plugin-feedback" class="settings-feedback" role="status" aria-live="polite"></div>
+              </section>
+            </div>
+            <dialog id="plugin-confirm" class="plugin-confirm" aria-labelledby="plugin-confirm-title">
+              <form method="dialog" class="plugin-confirm-form">
+                <h3 id="plugin-confirm-title">安装此插件？</h3>
+                <dl class="plugin-facts" id="plugin-facts"></dl>
+                <div class="plugin-confirm-perms" id="plugin-confirm-perms"></div>
+                <p class="plugin-warning">该插件将能读写你的标注数据并访问本地服务。请只安装你信任来源的插件。</p>
+                <div class="setting-actions plugin-confirm-actions">
+                  <button class="secondary-button" type="submit" value="cancel">取消</button>
+                  <button class="primary-button" type="submit" value="confirm" id="plugin-confirm-ok">确认安装</button>
+                </div>
+              </form>
+            </dialog>
+          </section>
         </main>
       </div>
     </div>
@@ -466,13 +551,14 @@
     }
     document.getElementById('open-form').addEventListener('submit', (event) => { event.preventDefault(); openContent(document.getElementById('quick-url').value); });
 
-    const screens = ['home', 'library', 'groups', 'settings'];
+    const screens = ['home', 'library', 'groups', 'settings', 'plugins'];
     function setRoute(name) {
       const route = screens.includes(name) ? name : 'home';
       for (const screen of screens) document.getElementById('screen-' + screen).classList.toggle('is-active', screen === route);
       document.querySelectorAll('[data-route]').forEach((link) => link.classList.toggle('is-active', link.dataset.route === route));
       document.getElementById('crumb-label').textContent = 'ANNOTATION SPACE / ' + route.toUpperCase();
       if (route === 'library') renderLibrary();
+      if (route === 'plugins') loadPlugins();
       if (route === 'settings' && typeof refreshSecretAndSites === 'function') refreshSecretAndSites();
       if (route === 'groups') {
         renderGroups();
@@ -1214,6 +1300,237 @@
         bar.append(message, login);
       }
     }
+    // ---------- 插件管理（/api/plugins；写请求需带列表返回的 X-Annota-Token） ----------
+    const PLUGIN_OFFLINE_TEXT = '本地服务未启动，请先在 Annota 中打开工作区';
+    const pluginsState = { token: '', items: [], loadError: false };
+    let pluginBusy = false;
+    const pluginEl = (id) => document.getElementById(id);
+    function pNode(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text != null) node.textContent = text;
+      return node;
+    }
+    function setPluginFeedback(message, state) {
+      const node = pluginEl('plugin-feedback');
+      node.textContent = message || '';
+      if (state) node.dataset.state = state; else delete node.dataset.state;
+    }
+    async function pluginFetch(method, path, opts) {
+      const options = opts || {};
+      const headers = { Accept: 'application/json' };
+      if (method !== 'GET') headers['X-Annota-Token'] = pluginsState.token;
+      if (options.contentType) headers['Content-Type'] = options.contentType;
+      let response;
+      try { response = await fetch(path, { method, headers, body: options.body }); }
+      catch (_) { throw new Error(PLUGIN_OFFLINE_TEXT); }
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.ok === false) {
+        const error = new Error(data.error || ('HTTP ' + response.status));
+        error.status = response.status;
+        throw error;
+      }
+      return data;
+    }
+    // 写请求遇到 403（token 失效）时刷新列表拿新 token，只重试一次
+    async function pluginWrite(method, path, opts) {
+      try { return await pluginFetch(method, path, opts); }
+      catch (error) {
+        if (error.status !== 403) throw error;
+        await loadPlugins();
+        return pluginFetch(method, path, opts);
+      }
+    }
+    async function loadPlugins() {
+      try {
+        const data = await pluginFetch('GET', '/api/plugins');
+        pluginsState.token = typeof data.token === 'string' ? data.token : '';
+        pluginsState.items = Array.isArray(data.plugins) ? data.plugins : [];
+        pluginsState.loadError = false;
+      } catch (_) {
+        pluginsState.loadError = true;
+      }
+      renderPlugins();
+      return !pluginsState.loadError;
+    }
+    function renderPlugins() {
+      const offline = pluginsState.loadError;
+      const banner = pluginEl('plugin-banner');
+      banner.hidden = !offline;
+      banner.textContent = offline ? PLUGIN_OFFLINE_TEXT : '';
+      const builtinBox = pluginEl('plugin-builtin');
+      const installedBox = pluginEl('plugin-installed');
+      builtinBox.replaceChildren();
+      installedBox.replaceChildren();
+      if (offline) return;
+      const builtin = pluginsState.items.filter((p) => p.builtin);
+      const installed = pluginsState.items.filter((p) => !p.builtin);
+      if (!builtin.length) builtinBox.appendChild(pNode('div', 'empty-library', '暂无内置插件。'));
+      builtin.forEach((p) => builtinBox.appendChild(renderBuiltinPluginRow(p)));
+      if (!installed.length) installedBox.appendChild(pNode('div', 'empty-library', '尚未安装插件。拖入插件包即可安装。'));
+      installed.forEach((p) => installedBox.appendChild(renderInstalledPluginRow(p)));
+    }
+    function renderBuiltinPluginRow(plugin) {
+      const row = pNode('article', 'plugin-row');
+      const main = pNode('div', 'plugin-main');
+      const title = pNode('div', 'plugin-title');
+      title.append(pNode('strong', '', plugin.name || plugin.id), pNode('span', 'plugin-tag', '内置'));
+      main.append(title, pNode('code', 'plugin-id', plugin.id));
+      row.appendChild(main);
+      return row;
+    }
+    function renderInstalledPluginRow(plugin) {
+      const broken = !!plugin.broken;
+      const label = plugin.name || plugin.id;
+      const row = pNode('article', 'plugin-row' + (broken ? ' is-broken' : ''));
+      const main = pNode('div', 'plugin-main');
+      const title = pNode('div', 'plugin-title');
+      title.appendChild(pNode('strong', '', label));
+      if (plugin.version) title.appendChild(pNode('span', 'plugin-version', 'v' + plugin.version));
+      if (broken) title.appendChild(pNode('span', 'plugin-tag is-broken', '损坏'));
+      if (plugin.viewOnly) title.appendChild(pNode('span', 'plugin-tag', '只读'));
+      const meta = pNode('div', 'plugin-meta');
+      meta.appendChild(pNode('code', 'plugin-id', plugin.id));
+      if (plugin.from) meta.appendChild(pNode('span', 'plugin-from', '来源：' + plugin.from));
+      main.append(title, meta);
+      if (plugin.description) main.appendChild(pNode('p', 'plugin-desc', plugin.description));
+      if (broken) main.appendChild(pNode('p', 'plugin-desc is-broken', '插件文件已损坏，无法启用。可卸载后重新安装。'));
+      if (Array.isArray(plugin.permissions) && plugin.permissions.length) {
+        const perms = pNode('div', 'plugin-perms');
+        plugin.permissions.forEach((perm) => perms.appendChild(pNode('span', 'plugin-chip', String(perm))));
+        main.appendChild(perms);
+      }
+      const actions = pNode('div', 'plugin-actions');
+      if (!broken) {
+        const toggle = pNode('label', 'settings-toggle');
+        const input = pNode('input');
+        input.type = 'checkbox';
+        input.checked = !!plugin.enabled;
+        input.setAttribute('aria-label', '启用 ' + label);
+        input.addEventListener('change', () => togglePlugin(plugin, input));
+        toggle.append(input, pNode('span', '', '启用'));
+        actions.appendChild(toggle);
+      }
+      const remove = pNode('button', 'secondary-button danger-button', '卸载');
+      remove.type = 'button';
+      remove.setAttribute('aria-label', '卸载 ' + label);
+      remove.addEventListener('click', () => uninstallPlugin(plugin));
+      actions.appendChild(remove);
+      row.append(main, actions);
+      return row;
+    }
+    async function togglePlugin(plugin, input) {
+      const next = input.checked;
+      const label = plugin.name || plugin.id;
+      input.disabled = true;
+      try {
+        await pluginWrite('POST', '/api/plugins/' + encodeURIComponent(plugin.id) + '/toggle', { body: JSON.stringify({ enabled: next }), contentType: 'application/json' });
+        notify(next ? '已启用 ' + label + '。新打开的标签页生效' : '已停用 ' + label + '。已打开的页面仍在运行该插件，重载标签页后生效');
+      } catch (error) {
+        notify('操作失败：' + error.message);
+      }
+      await loadPlugins();
+    }
+    async function uninstallPlugin(plugin) {
+      const label = plugin.name || plugin.id;
+      if (!confirm('卸载插件「' + label + '」？')) return;
+      try {
+        await pluginWrite('DELETE', '/api/plugins/' + encodeURIComponent(plugin.id));
+        notify('已卸载 ' + label + '。已打开的页面仍在运行该插件，重载标签页后生效');
+      } catch (error) {
+        notify('卸载失败：' + error.message);
+      }
+      await loadPlugins();
+    }
+    // 确认框：返回 true 表示用户确认安装；取消 / Esc 均视为丢弃
+    function askPluginInstall(preview, file) {
+      return new Promise((resolve) => {
+        const dialog = pluginEl('plugin-confirm');
+        const facts = pluginEl('plugin-facts');
+        const permsBox = pluginEl('plugin-confirm-perms');
+        const existing = pluginsState.items.find((p) => !p.builtin && p.id === preview.id);
+        const sizeBytes = typeof preview.size === 'number' ? preview.size : file.size;
+        const rows = [
+          ['插件 ID', preview.id || '—'],
+          ['名称', preview.name || '—'],
+          ['版本', preview.version || '—'],
+          ['来源文件', file.name],
+          ['体积', (sizeBytes / 1024).toFixed(1) + ' KB'],
+        ];
+        if (preview.engine) rows.push(['引擎', String(preview.engine)]);
+        if (preview.viewOnly) rows.push(['模式', '只读插件']);
+        if (preview.description) rows.push(['描述', preview.description]);
+        if (existing) rows.push(['覆盖', '已安装同 ID 插件' + (existing.version ? '（v' + existing.version + '）' : '') + '，将覆盖升级并保留启用状态']);
+        facts.replaceChildren();
+        rows.forEach(([key, value]) => facts.append(pNode('dt', '', key), pNode('dd', '', String(value))));
+        permsBox.replaceChildren();
+        const perms = Array.isArray(preview.permissions) ? preview.permissions : [];
+        permsBox.appendChild(pNode('span', 'plugin-perms-label', perms.length ? '请求的权限' : '未声明权限'));
+        perms.forEach((perm) => permsBox.appendChild(pNode('span', 'plugin-chip', String(perm))));
+        dialog.returnValue = '';
+        dialog.addEventListener('close', () => resolve(dialog.returnValue === 'confirm'), { once: true });
+        dialog.showModal();
+      });
+    }
+    async function installPluginFile(file) {
+      if (pluginBusy) return;
+      if (!file) return;
+      if (!/\.(zip|anpkg)$/i.test(file.name)) { setPluginFeedback('请选择 .zip 或 .anpkg 插件包。', 'error'); return; }
+      pluginBusy = true;
+      try {
+        setPluginFeedback('正在检查插件包…', 'busy');
+        if (!(await loadPlugins())) { setPluginFeedback(PLUGIN_OFFLINE_TEXT, 'error'); return; }
+        let preview;
+        try {
+          const bytes = await file.arrayBuffer();
+          const data = await pluginWrite('POST', '/api/plugins/install?dry_run=1&name=' + encodeURIComponent(file.name), { body: bytes, contentType: 'application/zip' });
+          preview = data.preview || {};
+        } catch (error) {
+          setPluginFeedback('安装失败：' + error.message, 'error');
+          notify('安装失败：' + error.message);
+          return;
+        }
+        setPluginFeedback('', '');
+        const confirmed = await askPluginInstall(preview, file);
+        if (!confirmed) return;   // 取消：直接丢弃
+        setPluginFeedback('正在安装…', 'busy');
+        try {
+          const bytes = await file.arrayBuffer();
+          const data = await pluginWrite('POST', '/api/plugins/install?name=' + encodeURIComponent(file.name), { body: bytes, contentType: 'application/zip' });
+          const label = preview.name || preview.id || data.id || file.name;
+          setPluginFeedback('已安装 ' + label + '。', 'ready');
+          notify('已安装 ' + label + '。新打开的标签页生效');
+          await loadPlugins();
+        } catch (error) {
+          setPluginFeedback('安装失败：' + error.message, 'error');
+          notify('安装失败：' + error.message);
+        }
+      } finally {
+        pluginBusy = false;
+      }
+    }
+    (function wirePluginInstall() {
+      const zone = pluginEl('plugin-drop');
+      const input = pluginEl('plugin-file');
+      zone.addEventListener('click', () => input.click());   // 「选择插件包」按钮冒泡到此即可
+      input.addEventListener('click', (event) => event.stopPropagation());   // 防止程序触发的 click 回冒泡再次打开
+      input.addEventListener('change', () => {
+        const file = input.files && input.files[0];
+        input.value = '';
+        if (file) installPluginFile(file);
+      });
+      ['dragenter', 'dragover'].forEach((type) => zone.addEventListener(type, (event) => {
+        event.preventDefault(); zone.classList.add('is-over');
+      }));
+      zone.addEventListener('dragleave', (event) => {
+        if (!zone.contains(event.relatedTarget)) zone.classList.remove('is-over');
+      });
+      zone.addEventListener('drop', (event) => {
+        event.preventDefault(); zone.classList.remove('is-over');
+        const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
+        if (file) installPluginFile(file);
+      });
+    })();
     async function initializeGroupPage() {
       const api = groupApi();
       try { if (api && typeof api.handleTicket === 'function') await api.handleTicket(); }

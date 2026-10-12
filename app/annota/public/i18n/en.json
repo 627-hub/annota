@@ -63,6 +63,7 @@
   "downloads": "Downloads",
   "no_restore": "Don't restore last session",
   "open_workspace": "Open workspace",
+  "open_plugins": "Plugins",
   "trust_site": "Trust this site",
   "trust_site_title": "Allow this tool to use screenshot, clipboard and AI features on the current site",
   "zoom": "Zoom",

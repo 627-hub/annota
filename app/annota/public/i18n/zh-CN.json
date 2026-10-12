@@ -63,6 +63,7 @@
   "downloads": "下载",
   "no_restore": "不恢复上次会话",
   "open_workspace": "打开工作区",
+  "open_plugins": "插件管理",
   "trust_site": "信任当前站点",
   "trust_site_title": "允许本工具在当前网站上使用截图、剪贴板与 AI 等功能",
   "zoom": "缩放",

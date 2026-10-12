@@ -256,7 +256,8 @@ const OVERLAY_ID: &str = "overlay";
 static TAB_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static OVERLAY_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 /// ⋯ 菜单浮层高度（逻辑像素）。菜单项固定，可静态给定。
-const PANEL_MENU_H: f64 = 380.0;
+/// 2026-10：加「插件管理」后实测菜单 376px，380 仅剩 4px 余量 → 放宽到 420。
+const PANEL_MENU_H: f64 = 420.0;
 
 fn toolbar_total_height() -> f64 {
     f64::from_bits(TOOLBAR_HEIGHT_BITS.load(std::sync::atomic::Ordering::Relaxed))

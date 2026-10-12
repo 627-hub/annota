@@ -117,6 +117,7 @@
     <button data-cmd="downloads" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 10.5l5 5 5-5M5 19h14"/></svg>下载</button>
     <button data-cmd="no-restore" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12a8.5 8.5 0 1 0 2.5-6M3.5 4.5V9H8"/></svg>不恢复上次会话</button>
     <button data-cmd="workspace" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.5"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.5"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.5"/></svg>打开工作区</button>
+    <button data-cmd="plugins" role="menuitem"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 3v5M15 3v5M7 8h10v3a5 5 0 0 1-10 0V8ZM12 16v5"/></svg>插件管理</button>
     <button data-action="trust-site" role="menuitem" title="允许本工具在当前网站上使用截图、剪贴板与 AI 等功能"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5l7 2.6v5.2c0 4.3-2.9 7.7-7 9.2-4.1-1.5-7-4.9-7-9.2V6.1z"/><path d="M9 12l2.2 2.2L15.5 10"/></svg>信任当前站点</button>
     <div class="menu-sep"></div>
     <div class="menu-hint">缩放</div>
@@ -155,6 +156,7 @@
       setBtnText('[data-cmd="downloads"]', 'downloads');
       setBtnText('[data-cmd="no-restore"]', 'no_restore');
       setBtnText('[data-cmd="workspace"]', 'open_workspace');
+      setBtnText('[data-cmd="plugins"]', 'open_plugins');
       setBtnText('[data-action="trust-site"]', 'trust_site');
       setBtnText('[data-cmd="devtools"]', 'devtools');
       setBtnText('[data-cmd="diag"]', 'diag_info');
@@ -174,6 +176,7 @@
 
     const API = 'http://127.0.0.1:8793';
     const WORKSPACE = 'http://127.0.0.1:8793/';
+    const PLUGINS = 'http://127.0.0.1:8793/#plugins';
     function tauri() { return window.__TAURI_INTERNALS__ || window.__TAURI__; }
     function invoke(cmd, args) {
       const t = tauri();
@@ -255,6 +258,8 @@
       const fail = (err) => { toast(__i18n.t('action_failed') + errText(err), 'error'); };
       if (cmd === 'workspace') {
         Promise.resolve(invoke('navigate_browser', { url: WORKSPACE })).then(closeMe).catch(fail);
+      } else if (cmd === 'plugins') {
+        Promise.resolve(invoke('navigate_browser', { url: PLUGINS })).then(closeMe).catch(fail);
       } else if (cmd === 'no-restore') {
         Promise.resolve(invoke('tab_session_clear')).then(closeMe).catch(fail);
       } else if (cmd === 'devtools') {
