@@ -2178,9 +2178,10 @@ button { color: inherit; }
     return out;
   }
 
+  const groupInstall = (coreApi) => { core = coreApi; root.__ANNOTA_GROUP__ = root.VAGroup; };
   root.VAGroup = {
     GitStore, HubStore, storeFor,
-    install(coreApi) { core = coreApi; root.__ANNOTA_GROUP__ = root.VAGroup; },
+    install: groupInstall,
     listGroups, addGroup, findGroup, saveGroups, bindOf,
     newGid, createGroup, inviteLink, parseInvite, joinGroup, me,
     pullForMedia, pushForMedia, groupsForMedia,
@@ -2191,6 +2192,9 @@ button { color: inherit; }
     session, currentUser, signOut, hubMe, setHubMe, hubIdentity,
     _b64: { encode: b64encode, decode: b64decode },
   };
+  (root.__VA_PLUGIN_DEFS__ = root.__VA_PLUGIN_DEFS__ || []).push({
+    id: 'group', name: '组同步', viewOnly: true, install: groupInstall,
+  });
 })(typeof self !== 'undefined' ? self : this);
 
 /* ===== src/export.js ===== */
@@ -2672,12 +2676,14 @@ button { color: inherit; }
   function cancel() { if (running) { cancelled = true; paused = false; } }
 
   const api = { capabilities, start, pause, resume, cancel, status };
-  root.VAExport = {
-    install(coreApi) {
-      core = coreApi;
-      root.__ANNOTA_EXPORT__ = api;
-    },
+  const install = (coreApi) => {
+    core = coreApi;
+    root.__ANNOTA_EXPORT__ = api;      // intent 链路（core decodeExportIntent）依赖此兼容别名
   };
+  root.VAExport = { install };
+  (root.__VA_PLUGIN_DEFS__ = root.__VA_PLUGIN_DEFS__ || []).push({
+    id: 'anki-export', name: 'Anki 导出', viewOnly: false, install,
+  });
 })(typeof window !== 'undefined' ? window : this);
 
 /* ===== src/browser-shell.js ===== */
@@ -4774,6 +4780,7 @@ button { color: inherit; }
       actions.append(mkbtn('跳转到画面', () => { if (state.binding) state.binding.locate(e); pop.remove(); }), mkbtn('关闭', () => pop.remove()));
       if (timed) pop.append(el('div', null, formatTime(e.t) + ' · 显示 ' + dur + ' 秒'), actions);
       else pop.append(actions);
+      pluginHook('entryPop', { entry: e, pop });   // 插件接缝：词条详情挂载前（只读/组来源路径）
       uiRoot.appendChild(pop);
       return;
     }
@@ -4813,6 +4820,7 @@ button { color: inherit; }
     pop.append(actions);
     pop.querySelectorAll('.va-popover > label').forEach((n) => { n.className = 'va-field-label'; });
     updRange();
+    pluginHook('entryPop', { entry: e, pop });   // 插件接缝：词条详情挂载前（编辑路径）
     uiRoot.appendChild(pop);
     wordInput.focus({ preventScroll: true });
   }
@@ -5258,6 +5266,19 @@ button { color: inherit; }
     try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {}
   }
 
+  /* ---------- 插件注册表 ---------- */
+  // 插件文件在 core 之前拼入（build.py PLUGINS 清单），各自向
+  // window.__VA_PLUGIN_DEFS__.push({id, name, viewOnly, install})；core 启动时统一安装。
+  // 单个插件安装失败绝不打断标注启动（隔离 + console 报错）。
+  window.VAPlugins = [];
+  const VA_HOOKS = {};
+  function pluginHook(name, payload) {
+    const fns = VA_HOOKS[name] || [];
+    for (let i = 0; i < fns.length; i++) {
+      try { fns[i](payload); } catch (e) { console.error('[annota] 插件钩子失败：' + name, e); }
+    }
+  }
+
   const coreApi = {
     state,
     binding: () => state.binding,
@@ -5277,13 +5298,18 @@ button { color: inherit; }
     mergePack: (a, b) => mergeLocal(a, b),   // 组同步复用同一合并规则
     validEntries,
     fingerprint,
+    onHook: (name, fn) => { (VA_HOOKS[name] = VA_HOOKS[name] || []).push(fn); },
   };
-  try {
-    if (window.VAExport && typeof window.VAExport.install === 'function') window.VAExport.install(coreApi);
-  } catch (e) { /* Export UI must never interrupt annotation startup. */ }
-  try {
-    if (window.VAGroup && typeof window.VAGroup.install === 'function') window.VAGroup.install(coreApi);
-  } catch (e) { /* Group layer must never interrupt annotation startup. */ }
+  for (const p of (window.__VA_PLUGIN_DEFS__ || [])) {
+    try {
+      if (VIEW_ONLY && !p.viewOnly) continue;                          // 观看端只装只读插件
+      if (typeof p.enabled === 'function' && !p.enabled({ viewOnly: VIEW_ONLY })) continue;
+      p.install(coreApi);
+      window.VAPlugins.push({ id: p.id, name: p.name });
+    } catch (e) {
+      console.error('[annota] 插件安装失败：' + (p && p.id), e);
+    }
+  }
 
   /* ---------- 启动 ---------- */
   loadAppSettings();

@@ -50,6 +50,10 @@ VARIANTS = {
 BROWSER_VARIANT = "annotate.browser.js"
 
 PARTS = ["geometry.js", "textquote.js", "adapter.js", "media.js", "identity.js"]
+# 插件清单（相对 src/）。构建期静态注册：插件文件在 core.js 之前拼入，
+# 各自向 window.__VA_PLUGIN_DEFS__.push({id,name,viewOnly,install})，由 core 统一安装。
+# 顺序即拼接顺序；新增插件只改这一行（两个变体共用同一清单，禁止分叉）。
+PLUGINS = []
 # browser-shell.js 在 core.js 之前（core 启动时读取 window.VA_BROWSER_SHELL）
 TAIL = ["design-tokens.js", "overlay-theme.js", "group.js", "export.js", "version-check.js", "browser-shell.js", "core.js"]
 # 浏览器壳变体不装 version-check.js：那是 userscript 的自动更新探测，
@@ -137,6 +141,9 @@ def main():
     if pk:
         body.append("/* ===== data: hub publishable key ===== */\nwindow.__ANNOTA_CB_PK__=%s;\n" % json.dumps(pk))
 
+    for p in PLUGINS:
+        body.append("/* ===== src/%s ===== */\n%s\n" % (p, read_src(p)))
+
     for p in TAIL:
         body.append("/* ===== src/%s ===== */\n%s\n" % (p, read_src(p)))
 
@@ -165,6 +172,8 @@ def main():
     bbody.append("/* ===== data: sync urls ===== */\nwindow.VA_SYNC_URLS=[\"http://127.0.0.1:8793\",\"http://localhost:8793\"];\n")
     if pk:
         bbody.append("/* ===== data: hub publishable key ===== */\nwindow.__ANNOTA_CB_PK__=%s;\n" % json.dumps(pk))
+    for p in PLUGINS:
+        bbody.append("/* ===== src/%s ===== */\n%s\n" % (p, read_src(p)))
     for p in BROWSER_TAIL:
         bbody.append("/* ===== src/%s ===== */\n%s\n" % (p, read_src(p)))
     browser_header = ("// Annota · 浏览器壳变体（Tauri 内联）。无 userscript 元数据；"

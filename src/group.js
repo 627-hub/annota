@@ -541,9 +541,10 @@
     return out;
   }
 
+  const groupInstall = (coreApi) => { core = coreApi; root.__ANNOTA_GROUP__ = root.VAGroup; };
   root.VAGroup = {
     GitStore, HubStore, storeFor,
-    install(coreApi) { core = coreApi; root.__ANNOTA_GROUP__ = root.VAGroup; },
+    install: groupInstall,
     listGroups, addGroup, findGroup, saveGroups, bindOf,
     newGid, createGroup, inviteLink, parseInvite, joinGroup, me,
     pullForMedia, pushForMedia, groupsForMedia,
@@ -554,4 +555,7 @@
     session, currentUser, signOut, hubMe, setHubMe, hubIdentity,
     _b64: { encode: b64encode, decode: b64decode },
   };
+  (root.__VA_PLUGIN_DEFS__ = root.__VA_PLUGIN_DEFS__ || []).push({
+    id: 'group', name: '组同步', viewOnly: true, install: groupInstall,
+  });
 })(typeof self !== 'undefined' ? self : this);

@@ -476,10 +476,12 @@
   function cancel() { if (running) { cancelled = true; paused = false; } }
 
   const api = { capabilities, start, pause, resume, cancel, status };
-  root.VAExport = {
-    install(coreApi) {
-      core = coreApi;
-      root.__ANNOTA_EXPORT__ = api;
-    },
+  const install = (coreApi) => {
+    core = coreApi;
+    root.__ANNOTA_EXPORT__ = api;      // intent 链路（core decodeExportIntent）依赖此兼容别名
   };
+  root.VAExport = { install };
+  (root.__VA_PLUGIN_DEFS__ = root.__VA_PLUGIN_DEFS__ || []).push({
+    id: 'anki-export', name: 'Anki 导出', viewOnly: false, install,
+  });
 })(typeof window !== 'undefined' ? window : this);
