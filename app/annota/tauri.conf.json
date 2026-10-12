@@ -14,10 +14,6 @@
     }
   },
   "plugins": {
-    "mcp-server": {
-      "port": 8794,
-      "toolNameCase": "snake"
-    },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIzNjIyN0JDRkY0NzJBMTMKUldRVEtrZi92Q2RpSTAwK0VoQmlOVmt2enJKbm9ZOXI2cUNpMFdjelFEU25zZFZDY0VEYTJPNmUK",
       "endpoints": [

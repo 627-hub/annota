@@ -12,6 +12,7 @@ use tauri_plugin_clipboard_manager::ClipboardExt;
 use tauri_plugin_updater::UpdaterExt;
 
 mod sync_server;
+mod mcp_server;
 mod agent;
 mod apkg;
 mod ielts;
@@ -1145,105 +1146,6 @@ pub fn run_tool(name: &str, params: &Value) -> Result<String, AppError> {
     }
 }
 
-// ---------- MCP tools ----------
-fn make_mcp_tools() -> tauri_plugin_mcp_server::McpBuilder {
-    let capture_schema = serde_json::json!({
-        "type": "object",
-        "properties": {
-            "media_id": { "type": "string", "description": "可选的媒体 ID（当前未使用）" }
-        }
-    });
-
-    let clipboard_schema = serde_json::json!({
-        "type": "object",
-        "properties": {
-            "text": { "type": "string", "description": "纯文本" },
-            "html": { "type": "string", "description": "HTML 片段" },
-            "image": { "type": "string", "description": "PNG base64（可选）" }
-        }
-    });
-
-    tauri_plugin_mcp_server::McpBuilder::new()
-        .tool(
-            "capture_frame",
-            "捕获当前 Annota 窗口（webview）的截图，返回 PNG base64 与元数据",
-            capture_schema,
-            |params: serde_json::Value| run_tool("capture_frame", &params).map_err(|e| e.to_string()),
-        )
-        .tool(
-            "copy_to_clipboard",
-            "将图片（PNG base64）、纯文本、HTML 写入系统剪贴板",
-            clipboard_schema,
-            |params: serde_json::Value| run_tool("copy_to_clipboard", &params).map_err(|e| e.to_string()),
-        )
-        .tool(
-            "navigate",
-            "让 Annota 浏览器跳转到指定 URL（agent 操作能力）",
-            serde_json::json!({
-                "type": "object",
-                "properties": { "url": { "type": "string", "description": "目标 URL" } },
-                "required": ["url"]
-            }),
-            |params: serde_json::Value| run_tool("navigate", &params).map_err(|e| e.to_string()),
-        )
-        .tool(
-            "open_annotations",
-            "打开当前网页的 Annota 标注侧栏",
-            serde_json::json!({"type":"object","properties":{}}),
-            |params: serde_json::Value| run_tool("open_annotations", &params).map_err(|e| e.to_string()),
-        )
-        .tool(
-            "start_annotation",
-            "在当前视频进入框选标注模式",
-            serde_json::json!({"type":"object","properties":{}}),
-            |params: serde_json::Value| run_tool("start_annotation", &params).map_err(|e| e.to_string()),
-        )
-        .tool(
-            "propose_annotation",
-            "把 AI 候选框与词语送入 Annota 确认卡；只有用户确认保存后才会写入",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "box": {
-                        "type": "object",
-                        "properties": {
-                            "x": {"type":"number"}, "y": {"type":"number"},
-                            "w": {"type":"number"}, "h": {"type":"number"}
-                        },
-                        "required": ["x", "y", "w", "h"]
-                    },
-                    "word": {"type":"string"},
-                    "label": {"type":"string"},
-                    "pos": {"type":"string"},
-                    "t": {"type":"number"},
-                    "dur": {"type":"number"}
-                },
-                "required": ["box", "word"]
-            }),
-            |params: serde_json::Value| run_tool("propose_annotation", &params).map_err(|e| e.to_string()),
-        )
-        .tool(
-            "words_at",
-            "查询某个时间点（秒）出现的标注词条，返回词、释义、时间与画面区域；缺省针对当前页面",
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "t": {"type": "number", "description": "时间点（秒）"},
-                    "media_id": {"type": "string", "description": "可选；缺省用当前页面对应的标注"},
-                    "radius": {"type": "number", "description": "时间容差秒数，默认 0.5"}
-                },
-                "required": ["t"]
-            }),
-            |params: serde_json::Value| run_tool("words_at", &params).map_err(|e| e.to_string()),
-        )
-        .tool(
-            "probe_bridge",
-            "探测 browser webview 中 window.__ANNOTA__ 是否注入成功",
-            serde_json::json!({"type":"object","properties":{}}),
-            |params: serde_json::Value| run_tool("probe_bridge", &params).map_err(|e| e.to_string()),
-        )
-}
-
 // 用户确认后：下载并安装更新，然后重启应用（由工具栏「更多」菜单触发）。
 #[tauri::command]
 async fn install_update(app: AppHandle, w: tauri::Webview) -> Result<String, AppError> {
@@ -1319,7 +1221,6 @@ pub fn main() {
         .plugin(tauri_plugin_screenshots::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .plugin(make_mcp_tools().build())
         .manage(Mutex::new(TabManager::new()))
         .invoke_handler(tauri::generate_handler![
             capture_frame,
@@ -1404,6 +1305,9 @@ pub fn main() {
                 db.clone(),
                 plugins_state,
             ));
+
+            // MCP server（streamable HTTP @ 127.0.0.1:8794/mcp，自建 rmcp，替代上游插件）
+            mcp_server::spawn();
 
             let window = WindowBuilder::new(app, "main")
                 .title("Annota")

@@ -25,7 +25,7 @@ Annota 的重要变更。格式遵循 [Keep a Changelog](https://keepachangelog.
 - 编辑气泡按实测尺寸钳入视口，头部可拖拽移动——长气泡不再把「保存修改」顶出屏幕。
 - OCR review 批量修复：插件升级失败回滚丢数据、CSP `connect-src`、中间件顺序、限流分桶等 20+ 项。
 - smoke-export 被本机真 app 篡改 `syncUrl` 打错目标。
-- 依赖安全：tauri 2.12.1→2.12.3；rmcp（4 告警，2 高危）与 glib（1 中危）升级受阻于上游，已提 [annota#1](https://github.com/627-hub/annota/issues/1) / [tauri#16264](https://github.com/tauri-apps/tauri/issues/16264) 跟踪。
+- 依赖安全：tauri 2.12.1→2.12.3；**rmcp 4 个告警（2 高危）已修**——弃用半年未维护的 `tauri-plugin-mcp-server`，自建 MCP server 直连官方 rmcp 3.5.1（工具与端点不变，见 [annota#1](https://github.com/627-hub/annota/issues/1)）；glib（1 中危）受阻于 tauri 的 gtk 钉版，见 [tauri#16264](https://github.com/tauri-apps/tauri/issues/16264)。
 - 删除死代码（旧 Python sync_server / anki_export / Electron 壳），清零 28 条 CodeQL 告警；CI Python 单测步骤 nullglob 兜底。
 
 [Unreleased]: https://github.com/627-hub/annota/compare/v0.2.5...HEAD

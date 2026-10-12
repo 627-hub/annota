@@ -26,7 +26,6 @@
     "screenshots:default",
     "updater:default",
     "process:allow-restart",
-    "mcp-server:default",
     "allow-capture-frame",
     "allow-write-clipboard",
     "allow-va-fetch",
