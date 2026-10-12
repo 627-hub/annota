@@ -68,3 +68,13 @@ Annota 浏览器（注入态引擎 + 本地服务）做**标注底座**：媒体
 
 观看端（`annotate.view.user.js` / 手机场景）只安装 `viewOnly: true` 的插件；
 写操作类插件（导出等）标 `viewOnly: false`。
+
+## 内置插件
+
+### anki-export（`src/plugins/anki_export.js`，由 `src/export.js` 重写精简）
+
+- apkg 单路径：逐条截图 → `POST /api/export/card` → `POST /api/export/finalize` → 下载。
+- 保留：进度条、断点续跑（`va:export:<mediaId>`）、`stableDeckId`、rVFC 等帧、截图叠框、pause/resume/cancel。
+- 删除（git 历史可找回）：csv/json/jsonl 客户端下载、手动确认截图（`confirmShot`/`captureEntryManual`，当时无 UI 入口）。
+- deck 命名回退：`opts.deckName` → 条目含「雅思」tag 时 `Annota::IELTS` → 视频标题 → `Annota 学习卡`。
+- 测试：`dev/smoke-export.mjs`（拼接产物完整驱动，插件化后零改动通过）。

@@ -1,4 +1,4 @@
-/* Annota · local learning-card export. Loaded before core.js. */
+/* Annota · Anki 导出插件（apkg 单路径）。插件契约见 core.js 的 __VA_PLUGIN_DEFS__。 */
 (function (root) {
   'use strict';
 
@@ -17,9 +17,8 @@
   let cancelButton = null;
   let warnedCapture = false;
 
+  /* ---------- 能力探测 ---------- */
   function capabilities() {
-    // TODO: wire the native Tauri window.vaCapture driver in app/annota/src/main.rs;
-    // the Rust bridge is out of scope here (see docs/architecture.md ADR-6).
     try { if (typeof root.vaCapture === 'function') return { capture: 'tauri' }; } catch (e) {}
     try {
       if (typeof chrome !== 'undefined' && chrome.runtime && typeof chrome.runtime.sendMessage === 'function') {
@@ -29,6 +28,7 @@
     return { capture: 'canvas' };
   }
 
+  /* ---------- 进度条 UI（class 与结构需与 smoke / CSS 保持一致） ---------- */
   function ensureProgress() {
     if (!core || !core.uiRoot || progressEl) return;
     try {
@@ -68,6 +68,7 @@
 
   function status() { return { state, done, total, current }; }
 
+  /* ---------- 断点续跑（localStorage: va:export:<mediaId>，已成功 POST 的 entry id 集合） ---------- */
   function readCompleted(mediaId) {
     try {
       const ids = JSON.parse(localStorage.getItem(EXPORT_PREFIX + mediaId) || '[]');
@@ -79,6 +80,7 @@
     try { localStorage.setItem(EXPORT_PREFIX + mediaId, JSON.stringify(Array.from(completed))); } catch (e) {}
   }
 
+  // FNV-1a：同一视频多次导出得到同一 deck_id，服务端可复用牌组
   function stableDeckId(mediaId) {
     const value = String(mediaId || 'media');
     let hash = 2166136261;
@@ -86,6 +88,7 @@
     return 'annota-' + value.replace(/[^\w.-]+/g, '_').slice(0, 48) + '-' + (hash >>> 0).toString(36);
   }
 
+  /* ---------- 帧等待 / 画面叠加 ---------- */
   function waitForFrame(videoEl, t, seekChanged, timeoutMs) {
     return new Promise((resolve) => {
       let timer = null, seekHandler = null, videoFrameId = null, finished = false;
@@ -129,6 +132,25 @@
     });
   }
 
+  // 连续等 n 个视频帧回调（无 rVFC 时退化为 rAF），确保截到 seek 目标之后的稳定帧
+  function waitFrames(videoEl, n) {
+    return new Promise((resolve) => {
+      if (videoEl && typeof videoEl.requestVideoFrameCallback === 'function') {
+        let left = n;
+        const step = () => {
+          if (left-- <= 0) { resolve(); return; }
+          try { videoEl.requestVideoFrameCallback(step); } catch (e) { resolve(); }
+        };
+        step();
+      } else {
+        const raf = (root.requestAnimationFrame || ((cb) => setTimeout(cb, 16))).bind(root);
+        let left = n;
+        const step = () => { if (left-- <= 0) resolve(); else raf(step); };
+        step();
+      }
+    });
+  }
+
   // 可选：在截图上叠当前这条的热力框 + 标签（仅当 opts.overlay 勾选时）。纯画面为默认。
   function canvasOverlay(dataUrl, entry) {
     if (!dataUrl || !entry || !entry.box) return Promise.resolve(dataUrl);
@@ -167,6 +189,7 @@
     });
   }
 
+  /* ---------- 条目文案与载荷 ---------- */
   function entryTitle(entry) {
     const word = String(entry.word || '').trim();
     if (word) return word;
@@ -183,35 +206,13 @@
     };
   }
 
-  function trainingRows(entries, media) {
-    return entries.map((entry) => ({
-      word: entry.word || '', label: entry.label || '', pos: entry.pos || '', tags: entry.tags || [],
-      t: entry.t, dur: entry.dur, box: entry.box || null,
-      mediaId: media.mediaId || media.videoId || '', url: media.url || '',
-    }));
+  // 牌组名回退链（调用方已先判断 opts.deckName）：含雅思标签 → Annota::IELTS；否则视频标题；兜底通用名
+  function defaultDeckName(entries, media) {
+    const ielts = entries.some((e) => (e.tags || []).some((t) => /雅思|ielts/i.test(String(t))));
+    return ielts ? 'Annota::IELTS' : (media.title || 'Annota 学习卡');
   }
 
-  function download(text, format, mediaId) {
-    const mime = format === 'csv' ? 'text/csv;charset=utf-8' : 'application/json;charset=utf-8';
-    const ext = format === 'jsonl' ? 'jsonl' : format;
-    const blob = new Blob([text], { type: mime });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'annota_' + String(mediaId || 'cards').replace(/[^\w.-]+/g, '_') + '.' + ext;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  }
-
-  function exportClient(entries, media, format) {
-    const rows = trainingRows(entries, media);
-    if (format === 'csv') {
-      const keys = ['word', 'label', 'pos', 'tags', 't', 'dur', 'box', 'mediaId', 'url'];
-      const cell = (value) => '"' + String(value == null ? '' : (typeof value === 'object' ? JSON.stringify(value) : value)).replace(/"/g, '""') + '"';
-      download([keys.join(','), ...rows.map((row) => keys.map((key) => cell(row[key])).join(','))].join('\r\n'), format, media.mediaId);
-    } else if (format === 'jsonl') download(rows.map((row) => JSON.stringify(row)).join('\n') + '\n', format, media.mediaId);
-    else download(JSON.stringify({ media, cards: rows }, null, 2), format, media.mediaId);
-  }
-
+  /* ---------- 播放控制 ---------- */
   async function waitIfPaused() {
     while (paused && !cancelled) await new Promise((resolve) => setTimeout(resolve, 100));
   }
@@ -226,66 +227,7 @@
     try { binding.seek(target); } catch (e) {}
   }
 
-  // 手动确认截图：seek 好、暂停、只显示本条框；条上实时显示当前时间码，
-  // 用户可自行拖动画面 → 点「截图」（以当前帧为准并回写 t）/「跳过」（Enter=截图，Esc=跳过）
-  function confirmShot(entry, idx, total, binding, videoEl) {
-    return new Promise((resolve) => {
-      const doc = (core.uiRoot && core.uiRoot.ownerDocument) || document;
-      const el2 = (tag, style, ...kids) => {
-        const n = doc.createElement(tag);
-        if (style) for (const k in style) n.style[k] = style[k];
-        for (const c of kids) if (c != null && c !== false) n.append(typeof c === 'string' ? String(c) : c);
-        return n;
-      };
-      const fmt = (t) => { t = Math.max(0, Number(t) || 0); const m = Math.floor(t / 60); const s = (t % 60).toFixed(2); return m + ':' + (s.length < 5 ? '0' + s : s); };
-      const pop = el2('div'); pop.className = 'va-export-confirm';
-      pop.setAttribute('role', 'dialog'); pop.setAttribute('aria-label', '确认截图');
-      const txt = el2('span', null, '第 ' + (idx + 1) + '/' + total + ' 条 · ' + entryTitle(entry) + '：画面到位后点截图');
-      txt.className = 'va-export-confirm-text';
-      const clock = el2('span', null, 't=' + fmt(entry.t)); clock.className = 'va-export-clock';
-      const bUse = el2('button'); bUse.type = 'button'; bUse.textContent = '回到标注点';
-      const bShot = el2('button'); bShot.type = 'button'; bShot.textContent = '截图';
-      const bSkip = el2('button'); bSkip.type = 'button'; bSkip.textContent = '跳过';
-      let done = false;
-      let tick = null;
-      const finish = () => {
-        if (done) return; done = true;
-        doc.removeEventListener('keydown', onKey, true);
-        if (tick) clearInterval(tick);
-        pop.remove();
-        resolve(Number(videoEl && videoEl.currentTime) || Number(entry.t) || 0);
-      };
-      const abort = () => { if (done) return; done = true; doc.removeEventListener('keydown', onKey, true); if (tick) clearInterval(tick); pop.remove(); resolve(null); };
-      const onKey = (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); finish(); } else if (ev.key === 'Escape') { ev.preventDefault(); abort(); } };
-      bUse.onclick = () => { seekToAnnot(binding, entry.t); };
-      bShot.onclick = () => finish();
-      bSkip.onclick = () => abort();
-      tick = setInterval(() => { if (videoEl) clock.textContent = 't=' + fmt(videoEl.currentTime); }, 120);
-      pop.append(txt, clock, bUse, bShot, bSkip);
-      doc.addEventListener('keydown', onKey, true);
-      core.uiRoot.appendChild(pop);
-    });
-  }
-
-  // 连续等 n 个视频帧回调（无 rVFC 时退化为 rAF），确保截到 seek 目标之后的稳定帧
-  function waitFrames(videoEl, n) {
-    return new Promise((resolve) => {
-      if (videoEl && typeof videoEl.requestVideoFrameCallback === 'function') {
-        let left = n;
-        const step = () => {
-          if (left-- <= 0) { resolve(); return; }
-          try { videoEl.requestVideoFrameCallback(step); } catch (e) { resolve(); }
-        };
-        step();
-      } else {
-        const raf = (root.requestAnimationFrame || ((cb) => setTimeout(cb, 16))).bind(root);
-        let left = n;
-        const step = () => { if (left-- <= 0) resolve(); else raf(step); };
-        step();
-      }
-    });
-  }
-
+  /* ---------- 自动截图：暂停 → seek → 隔离渲染 → 截帧 → 恢复 ---------- */
   async function captureEntry(entry, previousTime, first, settleMs, overlay) {
     const binding = core.binding();
     const videoEl = binding.el;
@@ -312,7 +254,7 @@
       core.renderOnly(entry);
       core.setChromeHidden(true);
       let shot = await core.captureFrame();
-      if (shot && overlay) shot = await canvasOverlay(shot, entry);   // 勾选时才叠当前框
+      if (shot && overlay) shot = await canvasOverlay(shot, entry);
       return shot || null;
     } catch (e) { return null; }
     finally {
@@ -322,56 +264,9 @@
     }
   }
 
-  // 手动模式：seek(entry.t+0.15) + 暂停 + 只显示本条框 → 等确认 → 截图。
-  // 用户若自己拖过画面，则以当前帧为准：回写该条 t + updated（所见即所得）。
-  async function captureEntryManual(entry, idx, total, overlay) {
-    const binding = core.binding();
-    const videoEl = binding.el;
-    try { if (videoEl && videoEl.play) videoEl.pause(); } catch (e) {}
-    seekToAnnot(binding, entry.t);
-    core.renderOnly(entry);                 // 先只显示本条，让你看清要标的是哪一帧
-    // 立即弹确认条（不阻塞等待）——支持一条接一条连续截图；框随 seek 立即按当帧重算
-    let chosen = null;
-    try { chosen = await confirmShot(entry, idx, total, binding, videoEl); } catch (e) { chosen = null; }
-    if (chosen == null) return null;        // 跳过
-    try {
-      // 以用户确认时的当前帧为准：写回 t（含 updated）——所见即所得
-      const cur = Math.max(0, Number(videoEl && videoEl.currentTime) || chosen);
-      if (isFinite(cur) && Math.abs(cur - Number(entry.t)) > 0.01) {
-        entry.t = Math.round(cur * 100) / 100;
-        entry.updated = new Date().toISOString();
-      }
-      core.renderOnly(entry);
-      core.setChromeHidden(true);
-      let shot = await core.captureFrame();
-      if (shot && overlay) shot = await canvasOverlay(shot, entry);
-      return shot || null;
-    } catch (e) { return null; }
-    finally {
-      try { core.render(); } catch (e) {}
-      try { core.setChromeHidden(false); } catch (e) {}
-    }
-  }
-
+  /* ---------- 主驱动：逐条截图 → POST card → finalize → 下载 apkg ---------- */
   async function run(opts, entries, media, mediaId, completed, deckId) {
-    const format = ['apkg', 'csv', 'json', 'jsonl'].includes(opts.format) ? opts.format : 'apkg';
     try {
-      if (format !== 'apkg') {
-        state = 'running';
-        for (let i = 0; i < entries.length; i++) {
-          await waitIfPaused();
-          if (cancelled) break;
-          current = String(entries[i].word || '标注'); done = i + 1; paintProgress();
-          if (typeof opts.onProgress === 'function') { try { opts.onProgress(status()); } catch (e) {} }
-        }
-        if (!cancelled) {
-          exportClient(entries, media, format);
-          state = 'complete';
-          core.showToast('已导出 ' + entries.length + ' 条 · ' + format.toUpperCase());
-        } else state = 'cancelled';
-        return;
-      }
-
       const sorted = entries.map((entry, index) => ({ entry, index }))
         .sort((a, b) => (Number(a.entry.t) || 0) - (Number(b.entry.t) || 0));
       const todo = opts.onlyMissing ? sorted.filter(({ entry }) => !completed.has(String(entry.id))) : sorted;
@@ -387,11 +282,8 @@
         const binding = core.binding();
         if (!binding || binding.kind !== 'video' || !binding.timed) throw new Error('当前绑定不是视频');
         const prior = binding.time();
-        const shot = opts.manual
-          ? await captureEntryManual(entry, item.index, todo.length, !!opts.overlay)
-          : await captureEntry(entry, prior, firstShot, opts.settle, !!opts.overlay);
+        const shot = await captureEntry(entry, prior, firstShot, opts.settle, !!opts.overlay);
         firstShot = false;
-        if (opts.manual && core.save) { try { core.save(); } catch (e) {} }   // 手动模式可能回写了 t
         if (!shot && !warnedCapture) {
           warnedCapture = true;
           core.setSyncStatus('当前环境无法截取视频画面，将导出纯文字卡');
@@ -410,13 +302,13 @@
         persistCompleted(mediaId, completed);
         done += 1;
         paintProgress();
-        if (typeof opts.onProgress === 'function') { try { opts.onProgress(status()); } catch (e) {} }
       }
       if (cancelled) { state = 'cancelled'; core.showToast('批量导出已取消 · 可再次运行以续跑'); return; }
       const base = await core.resolveBase();
+      const deckName = String(opts.deckName || defaultDeckName(entries, media));
       const result = await core.httpJson('POST', base + '/api/export/finalize', {
         deck_id: deckId,
-        deck_name: String(opts.deckName || media.title || 'Annota 学习卡'),
+        deck_name: deckName,
         format: 'apkg',
       });
       if (!result.ok || !result.json || result.json.ok !== true || !result.json.url) {
@@ -436,8 +328,12 @@
     }
   }
 
+  /* ---------- 对外 API：start / pause / resume / cancel / status ---------- */
   async function start(opts) {
     opts = opts && typeof opts === 'object' ? opts : {};
+    // 只支持 apkg：旧 intent 可能带 csv/json/jsonl，这里静默 coerce，不报错
+    if (opts.format && opts.format !== 'apkg') console.info('[annota] 批量导出仅支持 apkg，已忽略 format=' + opts.format);
+    opts = Object.assign({}, opts, { format: 'apkg' });
     if (running) return { total, resumed: done };
     const binding = core && core.binding();
     const media = core ? core.mediaMeta() : {};
@@ -476,9 +372,11 @@
   function cancel() { if (running) { cancelled = true; paused = false; } }
 
   const api = { capabilities, start, pause, resume, cancel, status };
+
+  /* ---------- 注册 ---------- */
   const install = (coreApi) => {
     core = coreApi;
-    root.__ANNOTA_EXPORT__ = api;      // intent 链路（core decodeExportIntent）依赖此兼容别名
+    root.__ANNOTA_EXPORT__ = api;      // intent 链路（core decodeExportIntent）依赖此兼容别名，勿删
   };
   root.VAExport = { install };
   (root.__VA_PLUGIN_DEFS__ = root.__VA_PLUGIN_DEFS__ || []).push({

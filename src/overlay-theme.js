@@ -62,23 +62,6 @@ button { color: inherit; }
 .va-entry-row.is-hidden { opacity:.45; }
 .va-entry-row.is-hidden .va-entry-copy strong { text-decoration:line-through; }
 
-/* 手动确认截图条 */
-.va-export-confirm {
-  position:fixed; z-index:2147483008; bottom:24px; left:50%; transform:translateX(-50%);
-  display:flex; align-items:center; gap:10px; max-width:min(560px,calc(100vw - 24px));
-  padding:10px 12px 10px 16px; border:1px solid rgba(255,255,255,.12); border-radius:999px;
-  background:rgba(17,19,23,.9); color:#e7e8eb; font:12px/1.3 var(--va-font-ui);
-  -webkit-backdrop-filter:blur(20px) saturate(150%); backdrop-filter:blur(20px) saturate(150%);
-  box-shadow:0 10px 32px rgba(0,0,0,.42),inset 0 1px rgba(255,255,255,.05); pointer-events:auto;
-}
-.va-export-confirm-text { min-width:0; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.va-export-clock { flex:none; font:600 12px ui-monospace,monospace; color:#f0d2a0; }
-.va-export-confirm button {
-  min-height:28px; padding:0 12px; border-radius:999px; cursor:pointer; font:550 12px var(--va-font-ui);
-  border:1px solid rgba(245,166,35,.3); background:rgba(245,166,35,.12); color:#f0d2a0;
-}
-.va-export-confirm button:first-of-type:hover { background:rgba(245,166,35,.22); color:#fff0d4; }
-
 /* 标签编辑（通用批注） */
 .va-tag-box {
   display:flex; flex-wrap:wrap; gap:5px; align-items:center; min-height:34px; padding:5px 7px;

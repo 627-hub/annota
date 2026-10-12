@@ -53,12 +53,12 @@ PARTS = ["geometry.js", "textquote.js", "adapter.js", "media.js", "identity.js"]
 # 插件清单（相对 src/）。构建期静态注册：插件文件在 core.js 之前拼入，
 # 各自向 window.__VA_PLUGIN_DEFS__.push({id,name,viewOnly,install})，由 core 统一安装。
 # 顺序即拼接顺序；新增插件只改这一行（两个变体共用同一清单，禁止分叉）。
-PLUGINS = []
+PLUGINS = ["plugins/anki_export.js"]
 # browser-shell.js 在 core.js 之前（core 启动时读取 window.VA_BROWSER_SHELL）
-TAIL = ["design-tokens.js", "overlay-theme.js", "group.js", "export.js", "version-check.js", "browser-shell.js", "core.js"]
+TAIL = ["design-tokens.js", "overlay-theme.js", "group.js", "version-check.js", "browser-shell.js", "core.js"]
 # 浏览器壳变体不装 version-check.js：那是 userscript 的自动更新探测，
 # 浏览器端有 tauri-plugin-updater，二者不能混。
-BROWSER_TAIL = ["design-tokens.js", "overlay-theme.js", "group.js", "export.js", "browser-shell.js", "core.js"]
+BROWSER_TAIL = ["design-tokens.js", "overlay-theme.js", "group.js", "browser-shell.js", "core.js"]
 
 
 def read_src(p):

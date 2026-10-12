@@ -607,12 +607,6 @@
           batchButton.disabled = !mediaUrl;
           batchButton.title = mediaUrl ? '导出此视频的学习卡' : '此记录没有有效的视频链接';
           exportChooser = document.createElement('div'); exportChooser.className = 'export-chooser'; exportChooser.hidden = true;
-          const formatLabel = document.createElement('label'); formatLabel.textContent = '格式';
-          const formatSelect = document.createElement('select'); formatSelect.setAttribute('aria-label', '批量导出格式');
-          [['apkg', 'Anki (.apkg)'], ['csv', 'CSV'], ['json', 'JSON'], ['jsonl', 'JSONL']].forEach(([value, label]) => {
-            const option = document.createElement('option'); option.value = value; option.textContent = label; formatSelect.appendChild(option);
-          });
-          formatLabel.appendChild(formatSelect);
           const overlayLabel = document.createElement('label'); overlayLabel.style.cssText = 'display:flex;align-items:center;gap:5px';
           const overlayCheck = document.createElement('input'); overlayCheck.type = 'checkbox'; overlayCheck.checked = false;
           overlayCheck.setAttribute('aria-label', '截图上叠加热力框');
@@ -620,12 +614,13 @@
           overlayLabel.append(overlayCheck, overlayText);
           const confirmExport = document.createElement('button'); confirmExport.type = 'button'; confirmExport.className = 'secondary-button is-active'; confirmExport.textContent = '打开并导出';
           const cancelExport = document.createElement('button'); cancelExport.type = 'button'; cancelExport.className = 'secondary-button'; cancelExport.textContent = '取消';
-          batchButton.onclick = () => { exportChooser.hidden = !exportChooser.hidden; if (!exportChooser.hidden) formatSelect.focus(); };
+          batchButton.onclick = () => { exportChooser.hidden = !exportChooser.hidden; if (!exportChooser.hidden) overlayCheck.focus(); };
           cancelExport.onclick = () => { exportChooser.hidden = true; };
           confirmExport.onclick = () => {
             if (confirmExport.disabled) return;   // in-flight 防抖：避免双击重复触发导出
             confirmExport.disabled = true; batchButton.disabled = true;
-            const encoded = base64url(JSON.stringify({ format: formatSelect.value, deckName: recordTitle(item.pack, item.id), overlay: overlayCheck.checked }));
+            // format 字段保留给旧版注入脚本（新版仅支持 apkg，收到其它值会自动归一）
+            const encoded = base64url(JSON.stringify({ format: 'apkg', deckName: recordTitle(item.pack, item.id), overlay: overlayCheck.checked }));
             const destination = new URL(mediaUrl);
             // 追加而非覆盖原 fragment（保留页面已有的锚点/时间戳）
             destination.hash = (destination.hash ? destination.hash.slice(1) + '&' : '') + 'annota-export=' + encoded;
@@ -641,7 +636,7 @@
             }
             exportChooser.hidden = true;
           };
-          exportChooser.append(formatLabel, overlayLabel, confirmExport, cancelExport);
+          exportChooser.append(overlayLabel, confirmExport, cancelExport);
           actions.appendChild(batchButton);
         }
         const panel = document.createElement('div'); panel.className = 'library-entries'; panel.hidden = true;
