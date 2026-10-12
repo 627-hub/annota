@@ -20,7 +20,19 @@ const server = http.createServer((req, res) => {
     requests.push({ method: req.method, url: req.url, body: body ? JSON.parse(body) : null });
     res.writeHead(200, { 'Content-Type': 'application/json' });
     if (req.url === '/api/export/finalize') res.end(JSON.stringify({ ok: true, path: '/tmp/test.apkg', url: '/exports/test.apkg', cards: 3, media: 0 }));
-    else res.end(JSON.stringify({ ok: true, has_shot: false, done: requests.filter((r) => r.url === '/api/export/card').length }));
+    // 必须正经应答 /api/settings 且 address 指回本桩：否则 core 的 loadAppSettings 会继续
+    // 探测下一候选——若本机恰好跑着真 Annota(8793)，其 settings 会把 va:syncUrl 清空，
+    // 导出全部打到真 app（本地开发实测踩过）。
+    else if (req.url === '/api/settings') {
+      res.end(JSON.stringify({
+        ok: true,
+        settings: {
+          sync: { address: 'http://127.0.0.1:' + server.address().port, auto: false },
+          shortcuts: { annotate: 'alt+d', panel: 'alt+l', overlay: 'alt+s' },
+          dictUrlTemplate: '', ai: { baseUrl: '', model: '' }, ielts: { dataDir: '' }, trustedOrigins: [],
+        },
+      }));
+    } else res.end(JSON.stringify({ ok: true, has_shot: false, done: requests.filter((r) => r.url === '/api/export/card').length }));
   });
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
