@@ -15,6 +15,7 @@ mod sync_server;
 mod agent;
 mod apkg;
 mod ielts;
+mod plugins;
 mod tabs;
 mod store;
 mod logf;
@@ -745,9 +746,10 @@ fn restart_server(app: tauri::AppHandle, w: tauri::Webview) -> Result<serde_json
     let root_path = sync_server::resolve_project_root();
     let notes_dir = sync_server::resolve_notes_dir(&app);
     let settings_path = sync_server::resolve_settings_path(&app);
+    let plugins = (*app.state::<std::sync::Arc<plugins::PluginsState>>()).clone();
     sync_server::clear_server_error();
     tauri::async_runtime::spawn(sync_server::run_server(
-        store_path, root_path, notes_dir, settings_path, db,
+        store_path, root_path, notes_dir, settings_path, db, plugins,
     ));
     Ok(json!({ "running": false, "retrying": true }))
 }
@@ -764,10 +766,13 @@ pub(crate) fn open_tab(app: tauri::AppHandle, url: Option<String>) -> Result<Str
         Some(u) if !u.trim().is_empty() => resolve_nav_url(u)?,
         _ => "http://127.0.0.1:8793/".to_string(),
     };
+    // 已安装插件源码：每插件独立 initialization_script，排在标注引擎之前（见 tabs.rs）
+    let plugin_scripts = app.state::<std::sync::Arc<plugins::PluginsState>>().injection_scripts();
     tabs::create_tab(
         &app,
         &window,
         target,
+        plugin_scripts,
         Vec::new(),
         BRIDGE_JS,
         ANNOTATE_JS,
@@ -897,10 +902,11 @@ fn setup_webviews(window: &tauri::Window, app: &AppHandle) -> Result<(), AppErro
     let vp = PhysicalSize::new(size.width, size.height.saturating_sub(browser_top));
 
     // M6a 会话恢复：优先按 tabs.json 重建上次会话；无记录/全部失效才回落到单个工作区 tab。
-    let restored = tabs::restore_tabs(app, window, BRIDGE_JS, ANNOTATE_JS, pos, vp)?;
+    let plugin_scripts = app.state::<std::sync::Arc<plugins::PluginsState>>().injection_scripts();
+    let restored = tabs::restore_tabs(app, window, plugin_scripts.clone(), BRIDGE_JS, ANNOTATE_JS, pos, vp)?;
     if restored == 0 {
         let start_url = "http://127.0.0.1:8793/".to_string();
-        let id = tabs::create_tab(app, window, start_url, Vec::new(), BRIDGE_JS, ANNOTATE_JS, pos, vp)?;
+        let id = tabs::create_tab(app, window, start_url, plugin_scripts, Vec::new(), BRIDGE_JS, ANNOTATE_JS, pos, vp)?;
         crate::alog!("INFO", "[annota] first tab created: {id}");
     }
 
@@ -1385,12 +1391,17 @@ pub fn main() {
                 }
             };
             app.manage(DbState(db.clone()));
+            // 插件装载状态（工具栏/服务端/建 tab 共享同一份：token 稳定、装完即注入）
+            let plugins_state =
+                std::sync::Arc::new(plugins::PluginsState::load(plugins::resolve_plugins_dir(app.handle())));
+            app.manage(plugins_state.clone());
             tauri::async_runtime::spawn(sync_server::run_server(
                 store_path,
                 root_path,
                 notes_dir,
                 settings_path,
                 db.clone(),
+                plugins_state,
             ));
 
             let window = WindowBuilder::new(app, "main")

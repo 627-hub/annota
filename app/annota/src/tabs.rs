@@ -77,6 +77,7 @@ pub fn create_tab(
     app: &AppHandle,
     window: &tauri::Window,
     url: String,
+    plugin_scripts: Vec<String>,
     init_scripts: Vec<String>,
     bridge_js: &str,
     annotate_js: &str,
@@ -112,7 +113,13 @@ pub fn create_tab(
     let mut builder = WebviewBuilder::new(&id, WebviewUrl::External(parsed))
         // UA 修正：WKWebView 默认 UA 不含 Safari/WebKit 版本号，B 站等站点按 UA 判「浏览器版本过低」拒访。
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15")
-        .initialization_script(bridge_js)
+        .initialization_script(bridge_js);
+    // 已安装插件：每插件一个独立 WKUserScript（parse 隔离——单插件语法错误只死它自己）。
+    // 必须排在标注引擎之前：core 的安装循环读 window.__VA_PLUGIN_DEFS__，插件要先 push。
+    for s in &plugin_scripts {
+        builder = builder.initialization_script(s);
+    }
+    builder = builder
         .initialization_script(annotate_js)
         // P1-a#4：桥接脚本用它把 document.title 归属到本 tab（emit annota://page-title）
         .initialization_script(&format!("window.__ANNOTA_TAB_ID__='{}';", id))
@@ -611,6 +618,7 @@ fn parse_session(raw: &str) -> Session {
 pub fn restore_tabs(
     app: &AppHandle,
     window: &tauri::Window,
+    plugin_scripts: Vec<String>,
     bridge_js: &str,
     annotate_js: &str,
     position: PhysicalPosition<i32>,
@@ -631,7 +639,7 @@ pub fn restore_tabs(
     let mut restored = 0usize;
     for url in entries {
         // 单个 tab 恢复失败（如 URL 已失效）不阻断其余 tab。
-        match create_tab(app, window, url, Vec::new(), bridge_js, annotate_js, position, size) {
+        match create_tab(app, window, url, plugin_scripts.clone(), Vec::new(), bridge_js, annotate_js, position, size) {
             Ok(_) => restored += 1,
             Err(e) => crate::alog!("ERROR", "[annota] 恢复 tab 失败（跳过）：{e}"),
         }

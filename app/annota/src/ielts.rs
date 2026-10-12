@@ -342,6 +342,7 @@ mod tests {
             settings,
             appdir.join("exports"),
             crate::store::Db::open_in_memory().unwrap(),
+            std::sync::Arc::new(crate::plugins::PluginsState::load(appdir.join("plugins"))),
         );
         let app = crate::sync_server::build_app(state);
 

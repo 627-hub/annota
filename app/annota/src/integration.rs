@@ -30,6 +30,7 @@ mod integration {
             settings,
             exports,
             db,
+            std::sync::Arc::new(crate::plugins::PluginsState::load(dir.join("plugins"))),
         )
     }
 

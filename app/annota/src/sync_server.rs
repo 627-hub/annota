@@ -1,10 +1,10 @@
 use axum::{
     body::Bytes,
-    extract::{Path as AxumPath, Query, Request, State},
-    http::{header::CONTENT_TYPE, StatusCode},
+    extract::{DefaultBodyLimit, Path as AxumPath, Query, Request, State},
+    http::{header::CONTENT_TYPE, HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use base64::Engine;
@@ -39,12 +39,18 @@ pub struct AppState {
     db: Db,
     locks: Arc<DashMap<String, Arc<Mutex<()>>>>,
     settings_lock: Arc<Mutex<()>>,
+    plugins: Arc<crate::plugins::PluginsState>,
 }
 
 impl AppState {
     /// settings.json 路径（ielts 词库目录等插件级配置从这里读）。
     pub fn settings_path(&self) -> &Path {
         &self.settings
+    }
+
+    /// 插件装载状态（token / 列表 / 注入快照）。
+    pub fn plugins(&self) -> &Arc<crate::plugins::PluginsState> {
+        &self.plugins
     }
 
     pub fn new(
@@ -54,6 +60,7 @@ impl AppState {
         settings: PathBuf,
         exports: PathBuf,
         db: Db,
+        plugins: Arc<crate::plugins::PluginsState>,
     ) -> Self {
         Self {
             store,
@@ -64,6 +71,7 @@ impl AppState {
             db,
             locks: Arc::new(DashMap::new()),
             settings_lock: Arc::new(Mutex::new(())),
+            plugins,
         }
     }
 }
@@ -155,6 +163,14 @@ pub fn build_app(state: AppState) -> Router {
         .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/ai", get(ai_status))
         .route("/api/ielts/lookup", get(crate::ielts::lookup))
+        // 插件管理：必须在下方 layer 三行之前注册（Router::layer 只作用于先前路由）
+        .route("/api/plugins", get(plugins_list))
+        .route(
+            "/api/plugins/install",
+            post(plugins_install).layer(DefaultBodyLimit::max(crate::plugins::MAX_ZIP_BODY)),
+        )
+        .route("/api/plugins/:id/toggle", post(plugins_toggle))
+        .route("/api/plugins/:id", delete(plugins_uninstall))
         .route("/api/note", post(note))
         .route("/api/bookmarks", get(get_bookmarks).post(post_bookmark).delete(delete_bookmark))
         .route("/api/history", get(get_history).delete(delete_history))
@@ -187,6 +203,7 @@ pub async fn run_server(
     notes_dir: PathBuf,
     settings: PathBuf,
     db: Db,
+    plugins: Arc<crate::plugins::PluginsState>,
 ) {
     let exports = store
         .parent()
@@ -194,7 +211,7 @@ pub async fn run_server(
         .unwrap_or_else(|| store.join("exports"));
     let backup_store_dir = store.clone();
     let backup_db = db.clone();
-    let state = AppState::new(store, root, notes_dir, settings, exports, db);
+    let state = AppState::new(store, root, notes_dir, settings, exports, db, plugins);
     let app = build_app(state);
 
     let addr = format!("{}:{}", HOST, PORT);
@@ -749,6 +766,84 @@ async fn put_settings(State(state): State<AppState>, body: Bytes) -> Response {
         return json_error(StatusCode::INTERNAL_SERVER_ERROR, &format!("write settings: {e}"));
     }
     json_ok(json!({ "ok": true, "settings": with_has_api_key(settings) }))
+}
+
+// ---------- 插件管理（v2 运行时装载） ----------
+// token 从 GET /api/plugins 下发（同源管理页可读；跨源无 CORS 读不到），
+// 写请求校验 X-Annota-Token——挡「恶意网页静默安装」，残余风险见 docs/plugins.md。
+
+fn plugins_token_rejected() -> Response {
+    json_error(StatusCode::FORBIDDEN, "plugin_token_required")
+}
+
+async fn plugins_list(State(state): State<AppState>) -> Response {
+    let plugins = state.plugins();
+    json_ok(json!({
+        "ok": true,
+        "token": plugins.token(),
+        "plugins": plugins.list_json(),
+    }))
+}
+
+async fn plugins_install(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    body: Bytes,
+) -> Response {
+    if !crate::plugins::check_token(state.plugins().token(), &headers) {
+        return plugins_token_rejected();
+    }
+    let name = params
+        .get("name")
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("plugin.zip");
+    if params.get("dry_run").map(String::as_str) == Some("1") {
+        return match crate::plugins::PluginsState::preview(&body) {
+            Ok(meta) => json_ok(json!({ "ok": true, "preview": meta })),
+            Err(e) => json_error(StatusCode::UNPROCESSABLE_ENTITY, &e),
+        };
+    }
+    match state.plugins().install(&body, name) {
+        Ok(v) => json_ok(v),
+        Err(e) => json_error(StatusCode::UNPROCESSABLE_ENTITY, &e),
+    }
+}
+
+async fn plugins_toggle(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    body: Bytes,
+) -> Response {
+    if !crate::plugins::check_token(state.plugins().token(), &headers) {
+        return plugins_token_rejected();
+    }
+    let enabled = serde_json::from_slice::<Value>(&body)
+        .ok()
+        .and_then(|v| v.get("enabled").and_then(Value::as_bool));
+    let Some(enabled) = enabled else {
+        return json_error(StatusCode::BAD_REQUEST, "enabled must be boolean");
+    };
+    match state.plugins().toggle(&id, enabled) {
+        Ok(()) => json_ok(json!({ "ok": true, "id": id, "enabled": enabled })),
+        Err(code) => json_error(code, "toggle failed"),
+    }
+}
+
+async fn plugins_uninstall(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Response {
+    if !crate::plugins::check_token(state.plugins().token(), &headers) {
+        return plugins_token_rejected();
+    }
+    match state.plugins().uninstall(&id) {
+        Ok(()) => json_ok(json!({ "ok": true, "id": id })),
+        Err(code) => json_error(code, "uninstall failed"),
+    }
 }
 
 async fn list(State(state): State<AppState>) -> Response {
@@ -1826,7 +1921,7 @@ mod r2_merge_tests {
         let state = AppState::new(dir.clone(), dir.clone(), dir.clone(), dir.join("s.json"), dir.clone(), {
             // restore_anno 只用 state.store；db 仅占位
             crate::store::Db::open_in_memory().unwrap()
-        });
+        }, std::sync::Arc::new(crate::plugins::PluginsState::load(dir.join("plugins"))));
         // 直接复用 copy 逻辑断言（不经 HTTP）：.bak 存在即可恢复
         std::fs::copy(&bak, &main).unwrap();
         let restored: Value = serde_json::from_str(&std::fs::read_to_string(&main).unwrap()).unwrap();
