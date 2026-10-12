@@ -1,6 +1,6 @@
 /* ===== data: build id ===== */
-window.VA_BUILD=1791777667;
-window.VA_US_VER="0.1.0.55";
+window.VA_BUILD=1791777809;
+window.VA_US_VER="0.1.0.56";
 window.VA_DIST_BASE="https://tencentcloudtest-d2eg4lu85c76fb0-1414056833.tcloudbaseapp.com";
 /* ===== src/geometry.js ===== */
 /* video-annotate · geometry
@@ -1457,6 +1457,20 @@ button { color: inherit; }
 .va-entry-row.is-hidden { opacity:.45; }
 .va-entry-row.is-hidden .va-entry-copy strong { text-decoration:line-through; }
 
+/* 雅思词库信息块（ielts 插件，词条详情气泡底部） */
+.va-ielts-block {
+  margin-top:12px; padding-top:11px; border-top:1px solid rgba(255,255,255,.07);
+  display:flex; flex-direction:column; gap:5px;
+}
+.va-ielts-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.va-ielts-tag {
+  flex:none; padding:1px 7px; border-radius:999px; font:550 10px var(--va-font-ui);
+  border:1px solid rgba(245,166,35,.3); background:rgba(245,166,35,.12); color:#f0d2a0;
+}
+.va-ielts-phon { color:#8a929c; font:11px/1.2 var(--va-font-ui); }
+.va-ielts-trans { color:#d7dade; font:12px/1.45 var(--va-font-ui); }
+.va-ielts-example { color:#8a929c; font:11px/1.4 var(--va-font-ui); font-style:italic; }
+
 /* 标签编辑（通用批注） */
 .va-tag-box {
   display:flex; flex-wrap:wrap; gap:5px; align-items:center; min-height:34px; padding:5px 7px;
@@ -2908,6 +2922,7 @@ button { color: inherit; }
     shortcuts: { annotate: 'alt+d', panel: 'alt+l', overlay: 'alt+s' },
     dictUrlTemplate: '',
     ai: { baseUrl: '', model: '' },
+    ielts: { dataDir: '' },
     profile: { name: '匿名标注者' },
   };
   function mergeAppSettings(value) {
@@ -2928,6 +2943,10 @@ button { color: inherit; }
       ai: {
         baseUrl: value.ai && typeof value.ai.baseUrl === 'string' ? value.ai.baseUrl : '',
         model: value.ai && typeof value.ai.model === 'string' ? value.ai.model : '',
+      },
+      ielts: {
+        dataDir: value.ielts && typeof value.ielts.dataDir === 'string'
+          ? value.ielts.dataDir.trim().slice(0, 400) : DEFAULT_APP_SETTINGS.ielts.dataDir,
       },
       profile: {
         name: value.profile && typeof value.profile.name === 'string' && value.profile.name.trim()

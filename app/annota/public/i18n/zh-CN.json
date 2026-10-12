@@ -139,6 +139,7 @@
   "err.dict_template_invalid": "词典模板必须是有效的 http(s) URL",
   "err.ai_base_invalid": "AI Base URL 必须是 http(s) URL",
   "err.ai_model_too_long": "AI 模型名过长",
+  "err.path_too_long": "路径过长",
   "err.trust_list_full": "信任列表最多 50 个站点",
   "err.trust_origin_invalid": "信任站点必须是合法 origin：{raw}",
   "err.trust_origin_not_http": "信任站点必须是 http(s) origin：{raw}",

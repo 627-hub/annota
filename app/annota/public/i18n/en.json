@@ -139,6 +139,7 @@
   "err.dict_template_invalid": "Dictionary template must be a valid http(s) URL",
   "err.ai_base_invalid": "AI Base URL must be an http(s) URL",
   "err.ai_model_too_long": "AI model name too long",
+  "err.path_too_long": "Path too long",
   "err.trust_list_full": "Trust list supports at most 50 sites",
   "err.trust_origin_invalid": "Invalid trusted origin: {raw}",
   "err.trust_origin_not_http": "Trusted origin must be http(s): {raw}",

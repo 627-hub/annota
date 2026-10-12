@@ -78,3 +78,14 @@ Annota 浏览器（注入态引擎 + 本地服务）做**标注底座**：媒体
 - 删除（git 历史可找回）：csv/json/jsonl 客户端下载、手动确认截图（`confirmShot`/`captureEntryManual`，当时无 UI 入口）。
 - deck 命名回退：`opts.deckName` → 条目含「雅思」tag 时 `Annota::IELTS` → 视频标题 → `Annota 学习卡`。
 - 测试：`dev/smoke-export.mjs`（拼接产物完整驱动，插件化后零改动通过）。
+
+### ielts（`src/plugins/ielts.js` + Rust `app/annota/src/ielts.rs`）
+
+- 跨仓只读联动姐妹仓 ielts-7.5（其 `app/README.md` 明确把本项目列为下游）：
+  `GET /api/ielts/lookup?word=` 合并 `雅思.jsonl`（音标/释义/例句）+ `enrich/ielts.jsonl`（词源/同反义词）。
+- 数据目录解析：env `ANNOTA_IELTS_DIR` → settings `ielts.dataDir` → debug 构建的兄弟仓默认路径 → 都没有则 501。
+- 前端：词条详情气泡底部渲染雅思块（音标/释义/例句，5 分钟缓存含负缓存）；501 时首次后静默停用，不刷屏。
+- 安全：`word` 只做格式校验 + 键查找，永不参与路径拼接。
+- 测试：`dev/ielts.test.mjs`（注册/渲染/缓存/降级）、`cargo test ielts`（词形校验/索引/后缀/端到端路由/真实词库冒烟）。
+- v2 愿望：`/api/ielts/search`（BM25，移植 retrieve.py）、卡片背面富化（改 `card_html` + smoke 断言）、
+  lexicon 761k 行 sidecar 索引。

@@ -40,6 +40,7 @@
     shortcuts: { annotate: 'alt+d', panel: 'alt+l', overlay: 'alt+s' },
     dictUrlTemplate: '',
     ai: { baseUrl: '', model: '' },
+    ielts: { dataDir: '' },
     profile: { name: '匿名标注者' },
   };
   function mergeAppSettings(value) {
@@ -60,6 +61,10 @@
       ai: {
         baseUrl: value.ai && typeof value.ai.baseUrl === 'string' ? value.ai.baseUrl : '',
         model: value.ai && typeof value.ai.model === 'string' ? value.ai.model : '',
+      },
+      ielts: {
+        dataDir: value.ielts && typeof value.ielts.dataDir === 'string'
+          ? value.ielts.dataDir.trim().slice(0, 400) : DEFAULT_APP_SETTINGS.ielts.dataDir,
       },
       profile: {
         name: value.profile && typeof value.profile.name === 'string' && value.profile.name.trim()

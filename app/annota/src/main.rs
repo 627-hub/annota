@@ -14,6 +14,7 @@ use tauri_plugin_updater::UpdaterExt;
 mod sync_server;
 mod agent;
 mod apkg;
+mod ielts;
 mod tabs;
 mod store;
 mod logf;

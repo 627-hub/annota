@@ -42,6 +42,11 @@ pub struct AppState {
 }
 
 impl AppState {
+    /// settings.json 路径（ielts 词库目录等插件级配置从这里读）。
+    pub fn settings_path(&self) -> &Path {
+        &self.settings
+    }
+
     pub fn new(
         store: PathBuf,
         root: PathBuf,
@@ -149,6 +154,7 @@ pub fn build_app(state: AppState) -> Router {
         .route("/api/list", get(list))
         .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/ai", get(ai_status))
+        .route("/api/ielts/lookup", get(crate::ielts::lookup))
         .route("/api/note", post(note))
         .route("/api/bookmarks", get(get_bookmarks).post(post_bookmark).delete(delete_bookmark))
         .route("/api/history", get(get_history).delete(delete_history))
@@ -555,6 +561,7 @@ fn default_settings() -> Value {
         "shortcuts": { "annotate": "alt+d", "panel": "alt+l", "overlay": "alt+s" },
         "dictUrlTemplate": "",
         "ai": { "baseUrl": "", "model": "" },
+        "ielts": { "dataDir": "" },
         "trustedOrigins": []
     })
 }
@@ -627,6 +634,12 @@ fn normalize_settings(input: &Value) -> Result<Value, crate::error::AppError> {
     if ai_model.len() > 160 {
         return Err(crate::error::AppError::key("err.ai_model_too_long"));
     }
+    // ielts 插件：词库目录（跨仓只读引用姐妹仓 ielts-7.5；空 = 走 env/内置默认）
+    let ielts = input.get("ielts").unwrap_or(&defaults["ielts"]);
+    let ielts_dir = ielts.get("dataDir").and_then(Value::as_str).unwrap_or("").trim();
+    if ielts_dir.len() > 400 {
+        return Err(crate::error::AppError::key("err.path_too_long"));
+    }
     // P2-S1：用户信任的站点 origin 列表（高危命令的放行名单）
     let mut trusted: Vec<String> = Vec::new();
     if let Some(arr) = input.get("trustedOrigins").and_then(Value::as_array) {
@@ -664,6 +677,7 @@ fn normalize_settings(input: &Value) -> Result<Value, crate::error::AppError> {
         },
         "dictUrlTemplate": dict_template,
         "ai": { "baseUrl": ai_base, "model": ai_model },
+        "ielts": { "dataDir": ielts_dir },
         "trustedOrigins": trusted
     }))
 }
