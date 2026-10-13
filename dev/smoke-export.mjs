@@ -11,7 +11,25 @@ import { fileURLToPath } from 'node:url';
 const here = path.dirname(fileURLToPath(import.meta.url));
 // 看门狗：smoke 只该活几秒；若有连接/句柄让进程赖着不退（CI 上曾致整个 job 挂到 timeout），
 // 60s 后强制退出并报错，让 CI 显示真失败而不是静默挂死。unref 不阻止正常退出。
-setTimeout(() => { console.error('smoke-export hung (watchdog 60s)'); process.exit(1); }, 60000).unref();
+// 退出前 dump 活跃资源/句柄/桩请求，定位到底是谁握着事件循环。
+setTimeout(() => {
+  console.error('smoke-export hung (watchdog 60s)');
+  try {
+    console.error('resources:', JSON.stringify(process.getActiveResourcesInfo?.() || []));
+    const handles = process._getActiveHandles?.() || [];
+    console.error('handles:', handles.map((h) => {
+      const t = h && h.constructor && h.constructor.name;
+      const info = [h && (h._host || h.remoteAddress), h && h.remotePort, h && h.localPort].filter(Boolean).join(':');
+      return info ? `${t}(${info})` : t;
+    }).join(', '));
+    console.error('stub requests:', JSON.stringify(requests.map((r) => r.method + ' ' + r.url)));
+    server.getConnections((_, n) => { console.error('stub open connections:', n); process.exit(1); });
+    setTimeout(() => process.exit(1), 2000).unref();
+  } catch (e) {
+    console.error('diag failed:', e && e.message);
+    process.exit(1);
+  }
+}, 60000).unref();
 const demo = fs.readFileSync(path.join(here, 'demo.html'), 'utf8');
 assert.match(demo, /<video[^>]+src="sample\.mp4"/, 'dev/demo.html should provide the demo video');
 const code = fs.readFileSync(path.join(here, '..', 'dist', 'annotate.user.js'), 'utf8');
