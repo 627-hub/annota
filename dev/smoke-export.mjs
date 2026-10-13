@@ -9,6 +9,9 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+// 看门狗：smoke 只该活几秒；若有连接/句柄让进程赖着不退（CI 上曾致整个 job 挂到 timeout），
+// 60s 后强制退出并报错，让 CI 显示真失败而不是静默挂死。unref 不阻止正常退出。
+setTimeout(() => { console.error('smoke-export hung (watchdog 60s)'); process.exit(1); }, 60000).unref();
 const demo = fs.readFileSync(path.join(here, 'demo.html'), 'utf8');
 assert.match(demo, /<video[^>]+src="sample\.mp4"/, 'dev/demo.html should provide the demo video');
 const code = fs.readFileSync(path.join(here, '..', 'dist', 'annotate.user.js'), 'utf8');
@@ -167,5 +170,8 @@ try {
   assert.match(css, /data-ui-hidden="1"\] \.va-panel/);
   console.log('smoke-export OK · cards=%d · finalize=%d · state=%s', cards.length, finalize.length, sandbox.__ANNOTA_EXPORT__.status().state);
 } finally {
+  // CI 上曾出现某条 keep-alive 连接迟迟不关，server.close 等它等到 job 超时：
+  // 先强断全部连接再 close，确保进程确定性退出。
+  server.closeAllConnections?.();
   await new Promise((resolve) => server.close(resolve));
 }
