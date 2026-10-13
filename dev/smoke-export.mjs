@@ -9,27 +9,39 @@ import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-// 看门狗：smoke 只该活几秒；若有连接/句柄让进程赖着不退（CI 上曾致整个 job 挂到 timeout），
-// 60s 后强制退出并报错，让 CI 显示真失败而不是静默挂死。unref 不阻止正常退出。
-// 退出前 dump 活跃资源/句柄/桩请求，定位到底是谁握着事件循环。
+// 看门狗：smoke 只该活几秒；若有句柄让进程赖着不退（CI 上曾致 job 挂到 timeout），20s 后
+// 强制退出并打出判决证据：rafCalls 双采样（涨=core rAF 链在自旋）+ 句柄/stdio 区分 + libuv ref'd。
 setTimeout(() => {
-  console.error('smoke-export hung (watchdog 60s)');
-  try {
-    console.error('resources:', JSON.stringify(process.getActiveResourcesInfo?.() || []));
-    const handles = process._getActiveHandles?.() || [];
-    console.error('handles:', handles.map((h) => {
-      const t = h && h.constructor && h.constructor.name;
-      const info = [h && (h._host || h.remoteAddress), h && h.remotePort, h && h.localPort].filter(Boolean).join(':');
-      return info ? `${t}(${info})` : t;
-    }).join(', '));
-    console.error('stub requests:', JSON.stringify(requests.map((r) => r.method + ' ' + r.url)));
-    server.getConnections((_, n) => { console.error('stub open connections:', n); process.exit(1); });
-    setTimeout(() => process.exit(1), 2000).unref();
-  } catch (e) {
-    console.error('diag failed:', e && e.message);
-    process.exit(1);
-  }
-}, 60000).unref();
+  const at = rafCalls;
+  console.error('smoke-export hung (watchdog 20s), rafCalls:', rafCalls);
+  setTimeout(() => {
+    console.error('rafCalls +300ms:', rafCalls, '(delta ' + (rafCalls - at) + ')');
+    try {
+      console.error('resources:', JSON.stringify(process.getActiveResourcesInfo?.() || []));
+      const handles = process._getActiveHandles?.() || [];
+      console.error('handles:', handles.map((h) => JSON.stringify({
+        t: h && h.constructor && h.constructor.name,
+        stdio: h === process.stdout ? 'stdout' : h === process.stderr ? 'stderr' : '',
+        fd: h && h.fd, connecting: h && h.connecting, destroyed: h && h.destroyed,
+        ref: h && typeof h.hasRef === 'function' ? h.hasRef() : undefined,
+        peer: (h && (h._host || h.remoteAddress)) || undefined, localPort: h && h.localPort,
+      })).join(' '));
+      try {
+        const rep = process.report.getReport();
+        console.error('libuv ref\'d:', JSON.stringify((rep.libuv || [])
+          .filter((e) => e.is_referenced)
+          .map((e) => ({ type: e.type, active: e.is_active, addr: e.address }))));
+      } catch (e) { console.error('report failed:', e && e.message); }
+      console.error('stub requests:', JSON.stringify(requests.map((r) => r.method + ' ' + r.url)));
+      server.getConnections((_, n) => { console.error('stub open connections:', n); process.exit(1); });
+    } catch (e) {
+      console.error('diag failed:', e && e.message);
+      process.exit(1);
+    }
+    setTimeout(() => process.exit(1), 1500).unref();
+  }, 300).unref();
+  setTimeout(() => process.exit(1), 5000).unref();
+}, 20000).unref();
 const demo = fs.readFileSync(path.join(here, 'demo.html'), 'utf8');
 assert.match(demo, /<video[^>]+src="sample\.mp4"/, 'dev/demo.html should provide the demo video');
 const code = fs.readFileSync(path.join(here, '..', 'dist', 'annotate.user.js'), 'utf8');
@@ -123,6 +135,7 @@ const document = {
 };
 document.body.appendChild(video);
 let scheduledFrames = 0;
+let rafCalls = 0;
 const sandbox = {
   console, document,
   location: { hostname: '127.0.0.1', pathname: '/dev/demo.html', search: '', hash: '', href: 'http://127.0.0.1/dev/demo.html', origin: 'http://127.0.0.1' },
@@ -131,8 +144,8 @@ const sandbox = {
   getComputedStyle: () => ({ objectFit: 'contain', display: 'block', visibility: 'visible', opacity: '1' }),
   innerWidth: 800, innerHeight: 600,
   setTimeout, clearTimeout, setInterval: () => 1, clearInterval() {},
-  requestAnimationFrame: (cb) => { if (scheduledFrames < 6) { scheduledFrames++; setTimeout(() => cb(Date.now()), 0); } return scheduledFrames; },
-  cancelAnimationFrame() {}, fetch, URL, Blob, TextEncoder, TextDecoder, btoa, atob,
+  requestAnimationFrame: (cb) => { rafCalls++; if (scheduledFrames < 6) { scheduledFrames++; setTimeout(() => cb(Date.now()), 0); } return scheduledFrames; },
+  cancelAnimationFrame() {}, fetch, AbortController, URL, Blob, TextEncoder, TextDecoder, btoa, atob,
   // 最小 Image：onload 立即触发，供 canvasOverlay 叠框（无真实像素，只走通合约）
   Image: class Image { constructor() { this.width = 1; this.height = 1; } set src(v) { this._src = v; setTimeout(() => { if (this.onload) this.onload(); }, 0); } get src() { return this._src; } },
   Date, Math, JSON, Array, Object, String, Number, Boolean, RegExp, Error, Promise, Uint8Array, URLSearchParams,
@@ -166,7 +179,7 @@ try {
     { id: 'export-three', word: 'three', label: 'sense', t: 3, dur: 1, box: { x: .5, y: .3, w: .2, h: .2 } },
   ];
   // Stop additional simulated core-loop frames; the export driver's own rAF waits remain active.
-  sandbox.requestAnimationFrame = (cb) => setTimeout(() => cb(Date.now()), 0);
+  sandbox.requestAnimationFrame = (cb) => { rafCalls++; return setTimeout(() => cb(Date.now()), 0); };
   const result = await sandbox.__ANNOTA_EXPORT__.start({ format: 'apkg', deckName: 'Demo deck', settle: 0, onlyMissing: false });
   assert.equal(result.total, 3);
   const deadline = Date.now() + 8000;
@@ -189,8 +202,10 @@ try {
   assert.match(css, /data-ui-hidden="1"\] \.va-panel/);
   console.log('smoke-export OK · cards=%d · finalize=%d · state=%s', cards.length, finalize.length, sandbox.__ANNOTA_EXPORT__.status().state);
 } finally {
-  // CI 上曾出现某条 keep-alive 连接迟迟不关，server.close 等它等到 job 超时：
-  // 先强断全部连接再 close，确保进程确定性退出。
+  // H1 断链：core 的 loop() 会经 rAF 无限自我重挂（shim isConnected 恒真），若慢机上竞态
+  // 赢过 6 帧额度，第 169 行换上的无节流 rAF 会自旋占死事件循环。no-op 后下一帧即终止。
+  sandbox.requestAnimationFrame = () => 0;
+  // keep-alive 连接也可能拖住 close（曾致 job 超时）：先强断全部连接再 close。
   server.closeAllConnections?.();
   await new Promise((resolve) => server.close(resolve));
 }
