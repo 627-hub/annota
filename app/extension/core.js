@@ -1,6 +1,6 @@
 /* ===== data: build id ===== */
-window.VA_BUILD=1791811738;
-window.VA_US_VER="0.1.0.59";
+window.VA_BUILD=1791858128;
+window.VA_US_VER="0.1.0.60";
 window.VA_DIST_BASE="https://tencentcloudtest-d2eg4lu85c76fb0-1414056833.tcloudbaseapp.com";
 /* ===== src/geometry.js ===== */
 /* video-annotate · geometry
@@ -2589,7 +2589,13 @@ button { color: inherit; }
         } catch (e) { reject(e); }
       });
     }
-    return fetch(url, { cache: 'no-store' }).then((r) => (r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status))));
+    // 裸 fetch 必须加超时：跨境/弱网下 version.json 可能一直挂着不回，
+    // 无超时的请求会无限占用连接（本地 CI smoke 曾因此进程退不掉直到 job 超时）。
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), 8000) : null;
+    return fetch(url, { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined })
+      .then((r) => (r.ok ? r.text() : Promise.reject(new Error('HTTP ' + r.status))))
+      .finally(() => { if (timer) clearTimeout(timer); });
   }
 
   // 重装链接必须指向「用户当前装的那个变体」，不能一律给 view 版：
