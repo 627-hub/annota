@@ -75,6 +75,7 @@ const sandbox = {
   PointerEvent: class PointerEvent { constructor(type, init = {}) { this.type = type; Object.assign(this, init); } },
 };
 sandbox.window = sandbox; sandbox.self = sandbox; sandbox.globalThis = sandbox;
+sandbox.localStorage.setItem('va:lastVersionCheck', String(Date.now())); // smoke 离网：跳过版本探测的外部请求，防 CI 网络挂死
 sandbox.localStorage.setItem('va:entries:bilibili:BV1xx411c7mD', JSON.stringify({
   entries: [{ id: 'smoke-entry', t: 3, dur: 1, box: { x: 0.2, y: 0.2, w: 0.2, h: 0.2 }, word: 'smoke', label: '冒烟标注' }],
 }));

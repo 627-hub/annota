@@ -75,6 +75,7 @@ const sandbox = {
   PointerEvent: class PointerEvent { constructor(type, init = {}) { this.type = type; Object.assign(this, init); } },
 };
 sandbox.window = sandbox; sandbox.self = sandbox; sandbox.globalThis = sandbox;
+sandbox.localStorage.setItem('va:lastVersionCheck', String(Date.now())); // smoke 离网：跳过版本探测的外部请求，防 CI 网络挂死
 
 vm.createContext(sandbox);
 vm.runInContext(code, sandbox, { filename: 'annotate.user.js' });

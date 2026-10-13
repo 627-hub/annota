@@ -42,6 +42,7 @@ const sandbox = {
   crypto: globalThis.crypto || { getRandomValues: (a) => { a.fill(7); return a; } }, PointerEvent: class { constructor(type, init = {}) { this.type = type; Object.assign(this, init); } },
 };
 sandbox.window = sandbox; sandbox.self = sandbox; sandbox.globalThis = sandbox;
+sandbox.localStorage.setItem('va:lastVersionCheck', String(Date.now())); // smoke 离网：跳过版本探测的外部请求，防 CI 网络挂死
 store['annota:groups'] = JSON.stringify([{ gid: 'seed', name: '冒烟测试组', host: 'github', repo: 'owner/repo', branch: 'main', role: 'member', token: 'test-token' }]);
 store['va:group:seed:bilibili:BV1xx411c7mD'] = JSON.stringify({ entries: [] });
 vm.createContext(sandbox);
