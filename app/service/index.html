@@ -1429,7 +1429,7 @@
       input.disabled = true;
       try {
         await pluginWrite('POST', '/api/plugins/' + encodeURIComponent(plugin.id) + '/toggle', { body: JSON.stringify({ enabled: next }), contentType: 'application/json' });
-        notify(next ? '已启用 ' + label + '。打开新标签页或刷新页面后生效' : '已停用 ' + label + '。刷新或新开标签页后停止（已开页面仍在运行）');
+        notify(next ? '已启用 ' + label + '。刷新页面后生效' : '已停用 ' + label + '。已打开的页面会继续运行，刷新后停止');
       } catch (error) {
         notify('操作失败：' + error.message);
       }
@@ -1440,7 +1440,7 @@
       if (!confirm('卸载插件「' + label + '」？')) return;
       try {
         await pluginWrite('DELETE', '/api/plugins/' + encodeURIComponent(plugin.id));
-        notify('已卸载 ' + label + '。刷新或新开标签页后停止（已开页面仍在运行）');
+        notify('已卸载 ' + label + '。已打开的页面会继续运行，刷新后停止');
       } catch (error) {
         notify('卸载失败：' + error.message);
       }
