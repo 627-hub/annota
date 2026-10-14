@@ -215,12 +215,10 @@ fn create_tab_reserved(
     let id_for_nav = id.clone();
     let id_for_nav2 = id.clone();
     let id_for_events = id.clone();
-    let id_for_replay = id.clone();
     let app_nav = app.clone();
-    // on_page_load 需要重放注入内容，而它们是 &str 入参——克隆成拥有所有权才能进 'static 闭包。
-    let bridge_for_replay = bridge_js.to_string();
-    let annotate_for_replay = annotate_js.to_string();
-    let plugin_scripts_for_replay = plugin_scripts.to_vec();
+    // 导航后重放注入所需的内容一律不进闭包捕获：桥接与标注层是 crate 根的 const，
+    // 插件脚本则从 PluginsState 现取。这样 create_tab_reserved 不必为重放额外克隆
+    // 四份数据，闭包也只捕获真正按 tab 变化的东西。
     let mut builder = WebviewBuilder::new(&id, WebviewUrl::External(parsed))
         // UA 修正：WKWebView 默认 UA 不含 Safari/WebKit 版本号，B 站等站点按 UA 判「浏览器版本过低」拒访。
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15")
@@ -285,12 +283,17 @@ fn create_tab_reserved(
             // 于是没有 dock/panel/adopt，编辑态抽屉永远弹不出来（实测 ctx 恒为 NULL）。
             if !started {
                 let _ = wv.eval(RESET_ANNOTATE_GUARD);
-                let _ = wv.eval(&bridge_for_replay);
-                for s in plugin_scripts_for_replay.iter() {
-                    let _ = wv.eval(s);
+                let _ = wv.eval(crate::BRIDGE_JS);
+                // 插件现取：用户可能在 tab 打开后才装/启用了插件，重放时读到最新集合。
+                // 顺序与首次注入一致——插件必须排在标注引擎之前，core 的安装循环读
+                // window.__VA_PLUGIN_DEFS__。
+                if let Some(st) = app_evt.try_state::<std::sync::Arc<crate::plugins::PluginsState>>() {
+                    for s in st.injection_scripts() {
+                        let _ = wv.eval(&s);
+                    }
                 }
-                let _ = wv.eval(&annotate_for_replay);
-                let tab_id_script = format!("window.__ANNOTA_TAB_ID__='{id_for_replay}';");
+                let _ = wv.eval(crate::ANNOTATE_JS);
+                let tab_id_script = format!("window.__ANNOTA_TAB_ID__='{id_for_events}';");
                 let _ = wv.eval(&tab_id_script);
                 // 编辑态跨 tab / 刷新 / 切站保持：以 Rust 权威值为准下发
                 let mode_script = replay_shell_mode_script();
