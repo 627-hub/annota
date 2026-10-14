@@ -23,6 +23,8 @@ app/service/store/
 app/service/notes/
 app/service/exports/
 app/service/settings.json
+# 插件清单（本机安装态，随插件增删变动）
+app/service/plugins/
 # 浏览器本地库（SQLite：收藏/历史/下载）
 app/service/annota.db
 app/service/annota.db-wal
