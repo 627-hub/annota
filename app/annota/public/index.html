@@ -502,16 +502,21 @@
       document.getElementById('home-button').addEventListener('click', openHome);
       document.getElementById('home-button').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openHome(); } });
 
-      /* ---- 编辑态切换（观看 ↔ 编辑）---- */
+      /* ---- 编辑态切换（观看 ↔ 编辑）----
+         注意：这里的 localStorage 只是工具栏自己的 UI 缓存（工具栏 origin 与页面不同，
+         两者互不可见），**不是**权威状态。权威值在 Rust 侧，切 tab / 导航 / 新建 tab 时
+         由 Rust 统一下发。key 与 src/browser-shell.js 的 SHELL_MODE_KEY 保持同名，
+         避免历史上 'va.browser.shellMode' vs 'va:shellMode' 那种各写各的漂移。 */
+      const SHELL_MODE_KEY = 'va:shellMode';
       let shellMode = 'view';
       const btnEdit = document.getElementById('btn-edit');
       function applyEditUI() {
         const on = shellMode === 'edit';
         btnEdit.classList.toggle('is-active', on);
         btnEdit.setAttribute('title', on ? __i18n.t('exit_edit') : __i18n.t('enter_edit'));
-        try { localStorage.setItem('va.browser.shellMode', shellMode); } catch (e) {}
+        try { localStorage.setItem(SHELL_MODE_KEY, shellMode); } catch (e) {}
       }
-      try { shellMode = localStorage.getItem('va.browser.shellMode') === 'edit' ? 'edit' : 'view'; } catch (e) {}
+      try { shellMode = localStorage.getItem(SHELL_MODE_KEY) === 'edit' ? 'edit' : 'view'; } catch (e) {}
       btnEdit.addEventListener('click', () => {
         const prev = shellMode;
         shellMode = shellMode === 'edit' ? 'view' : 'edit';

@@ -19,6 +19,24 @@ use crate::error::AppError;
 use crate::store::DbState;
 
 pub const FIRST_TAB_ID: &str = "browser";
+
+/// 导航后重放标注层前，必须清掉 core.js 的防重复守卫。
+///
+/// core.js 开头是 `if (window.__VA_LOADED__) return; window.__VA_LOADED__ = true;`。
+/// `initialization_script` 在 about:blank 阶段就把该标志置位，且它随导航保留，
+/// 导致真实页面重放时整份 core.js 第一行即 return（实测编辑抽屉永远弹不出）。
+const RESET_ANNOTATE_GUARD: &str = "try{delete window.__VA_LOADED__;}catch(e){window.__VA_LOADED__=undefined;}";
+
+/// core 重建后按 **Rust 侧权威值** 重放编辑态，保证跨 tab / 刷新 / 切站后一致。
+///
+/// 不能用页面自己的 localStorage（`va:shellMode` 按 origin 隔离，bilibili 与抖音各存各的），
+/// 也不能用工具栏那份（origin 同样不同，二者互不可见）。Rust 持有唯一权威值。
+fn replay_shell_mode_script() -> String {
+    format!(
+        "try{{var s=window.VA_BROWSER_SHELL;if(s&&s.setMode)s.setMode('{mode}');}}catch(e){{}}",
+        mode = crate::shell_mode()
+    )
+}
 /// 单次会话最多恢复的 tab 数（与前端 12 tab 上限对齐）。
 pub const MAX_RESTORE: usize = 12;
 
@@ -256,6 +274,28 @@ fn create_tab_reserved(
         .on_page_load(move |wv, payload| {
             let url = payload.url().to_string();
             let started = matches!(payload.event(), tauri::webview::PageLoadEvent::Started);
+            // 页面每次加载完成都重放桥接 + 标注层。
+            //
+            // 为什么必须重放：`initialization_script` 只在 webview **首次创建**时执行一次，
+            // 那时 URL 还是 about:blank；此后导航到真实页面脚本不会自动重跑。
+            //
+            // 为什么必须先清 `__VA_LOADED__`：core.js 顶部有 `if (window.__VA_LOADED__) return`
+            // 防重复守卫。该标志在 about:blank 阶段就被置 true 并随导航保留，
+            // 不清掉的话每次重放都在第一行 return —— 整份 core.js 从不执行，
+            // 于是没有 dock/panel/adopt，编辑态抽屉永远弹不出来（实测 ctx 恒为 NULL）。
+            if !started {
+                let _ = wv.eval(RESET_ANNOTATE_GUARD);
+                let _ = wv.eval(&bridge_for_replay);
+                for s in plugin_scripts_for_replay.iter() {
+                    let _ = wv.eval(s);
+                }
+                let _ = wv.eval(&annotate_for_replay);
+                let tab_id_script = format!("window.__ANNOTA_TAB_ID__='{id_for_replay}';");
+                let _ = wv.eval(&tab_id_script);
+                // 编辑态跨 tab / 刷新 / 切站保持：以 Rust 权威值为准下发
+                let mode_script = replay_shell_mode_script();
+                let _ = wv.eval(&mode_script);
+            }
             // 同步 url 缓存（兜底 on_navigation 未覆盖的形态，如首载）
             if let Some(st) = app_evt.try_state::<TabState>() {
                 if let Ok(mut mgr) = st.lock() {
@@ -388,6 +428,8 @@ fn create_tab_reserved(
     }
     let _ = new_wv.show();
     let _ = new_wv.set_focus();
+    // 新 tab 立即对齐 Rust 侧权威编辑态（否则它会显示自己那份按 origin 隔离的旧值）
+    crate::sync_shell_mode(&new_wv);
 
     emit_tabs(app);
     Ok(id)
@@ -411,6 +453,8 @@ pub fn activate_tab(app: &AppHandle, id: &str) -> Result<(), AppError> {
             if tid == id {
                 let _ = wv.show();
                 let _ = wv.set_focus();
+                // 切到该 tab 时对齐 Rust 权威编辑态
+                crate::sync_shell_mode(&wv);
             } else {
                 let _ = wv.hide();
             }

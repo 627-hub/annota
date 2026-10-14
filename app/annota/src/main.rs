@@ -534,11 +534,9 @@ fn browser_action(app: tauri::AppHandle, w: tauri::Webview, action: String) -> R
 fn set_shell_mode(app: tauri::AppHandle, w: tauri::Webview, mode: String) -> Result<(), AppError> {
     require_local_or_trusted(&app, &w, &crate::i18n::t("perm.shell_mode"))?;
     let m = if mode == "edit" { "edit" } else { "view" };
+    store_shell_mode(m);
     let webview = tabs::active_webview(&app)?;
-    let script = format!(
-        "(function(){{try{{var s=window.VA_BROWSER_SHELL;if(s&&s.setMode)s.setMode('{m}');}}catch(e){{}}}})()"
-    );
-    webview.eval(script).map_err(AppError::internal)
+    apply_shell_mode_to(&webview, m).map_err(AppError::internal)
 }
 
 /// 归一化浮层种类：只认三种，其余按菜单处理。
@@ -902,6 +900,9 @@ fn tab_activate(app: tauri::AppHandle, w: tauri::Webview, id: String) -> Result<
     // P1-a#6：切 tab 后把全局缩放重放到新激活的 webview（标签数字与实际一致）
     if let Ok(wv) = tabs::active_webview(&app) {
         let _ = wv.eval(&page_zoom_script());
+        // 编辑态是全局的：切 tab 后把 Rust 侧权威模式推给新激活页，
+        // 否则目标页会沿用它自己那份按 origin 隔离的旧 localStorage。
+        sync_shell_mode(&wv);
     }
     let _ = apply_layout(&app);
     Ok(())
