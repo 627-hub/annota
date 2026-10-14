@@ -258,6 +258,10 @@ const OVERLAY_ID: &str = "overlay";
 /// 每次新建 tab 自增；overlay 记录自己创建时的值，用于判断是否被后建的 tab 盖住。
 static TAB_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static OVERLAY_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// overlay 的 webview 创建被推迟到 IPC 回调之外（见 overlay_open）。
+/// 本标志在「请求打开」时清零、在「关闭请求」时置位：延迟窗口内若用户已改变主意
+/// （或已建了更新的 tab），后台任务据此放弃创建，避免关不掉 / 盖住新 tab 的幽灵浮层。
+static OVERLAY_CLOSED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 /// ⋯ 菜单浮层高度（逻辑像素）。菜单项固定，可静态给定。
 /// 2026-10：加「插件管理」后实测菜单 376px，380 仅剩 4px 余量 → 放宽到 420。
 const PANEL_MENU_H: f64 = 420.0;
@@ -269,6 +273,11 @@ fn toolbar_total_height() -> f64 {
 /// 通知浮层：tab 代数已变（被新 tab 盖住了）。
 pub fn bump_tab_gen() {
     TAB_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// 作废尚在延迟窗口内、还没真正创建的 overlay（新建 tab 时调用）。
+pub fn abort_pending_overlay() {
+    OVERLAY_CLOSED.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 // 本地同步服务地址（va_fetch 只允许它，防 SSRF）
 const SYNC_HOSTS: &[&str] = &["127.0.0.1", "localhost", "::1"];
@@ -585,6 +594,8 @@ fn overlay_geometry(app: &AppHandle, kind: &str) -> Result<(u32, u32, i32, i32),
 fn overlay_open(app: tauri::AppHandle, w: tauri::Webview, kind: String) -> Result<(), AppError> {
     require_local_or_trusted(&app, &w, &crate::i18n::t("perm.overlay_open"))?;
     let kind = normalize_overlay_kind(&kind);
+    // 打开意图：清掉「已放弃」标志，让下面的延迟任务可以创建。
+    OVERLAY_CLOSED.store(false, std::sync::atomic::Ordering::Relaxed);
     // 已有 overlay：若没有更新的 tab 盖住它就复用，否则销毁重建
     // （后建的 webview 在上层，复用会藏在页面下面看不见）。
     if let Some(wv) = app.get_webview(OVERLAY_ID) {
@@ -605,6 +616,9 @@ fn overlay_open(app: tauri::AppHandle, w: tauri::Webview, kind: String) -> Resul
         }
         let _ = wv.close();
     }
+    // 走到这里说明要新建浮层。记录请求时刻的 tab 代数：延迟窗口内若又新建了 tab，
+    // 后台任务会发现代数已变而放弃创建（否则新 tab 会盖在浮层之上，菜单打不开）。
+    let gen_at_request = TAB_GEN.load(std::sync::atomic::Ordering::Relaxed);
     let (w, h, x, y) = overlay_geometry(&app, kind)?;
     let url = WebviewUrl::App("overlay.html".into());
     let init = format!(
@@ -620,18 +634,41 @@ fn overlay_open(app: tauri::AppHandle, w: tauri::Webview, kind: String) -> Resul
         .initialization_script(BRIDGE_JS)
         .initialization_script(&init)
         .transparent(true);
-    window
-        .add_child(builder, PhysicalPosition::new(x, y), PhysicalSize::new(w, h))
-        .map_err(AppError::internal)?;
-    // 记录创建时的 tab 代数：之后若又新建了 tab，它会盖在 overlay 之上（后加者在上），
-    // 下次打开时据此决定是否重建。
-    OVERLAY_GEN.store(TAB_GEN.load(std::sync::atomic::Ordering::Relaxed), std::sync::atomic::Ordering::Relaxed);
+    // 与 tab_new 同理：在 WebView2 上同步 add_child 会与 wry 中间态重入，
+    // 把发起调用的工具栏渲染进程卡死（实测点「更多」后工具栏 JS 心跳彻底停止，
+    // 表现为菜单不弹 + 之后所有按钮失效）。故推迟到 IPC 回调之外再建。
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        // 延迟期间用户可能已关闭浮层，或新建了 tab——建之前复核，避免留下关不掉的幽灵浮层。
+        if OVERLAY_CLOSED.load(std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        if TAB_GEN.load(std::sync::atomic::Ordering::Relaxed) != gen_at_request {
+            return;
+        }
+        if let Err(e) = window.add_child(
+            builder,
+            PhysicalPosition::new(x, y),
+            PhysicalSize::new(w, h),
+        ) {
+            crate::alog!("ERROR", "[annota] 异步建 overlay 失败：{e}");
+            return;
+        }
+        // 记录创建时的 tab 代数：之后若又新建了 tab，它会盖在 overlay 之上（后加者在上），
+        // 下次打开时据此决定是否重建。
+        OVERLAY_GEN.store(
+            TAB_GEN.load(std::sync::atomic::Ordering::Relaxed),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    });
     Ok(())
 }
 
 #[tauri::command]
 fn overlay_close(app: tauri::AppHandle, w: tauri::Webview) -> Result<(), AppError> {
     require_local_or_trusted(&app, &w, &crate::i18n::t("perm.overlay_close"))?;
+    // 关闭意图：置位后，尚在 200ms 延迟窗口里的创建任务会放弃（见 overlay_open）。
+    OVERLAY_CLOSED.store(true, std::sync::atomic::Ordering::Relaxed);
     if let Some(wv) = app.get_webview(OVERLAY_ID) {
         let _ = wv.close();
     }
@@ -758,9 +795,60 @@ fn restart_server(app: tauri::AppHandle, w: tauri::Webview) -> Result<serde_json
     Ok(json!({ "running": false, "retrying": true }))
 }
 
+// ---------- 编辑态（观看 ↔ 编辑）的权威状态 ----------
+//
+// 编辑态必须由 Rust 持有权威值，不能靠各 webview 自己的 localStorage：
+// 工具栏 webview 与页面 webview **origin 不同**（app:// vs https://站点），
+// localStorage 互不相通；即便在页面之间，localStorage 也按 origin 隔离，
+// 于是 bilibili / 抖音 / 本地站各存各的。每次导航后 browser-shell 的 adopt()
+// 都会读「本站那份」并恢复它——表现为切站或刷新后编辑态被莫名重置。
+//
+// 现在：Rust 记权威值，切 tab / 导航 / 新建 tab 时统一下发给目标 webview。
+
+static SHELL_MODE_EDIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn shell_mode() -> &'static str {
+    if SHELL_MODE_EDIT.load(std::sync::atomic::Ordering::Relaxed) {
+        "edit"
+    } else {
+        "view"
+    }
+}
+
+pub fn store_shell_mode(mode: &str) {
+    SHELL_MODE_EDIT.store(mode == "edit", std::sync::atomic::Ordering::Relaxed);
+}
+
+/// 把指定模式推给某个 webview（页面侧 browser-shell 的 setMode 会写它自己的
+/// localStorage 并立即应用 UI）。
+pub fn apply_shell_mode_to(webview: &tauri::Webview, mode: &str) -> tauri::Result<()> {
+    let script = format!(
+        "(function(){{try{{var s=window.VA_BROWSER_SHELL;if(s&&s.setMode)s.setMode('{mode}');}}catch(e){{}}}})()"
+    );
+    webview.eval(&script)
+}
+
+/// 导航 / 激活 / 新建 tab 后，把 Rust 侧的权威模式同步给该 webview。
+pub fn sync_shell_mode(webview: &tauri::Webview) {
+    let _ = apply_shell_mode_to(webview, shell_mode());
+}
+
 // ---------- 标签页命令（M3） ----------
 /// 内部开 tab（不校验调用方）：工具栏命令与页面 _blank/window.open 新窗口共用。
 pub(crate) fn open_tab(app: tauri::AppHandle, url: Option<String>) -> Result<String, AppError> {
+    open_tab_inner(app, url, false)
+}
+
+/// `deferred = true` 时不在当前 IPC 回调内同步建 webview，改由后台任务构建。
+///
+/// 工具栏发起的建 tab 必须走 deferred：在 WebView2 上同步 `add_child` 会与 wry
+/// 中间态重入，把工具栏自己的渲染进程卡死（新建/更多/编辑气泡/tab 刷新随之全部失效）。
+/// 页面内 `window.open` 已在 tabs.rs 的 on_new_window 里自带延迟，故传 false。
+fn open_tab_inner(
+    app: tauri::AppHandle,
+    url: Option<String>,
+    deferred: bool,
+) -> Result<String, AppError> {
     let window = app.get_window("main").ok_or_else(|| AppError::key("err.main_window_missing"))?;
     let size = window.inner_size().map_err(AppError::internal)?;
     let sf = window.scale_factor().map_err(AppError::internal)?;
@@ -772,23 +860,39 @@ pub(crate) fn open_tab(app: tauri::AppHandle, url: Option<String>) -> Result<Str
     };
     // 已安装插件源码：每插件独立 initialization_script，排在标注引擎之前（见 tabs.rs）
     let plugin_scripts = app.state::<std::sync::Arc<plugins::PluginsState>>().injection_scripts();
-    tabs::create_tab(
-        &app,
-        &window,
-        target,
-        &plugin_scripts,
-        Vec::new(),
-        BRIDGE_JS,
-        ANNOTATE_JS,
-        PhysicalPosition::new(0, browser_top as i32),
-        PhysicalSize::new(size.width, size.height.saturating_sub(browser_top)),
-    )
+    let pos = PhysicalPosition::new(0, browser_top as i32);
+    let vp = PhysicalSize::new(size.width, size.height.saturating_sub(browser_top));
+    if deferred {
+        tabs::spawn_tab(
+            &app,
+            &window,
+            target,
+            plugin_scripts,
+            BRIDGE_JS,
+            ANNOTATE_JS,
+            pos,
+            vp,
+        )
+    } else {
+        tabs::create_tab(
+            &app,
+            &window,
+            target,
+            &plugin_scripts,
+            Vec::new(),
+            BRIDGE_JS,
+            ANNOTATE_JS,
+            pos,
+            vp,
+        )
+    }
 }
 
 #[tauri::command]
 fn tab_new(app: tauri::AppHandle, w: tauri::Webview, url: Option<String>) -> Result<String, AppError> {
     require_local_or_trusted(&app, &w, &crate::i18n::t("perm.tab_new"))?;
-    open_tab(app, url)
+    // deferred：见 open_tab_inner 注释——同步建 webview 会卡死工具栏渲染进程
+    open_tab_inner(app, url, true)
 }
 
 #[tauri::command]

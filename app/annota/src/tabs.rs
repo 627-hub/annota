@@ -70,6 +70,24 @@ pub fn active_webview(app: &AppHandle) -> Result<Webview, AppError> {
         .ok_or_else(|| AppError::keyf("err.tab_webview_missing", &[("id", id.as_str())]))
 }
 
+/// 预留一个 tab id：只推进 seq、不 push、不建 webview。
+///
+/// 拆出来是为了让调用方能在**不建 webview** 的前提下先拿到 id，
+/// 把真正的 webview 构建推迟到 IPC 回调之外（见 `spawn_tab`）。
+/// （并发首个 tab 的 id 冲突窗口仅存在于启动瞬间——彼时无页面可触发并发创建，可接受。）
+pub fn reserve_tab_id(app: &AppHandle) -> Result<String, AppError> {
+    let state = app.state::<TabState>();
+    let mut mgr = state
+        .lock()
+        .map_err(|_| AppError::key("err.tab_lock_poisoned"))?;
+    if mgr.tabs.is_empty() {
+        Ok(FIRST_TAB_ID.to_string())
+    } else {
+        mgr.seq += 1;
+        Ok(format!("tab-{}", mgr.seq))
+    }
+}
+
 /// 新建一个 tab webview，加入状态并激活它。`init_script` 为注入脚本（桥 + 标注层）。
 /// `position/size` 由调用方按当前窗口布局给出（新 tab 覆盖浏览器区域）。
 #[allow(clippy::too_many_arguments)]
@@ -84,32 +102,107 @@ pub fn create_tab(
     position: PhysicalPosition<i32>,
     size: PhysicalSize<u32>,
 ) -> Result<String, AppError> {
-    // 后建的 webview 盖在先建的上面：新 tab 会遮住已打开的浮层（菜单/面板）。
-    // 代数 +1，让 overlay 下次打开时重建；这里同时把浮层关掉，避免它悬在旧位置。
-    crate::bump_tab_gen();
-    let _ = app.get_webview(crate::OVERLAY_ID).map(|w| w.close());
     // OCR-fix：先校验 URL——在任何共享状态变更之前失败即退出，
     // 避免旧实现「先 push 再 parse」失败时留下幽灵 Tab（snapshot 会报、active_webview 会选中）。
     let parsed = url::Url::parse(&url).map_err(AppError::internal)?;
-    // 预留 id：只推进 seq、不 push；真正的状态提交放在 webview 构建成功之后。
-    // （并发首个 tab 的 id 冲突窗口仅存在于启动瞬间——彼时无页面可触发并发创建，可接受。）
-    let id = {
-        let state = app.state::<TabState>();
-        let mut mgr = state
-            .lock()
-            .map_err(|_| AppError::key("err.tab_lock_poisoned"))?;
-        if mgr.tabs.is_empty() {
-            FIRST_TAB_ID.to_string()
-        } else {
-            mgr.seq += 1;
-            format!("tab-{}", mgr.seq)
+    let id = reserve_tab_id(app)?;
+    create_tab_reserved(
+        app,
+        window,
+        parsed,
+        url,
+        id,
+        plugin_scripts,
+        init_scripts,
+        bridge_js,
+        annotate_js,
+        position,
+        size,
+    )
+}
+
+/// 在 IPC 回调**之外**异步建 tab：同步返回预留好的 id，webview 稍后构建。
+///
+/// 为什么需要它：在 Windows/WebView2 上，`add_child` 是阻塞式 Win32 调用。若在
+/// Tauri IPC 回调里同步执行，会与 wry 的 webview 中间态重入，**把发起调用的
+/// webview（工具栏）的渲染进程卡死**——实测点「新建标签页」后工具栏 JS 心跳彻底
+/// 停止而 Rust 主循环照常，随后所有工具栏按钮（新建/编辑气泡/更多菜单）与
+/// `tabs-changed` 事件全部失效。`on_new_window` 早已用 sleep 规避同一问题，
+/// 这里把该规避统一到所有来自工具栏的建 tab 路径。
+#[allow(clippy::too_many_arguments)]
+pub fn spawn_tab(
+    app: &AppHandle,
+    window: &tauri::Window,
+    url: String,
+    plugin_scripts: Vec<String>,
+    bridge_js: &str,
+    annotate_js: &str,
+    position: PhysicalPosition<i32>,
+    size: PhysicalSize<u32>,
+) -> Result<String, AppError> {
+    // 先校验 + 预留 id：这两步都是纯内存操作，在回调里同步做完是安全的，
+    // 调用方也能立刻拿到 id 回应前端。
+    let parsed = url::Url::parse(&url).map_err(AppError::internal)?;
+    let id = reserve_tab_id(app)?;
+    let return_id = id.clone();
+    let app2 = app.clone();
+    let win = window.clone();
+    let plugin_scripts2 = plugin_scripts.clone();
+    let bridge_js = bridge_js.to_string();
+    let annotate_js = annotate_js.to_string();
+    tauri::async_runtime::spawn(async move {
+        // 避开 wry 中间态：让当前这轮 IPC/事件派发彻底退栈后再建 webview。
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        if let Err(e) = create_tab_reserved(
+            &app2,
+            &win,
+            parsed,
+            url,
+            id.clone(),
+            &plugin_scripts2,
+            Vec::new(),
+            &bridge_js,
+            &annotate_js,
+            position,
+            size,
+        ) {
+            crate::alog!("ERROR", "[annota] 异步建 tab 失败（{}）：{e}", id);
         }
-    };
+    });
+    Ok(return_id)
+}
+
+/// `create_tab` 的下半段：假定 id 已预留，直接建 webview 并提交状态。
+#[allow(clippy::too_many_arguments)]
+fn create_tab_reserved(
+    app: &AppHandle,
+    window: &tauri::Window,
+    parsed: url::Url,
+    url: String,
+    id: String,
+    plugin_scripts: &[String],
+    init_scripts: Vec<String>,
+    bridge_js: &str,
+    annotate_js: &str,
+    position: PhysicalPosition<i32>,
+    size: PhysicalSize<u32>,
+) -> Result<String, AppError> {
+    // 后建的 webview 盖在先建的上面：新 tab 会遮住已打开的浮层（菜单/面板）。
+    // 代数 +1，让 overlay 下次打开时重建；这里同时把浮层关掉，避免它悬在旧位置。
+    crate::bump_tab_gen();
+    // 新 tab 同样作废「正在延迟创建中的浮层」——否则它会在新 tab 之后创建，反过来盖住页面。
+    crate::abort_pending_overlay();
+    let _ = app.get_webview(crate::OVERLAY_ID).map(|w| w.close());
     let app_evt = app.clone();
     let id_for_nav = id.clone();
     let id_for_nav2 = id.clone();
     let id_for_events = id.clone();
+    let id_for_replay = id.clone();
     let app_nav = app.clone();
+    // on_page_load 需要重放注入内容，而它们是 &str 入参——克隆成拥有所有权才能进 'static 闭包。
+    let bridge_for_replay = bridge_js.to_string();
+    let annotate_for_replay = annotate_js.to_string();
+    let plugin_scripts_for_replay = plugin_scripts.to_vec();
     let mut builder = WebviewBuilder::new(&id, WebviewUrl::External(parsed))
         // UA 修正：WKWebView 默认 UA 不含 Safari/WebKit 版本号，B 站等站点按 UA 判「浏览器版本过低」拒访。
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15")
