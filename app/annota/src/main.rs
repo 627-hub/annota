@@ -21,6 +21,8 @@ mod tabs;
 mod store;
 mod logf;
 mod i18n;
+#[cfg(target_os = "windows")]
+mod windows_cleanup;
 mod error;
 pub use error::AppError;
 #[cfg(test)]
@@ -1216,6 +1218,26 @@ pub fn main() {
     // P2-O2：panic 落盘 + 关键事件进滚动日志（仅本机，无遥测）
     logf::install_panic_hook();
     logf::log("INFO", "annota starting");
+
+    // Windows平台预检（只读探测：WebView2 Runtime 缺失才失败）
+    #[cfg(target_os = "windows")]
+    {
+        if let Err(e) = windows_cleanup::ensure_webview2_clean() {
+            logf::log("ERROR", &format!("Windows预检失败: {}", e));
+            // 只在确认缺失时提示一次，然后退出让上层脚本能感知失败
+            let _ = windows_cleanup::show_error_dialog(
+                "Annota 无法启动",
+                &format!(
+                    "缺少 Microsoft Edge WebView2 运行时。\n\n\
+                     请访问 https://developer.microsoft.com/microsoft-edge/webview2/ 下载安装后重试。\n\n\
+                     详情：{}",
+                    e
+                ),
+            );
+            std::process::exit(1);
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_screenshots::init())
