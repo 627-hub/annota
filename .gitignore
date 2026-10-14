@@ -12,7 +12,11 @@ venv/
 node_modules/
 build/
 *.zip
-# 注意：dist/annotate.user.js 是交付物（用户脚本管理器直接加载），需入库
+# build.py 产物不入库（CI 与 cloudbase/publish.sh 每次自建，避免反复提交）：
+# dist/ 全目录（annotate*.js + version.json + .buildtime/.syncurl）、VERSION 计数器、app/extension/core.js
+dist/
+VERSION
+app/extension/core.js
 
 # 本地数据 / 标注产物（含用户标注，勿入库）
 data/
@@ -23,16 +27,18 @@ app/service/store/
 app/service/notes/
 app/service/exports/
 app/service/settings.json
+app/service/plugins/
 # 浏览器本地库（SQLite：收藏/历史/下载）
 app/service/annota.db
 app/service/annota.db-wal
 app/service/annota.db-shm
 app/service/tabs.json
 app/service/tabs.json.tmp
-dist/.syncurl
-# 注意：dist/version.json 是版本探测顶标（入库，随发布上传）；dist/.buildtime 是本地构建状态，不入库
-dist/.buildtime
+# 注意：dist/version.json 是版本探测顶标，现随 dist/ 一起不入库，由 CI/publish.sh 构建时生成并上传
 dev/hub.html
+dev/smoke-export.mjs.backup
+AGENTS.md
+docs/discord-welcome.md
 
 # 模型权重
 models/

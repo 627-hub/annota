@@ -4,6 +4,8 @@ Annota 的重要变更。格式遵循 [Keep a Changelog](https://keepachangelog.
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-10-14
+
 ### 修复
 
 - **Windows：工具栏 webview 冻结（新建标签页 / 更多菜单 / 编辑气泡 / 标签刷新全部失效）**。根因是工具栏、每个标签页、浮层都是独立 child webview，而 `window.add_child`（创建 WebView2 子窗口）在 WebView2 上是阻塞式 Win32 调用；原先在 Tauri IPC 回调里同步执行，与 wry 的 webview 中间态重入，把**发起调用的工具栏渲染进程整个卡死**。表现是点击照常送达、`invoke` 也返回成功，但界面再无反应。现将 `tab_new` / `overlay_open` 的建 webview 推迟到 IPC 回调之外（复用 `on_new_window` 既有的延迟规避）；`apply_layout` 只给活动 tab 摆位的既有行为不受影响（实测各 webview 零重叠）。
