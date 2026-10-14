@@ -689,12 +689,25 @@
 
         // 初始渲染：会话恢复等 tabs-changed 可能早于本页订阅而错过（表现=启动标签条空白）。
         // 无条件主动拉一次快照兜底（含事件桥可用时）。
+        // 初始渲染：会话恢复等 tabs-changed 可能早于本页订阅而错过（表现=启动标签条空白）。
+        //
+        // 恢复期间**不渲染**：Rust 逐个 add_child 建 tab（WebView2 每个约 150-200ms，
+        // 4 个 tab 要 ~700ms），期间的 tabs-changed 全部发生在本页订阅之前、收不到；
+        // 而恢复中的快照是中间态（实测 150ms 时仅 1 个、700ms 时已是 4 个），
+        // 直接渲染就会看到标签页一个个「长」出来。这里轮询到 `restoring` 转 false
+        // 才渲染一次。
         if (listen) {
-          setTimeout(() => {
+          const pollRestore = () => {
             Promise.resolve(invoke('tabs_snapshot'))
-              .then((r) => { if (r && r.tabs && r.tabs.length) renderTabs(r.tabs); })
-              .catch(() => {});
-          }, 150);
+              .then((r) => {
+                if (r && r.restoring) { setTimeout(pollRestore, 150); return; }
+                const t = (r && r.tabs) || [];
+                if (t.length) { renderTabs(t); return; }
+                setTimeout(pollRestore, 400);      // 还没开始恢复，继续等
+              })
+              .catch(() => { setTimeout(pollRestore, 500); });
+          };
+          setTimeout(pollRestore, 150);
         }
 
         // 无事件桥时的兜底：轮询 Rust 拿 tab 快照（tabs_snapshot 走 invoke，不依赖事件）

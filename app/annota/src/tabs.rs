@@ -40,6 +40,23 @@ fn replay_shell_mode_script() -> String {
 /// 单次会话最多恢复的 tab 数（与前端 12 tab 上限对齐）。
 pub const MAX_RESTORE: usize = 12;
 
+/// 会话恢复进行中。
+///
+/// 恢复是逐个 `add_child` 同步建 webview 的（WebView2 每个约 150-200ms，4 个 tab
+/// 要 ~700ms），期间 `emit_tabs` 发出的 `tabs-changed` 全部发生在工具栏订阅之前、
+/// 一个都收不到。工具栏只能靠 `tabs_snapshot` 兜底——但恢复中的快照是**中间态**，
+/// 渲染出来就是「启动只显示 1 个标签页」。这个标志让快照能明确回答「恢复完了吗」，
+/// 工具栏据此只在结束时渲染一次，而不是逐个把标签页「长」出来。
+static RESTORING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_restoring(v: bool) {
+    RESTORING.store(v, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn is_restoring() -> bool {
+    RESTORING.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// 单个标签页的状态（id = webview label）。
 pub struct Tab {
     pub id: String,
@@ -93,8 +110,7 @@ pub fn active_webview(app: &AppHandle) -> Result<Webview, AppError> {
 /// 拆出来是为了让调用方能在**不建 webview** 的前提下先拿到 id，
 /// 把真正的 webview 构建推迟到 IPC 回调之外（见 `spawn_tab`）。
 /// （并发首个 tab 的 id 冲突窗口仅存在于启动瞬间——彼时无页面可触发并发创建，可接受。）
-pub fn reserve_tab_id(app: &AppHandle) -> Result<String, AppError> {
-    let state = app.state::<TabState>();
+pub fn reserve_tab_id(app: &AppHandle) -> Result<String, AppError> {    let state = app.state::<TabState>();
     let mut mgr = state
         .lock()
         .map_err(|_| AppError::key("err.tab_lock_poisoned"))?;

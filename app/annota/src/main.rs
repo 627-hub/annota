@@ -684,7 +684,7 @@ fn tabs_snapshot(app: tauri::AppHandle, w: tauri::Webview) -> Result<serde_json:
     require_local_or_trusted(&app, &w, &crate::i18n::t("perm.tabs_snapshot"))?;
     // P2-fix：读 TabState 缓存快照（不再逐个回调 Webview::url()——崩溃根因）
     let (list, _) = tabs::snapshot(&app);
-    Ok(json!({ "ok": true, "tabs": list }))
+    Ok(json!({ "ok": true, "tabs": list, "restoring": tabs::is_restoring() }))
 }
 
 // 开发者工具（M6d）：打开当前活动标签页的 devtools（WKWebView 需 Safari 16.4+）。
@@ -1012,7 +1012,12 @@ fn setup_webviews(window: &tauri::Window, app: &AppHandle) -> Result<(), AppErro
 
     // M6a 会话恢复：优先按 tabs.json 重建上次会话；无记录/全部失效才回落到单个工作区 tab。
     let plugin_scripts = app.state::<std::sync::Arc<plugins::PluginsState>>().injection_scripts();
-    let restored = tabs::restore_tabs(app, window, plugin_scripts.clone(), BRIDGE_JS, ANNOTATE_JS, pos, vp)?;
+    // 置「恢复中」：逐个 add_child 要几百毫秒，期间工具栏收不到 tabs-changed，
+    // 只能靠 tabs_snapshot 兜底——没有这个标志它会把中间态当最终态渲染。
+    tabs::set_restoring(true);
+    let restored = tabs::restore_tabs(app, window, plugin_scripts.clone(), BRIDGE_JS, ANNOTATE_JS, pos, vp);
+    tabs::set_restoring(false);
+    let restored = restored?;
     if restored == 0 {
         let start_url = "http://127.0.0.1:8793/".to_string();
         let id = tabs::create_tab(app, window, start_url, &plugin_scripts, Vec::new(), BRIDGE_JS, ANNOTATE_JS, pos, vp)?;
