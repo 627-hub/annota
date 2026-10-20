@@ -16,6 +16,61 @@ env:
   CI: "true"
 
 jobs:
+  windows:
+    name: Windows check
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # build.py 产物（dist/annotate.browser.js）不入库，cargo build.rs 的新鲜度守卫
+      # 会在产物缺失时直接 panic——所以必须先构建产物再跑 cargo。
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: 构建产物（build.py）
+        run: python build.py
+
+      # windows_cleanup.rs 整个模块是 #[cfg(target_os = "windows")]，
+      # macOS job 永远编译不到它——Windows 专属的启动预检逻辑只能靠这个 job 兜住。
+      - name: Rust 单测 + 集成测试
+        working-directory: app/annota
+        run: cargo test
+
+      - name: Rust 编译检查
+        working-directory: app/annota
+        run: cargo check
+
+      - name: 权限自检（Tauri 命令 ↔ permissions/*.toml）
+        run: node dev/check-tauri-permissions.mjs
+
+      - name: 版本一致性（Cargo.toml ↔ tauri.conf.json）
+        run: node dev/check-version.mjs
+
+      - name: Shell 漂移检查
+        run: node dev/check-shell-drift.mjs
+
+      - name: JS 单测
+        shell: bash
+        run: |
+          for t in dev/*.test.mjs; do echo "== $t"; node "$t"; done
+
+      - name: Python 单测
+        shell: bash
+        run: |
+          shopt -s nullglob
+          tests=(dev/*.test.py)
+          if [ "${#tests[@]}" -eq 0 ]; then echo "no python tests, skip"; exit 0; fi
+          for t in "${tests[@]}"; do echo "== $t"; python "$t"; done
+
+      - name: smoke（HTML 内联脚本语法 + 基础行为）
+        shell: bash
+        run: |
+          for t in dev/smoke*.mjs; do echo "== $t"; node "$t"; done
+
   quick:
     name: Quick check
     runs-on: macos-latest
