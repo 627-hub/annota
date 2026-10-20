@@ -1332,10 +1332,10 @@ pub fn main() {
     // Windows平台预检（只读探测：WebView2 Runtime 缺失才失败）
     #[cfg(target_os = "windows")]
     {
-        if let Err(e) = windows_cleanup::ensure_webview2_clean() {
+        if let Err(e) = windows_cleanup::preflight_webview2() {
             logf::log("ERROR", &format!("Windows预检失败: {}", e));
             // 只在确认缺失时提示一次，然后退出让上层脚本能感知失败
-            let _ = windows_cleanup::show_error_dialog(
+            if let Err(io_err) = windows_cleanup::show_error_dialog(
                 "Annota 无法启动",
                 &format!(
                     "缺少 Microsoft Edge WebView2 运行时。\n\n\
@@ -1343,7 +1343,10 @@ pub fn main() {
                      详情：{}",
                     e
                 ),
-            );
+            ) {
+                // 弹窗失败（无交互桌面等）不能吞掉：至少让日志里有痕迹
+                logf::log("WARN", &format!("显示错误对话框失败: {}", io_err));
+            }
             std::process::exit(1);
         }
     }
