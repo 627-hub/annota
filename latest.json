@@ -1,0 +1,15 @@
+{
+  "version": "0.2.6",
+  "notes": "Annota v0.2.6",
+  "pub_date": "2026-10-14T15:18:44Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRVEtrZi92Q2RpSTI4US9pa2pWV1F4QTk0ZitHeWNHS2RaZEN1cHFkTEx3T3k4MzlkV0lmaXJmNmVsUXlhUnJ4UVZjT3dzenY2MnJCOGhBYktvR09nR0RuUW15RVFDRkFzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxOTkwMzQ1CWZpbGU6QW5ub3RhLmFwcC50YXIuZ3oJdmVyc2lvbjowLjIuNgpRS0NvNlMvUi9rMFNGZlpuNGZnZHZyZGU2aDJaTTltU1cyUTN6RE9TcEIzSllYSWpaRy9hVUJGRk5qNjNLNkJnaGtOWkNOTWsrMXhza0lyQmI3aVJEZz09Cg==",
+      "url": "https://github.com/627-hub/annota/releases/download/v0.2.6/Annota.app.tar.gz"
+    },
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVRVEtrZi92Q2RpSTJvQzRkb3lnWTA0a0VTNGxLa1g2VjZ0aGIyWURJeFkxMmpiZGtxNDlVWTVyUzN5dXFud3VrSzd2NGk3bkNkT3oxbXhxR3gvLy9ibklqMjdmczNTemdZPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkxOTkxMTA3CWZpbGU6QW5ub3RhXzAuMi42X3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjIuNgpmZHFsNytXWTdoa24vZEhZbmJUOTE4YVlJNmVvUWZNcDhEN2lzemJvMHdQSDY0UVRBKy9XOE40N0hsQWg3eGlHM2JOYlZ4akdZZFhZSDFiQ1lRcGRDUT09Cg==",
+      "url": "https://github.com/627-hub/annota/releases/download/v0.2.6/Annota_0.2.6_x64-setup.exe"
+    }
+  }
+}
